@@ -63,10 +63,10 @@ jobs:
       - name: Pack bundle
         shell: bash
         run: |
-          cd frontend/src-tauri/target/release/bundle
+          cd src-tauri/target/release/bundle
           for dir in */; do
             dirname=$(basename "$dir")
-            tar -czf "release-${dirname}.tar.gz" "$dir"
+            tar -czf "${dirname}.tar.gz" "$dir"
           done
 
       - name: Upload artifacts
