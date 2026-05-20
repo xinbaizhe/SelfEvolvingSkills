@@ -1,0 +1,96 @@
+name: Build & Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis msi
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: dmg
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: deb appimage
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build Tauri
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.target }}
+          path: frontend/src-tauri/target/release/bundle/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Generate latest.json
+        run: |
+          # Collect all update manifests from each platform build
+          # and merge into a single latest.json
+          echo '{"version":"${{ github.ref_name }}","notes":"Release ${{ github.ref_name }}","pub_date":"${{ github.event.head_commit.timestamp }}","platforms":{}}' > latest.json
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-*/**/*
+          body: |
+            Release ${{ github.ref_name }}
+
+            ### 安装
+
+            - **Windows**: 下载 `.exe` 或 `.msi`
+            - **macOS**: 下载 `.dmg`
+            - **Linux**: 下载 `.deb` 或 `.AppImage`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

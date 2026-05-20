@@ -1,0 +1,61 @@
+import { api } from './tauri'
+import type { ApiResponse } from './skills'
+
+export interface Workflow {
+  id: number
+  name: string
+  description: string | null
+  frequency: number
+  source_agents: string | null
+  estimated_time_saved: string | null
+  can_generate_skill: boolean
+  skill_score: number
+  status: string
+  draft_body: string | null
+  sample_tasks: string | null
+  recommendation_source?: string
+  confidence?: number | null
+  reasoning?: string | null
+  source_skills?: string[]
+  similar_skills?: { name: string; source: string; url?: string }[]
+  created_at: string
+  updated_at: string
+}
+
+export interface SkillInstallTarget {
+  agent_id: string
+  agent_name: string
+  skills_path: string
+  is_enabled: boolean
+  is_available: boolean
+}
+
+export function fetchWorkflows() {
+  return api<ApiResponse<Workflow[]>>('GET', '/workflows')
+}
+
+export function clusterWorkflows() {
+  return api<ApiResponse<Workflow[]>>('POST', '/workflows/cluster')
+}
+
+export function fetchWorkflow(id: number) {
+  return api<ApiResponse<Workflow>>('GET', `/workflows/${id}`)
+}
+
+export function fetchSkillInstallTargets() {
+  return api<ApiResponse<SkillInstallTarget[]>>('GET', '/workflows/install-targets')
+}
+
+export function installWorkflowSkill(id: number, agentId: string) {
+  return api<ApiResponse<{ path: string; agent_id: string; agent_name: string }>>('POST', `/workflows/${id}/install`, null, {
+    agent_id: agentId,
+  })
+}
+
+export function updateWorkflowDraft(id: number, data: { draft_body: string; description?: string | null }) {
+  return api<ApiResponse<Workflow>>('PUT', `/workflows/${id}`, null, data)
+}
+
+export function deleteWorkflowDraft(id: number) {
+  return api<ApiResponse<{ id: number }>>('DELETE', `/workflows/${id}`)
+}

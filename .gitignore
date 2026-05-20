@@ -1,0 +1,31 @@
+# Runtime data
+data/
+
+# Tauri / Rust
+frontend/src-tauri/target/
+
+# Frontend build
+frontend/dist/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+
+# Node
+node_modules/
+.pnpm-store/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
