@@ -60,20 +60,21 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --bundles ${{ matrix.bundles }}
 
-      - name: Pack bundle
+      - name: Zip AppImage (too many files)
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           cd src-tauri/target/release/bundle
-          for dir in */; do
+          for dir in appimage*/; do
             dirname=$(basename "$dir")
-            tar -czf "${dirname}.tar.gz" "$dir"
+            zip -r "${dirname}.zip" "$dir"
           done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.os }}-${{ matrix.target }}
-          path: frontend/src-tauri/target/release/bundle/*.tar.gz
+          path: frontend/src-tauri/target/release/bundle/
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -82,17 +83,34 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
 
-      - name: Generate latest.json
+      - name: Collect release assets
+        shell: bash
         run: |
-          # Collect all update manifests from each platform build
-          # and merge into a single latest.json
-          echo '{"version":"${{ github.ref_name }}","notes":"Release ${{ github.ref_name }}","pub_date":"${{ github.event.head_commit.timestamp }}","platforms":{}}' > latest.json
+          mkdir -p dist
+          # Windows: .exe .msi
+          find release-* -name "*.exe" -o -name "*.msi" | while read f; do
+            cp "$f" "dist/$(basename "$f")"
+          done
+          # macOS: .dmg
+          find release-* -name "*.dmg" | while read f; do
+            cp "$f" "dist/$(basename "$f")"
+          done
+          # Linux: .deb + AppImage zip
+          find release-* -name "*.deb" | while read f; do
+            cp "$f" "dist/$(basename "$f")"
+          done
+          find release-* -name "*.AppImage" -o -name "*.AppImage.tar.gz" | while read f; do
+            cp "$f" "dist/$(basename "$f")"
+          done
+          find release-* -name "*.zip" | while read f; do
+            cp "$f" "dist/$(basename "$f")"
+          done
+          ls -la dist/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release-*/**/*
+          files: dist/*
           body: |
             Release ${{ github.ref_name }}
 
@@ -100,6 +118,6 @@ jobs:
 
             - **Windows**: 下载 `.exe` 或 `.msi`
             - **macOS**: 下载 `.dmg`
-            - **Linux**: 下载 `.deb` 或 `.AppImage`
+            - **Linux**: 下载 `.deb` 或 `.AppImage.zip`（解压后运行）
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
