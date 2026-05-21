@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { check } from '@tauri-apps/plugin-updater'
 import { useRouter } from 'vue-router'
 import { useScanStore } from '../../stores/useScanStore'
 import { fetchLlmConfig, fetchSystemInfo, testLlmConnection } from '../../api/admin'
@@ -37,6 +38,7 @@ const sources = ref<SourceConfig[]>([])
 const llmConfig = ref<LlmConfig | null>(null)
 const llmTesting = ref(false)
 const githubTesting = ref(false)
+const updateChecking = ref(false)
 const detecting = ref(false)
 const sessions = ref<any[]>([])
 const sessionsTotal = ref(0)
@@ -68,16 +70,13 @@ const dbTotalRows = computed(() => dbTables.value.reduce((sum, t) => sum + t.cou
 
 const dbTables = computed(() => {
   if (!dbInfo.value) return []
-  const entries = Object.entries(dbInfo.value.table_counts).map(([name, count]) => ({
-    name,
-    label: tableNameLabels[name] || name,
-    count,
-  }))
-  const maxCount = Math.max(...entries.map((e) => e.count), 1)
-  return entries.map((e) => ({
-    ...e,
-    pct: ((e.count / maxCount) * 100).toFixed(1),
-  }))
+  return Object.entries(dbInfo.value.table_counts)
+    .map(([name, count]) => ({
+      name,
+      label: tableNameLabels[name] || name,
+      count,
+    }))
+    .sort((a, b) => b.count - a.count)
 })
 
 const latestScan = computed(() => scanStore.history[0] ?? null)
@@ -247,6 +246,32 @@ async function testGithubService() {
     }
   } finally {
     githubTesting.value = false
+  }
+}
+
+async function checkForAppUpdate() {
+  updateChecking.value = true
+  try {
+    const update = await check()
+    if (!update) {
+      ElMessage.success('当前已是最新版本')
+      return
+    }
+
+    const action = await ElMessageBox.confirm(
+      `发现新版本 ${update.version}，是否立即下载并安装？`,
+      '应用更新',
+      { confirmButtonText: '立即更新', cancelButtonText: '稍后再说', type: 'info' }
+    ).catch(() => 'cancel')
+
+    if (action === 'confirm') {
+      await update.downloadAndInstall()
+      ElMessage.success('更新已安装，重启应用后生效')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.message || '检查更新失败，请确认 latest.json 已发布且签名有效')
+  } finally {
+    updateChecking.value = false
   }
 }
 
@@ -526,8 +551,14 @@ async function handleInitializeDatabase() {
 
     <section class="section">
       <div class="section-head">
-        <h3>维护操作</h3>
-        <span>清理和初始化会影响本地数据，请谨慎操作</span>
+        <div>
+          <h3>维护操作</h3>
+          <span>清理和初始化会影响本地数据，请谨慎操作</span>
+        </div>
+        <el-button :loading="updateChecking" @click="checkForAppUpdate" class="update-btn">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13 6.5L8 11.5L3 6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          检查更新
+        </el-button>
       </div>
       <div class="maintenance-grid">
         <div class="maintenance-item">
@@ -579,34 +610,23 @@ async function handleInitializeDatabase() {
         <template #header>
           <div class="db-card-header">
             <span>数据库表统计</span>
-            <span class="db-card-sub">共 {{ dbTables.length }} 张表</span>
+            <span class="db-card-sub">共 {{ dbTables.length }} 张表 · {{ dbTotalRows.toLocaleString() }} 条记录</span>
           </div>
         </template>
         <div class="db-path">{{ dbInfo.db_path }}</div>
         <el-table :data="dbTables" stripe size="small" class="db-table">
-          <el-table-column prop="label" label="表名" width="180" />
-          <el-table-column prop="name" label="英文名" width="200">
+          <el-table-column prop="label" label="表名" min-width="160" />
+          <el-table-column prop="name" label="英文表名" min-width="220">
             <template #default="{ row }">
               <code class="db-table-code">{{ row.name }}</code>
             </template>
           </el-table-column>
-          <el-table-column prop="count" label="记录数" width="120" sortable>
+          <el-table-column prop="count" label="记录数" width="140" sortable align="right">
             <template #default="{ row }">
               <span class="db-table-count">{{ row.count.toLocaleString() }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="数据占比" min-width="240">
-            <template #default="{ row }">
-              <div class="db-bar-row">
-                <el-progress :percentage="Number(row.pct)" :stroke-width="8" :show-text="false" />
-                <span class="db-bar-label">{{ row.pct }}%</span>
-              </div>
-            </template>
-          </el-table-column>
         </el-table>
-        <div class="db-footer">
-          总记录数：<strong>{{ dbTotalRows.toLocaleString() }}</strong>
-        </div>
       </el-card>
     </section>
 
@@ -1032,43 +1052,6 @@ async function handleInitializeDatabase() {
   font-variant-numeric: tabular-nums;
 }
 
-.db-bar-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.db-bar-row :deep(.el-progress-bar__outer) {
-  background: #e9eef5;
-  flex: 1;
-}
-
-.db-bar-row :deep(.el-progress-bar__inner) {
-  background: linear-gradient(90deg, #14b8a6, #0891b2);
-}
-
-.db-bar-label {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  min-width: 42px;
-  text-align: right;
-}
-
-.db-footer {
-  padding: 10px 16px;
-  color: #64748b;
-  font-size: 12px;
-  text-align: right;
-  border-top: 1px solid #eef2f7;
-  background: #f8fafc;
-}
-
-.db-footer strong {
-  color: #0f766e;
-  font-weight: 800;
-}
 
 .error-text {
   color: #c24141;

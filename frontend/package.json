@@ -1,7 +1,7 @@
 {
   "name": "self-evolving-skills",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Self Evolving Skills - AI Coding Agent Skills Scanner & Desktop App",
   "author": "SelfEvolvingSkills",
   "type": "module",
