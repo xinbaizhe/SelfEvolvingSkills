@@ -19,7 +19,7 @@ async function checkUpdate() {
   // 开发模式下跳过更新检查（没有 latest.json 会 404）
   if (import.meta.env.DEV) return
   try {
-    const update = await check()
+    const update = await check({ timeout: 8000 })
     if (update) {
       const action = await ElMessageBox.confirm(
         `发现新版本 ${update.version}，是否立即更新？`,

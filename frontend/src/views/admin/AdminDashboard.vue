@@ -252,7 +252,7 @@ async function testGithubService() {
 async function checkForAppUpdate() {
   updateChecking.value = true
   try {
-    const update = await check()
+    const update = await check({ timeout: 8000 })
     if (!update) {
       ElMessage.success('当前已是最新版本')
       return
