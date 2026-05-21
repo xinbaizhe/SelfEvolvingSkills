@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { startEvolution } from '../api/evolution'
 import { fetchWorkflows, type Workflow } from '../api/workflows'
 
 const workflows = ref<Workflow[]>([])
 const loading = ref(false)
-const starting = ref(false)
 const activeFilter = ref<string | null>(null)
 
 const manualCount = computed(() => workflows.value.filter((w) => w.recommendation_source === 'manual-existing-skill' || w.status === 'manual-draft').length)
@@ -48,23 +45,6 @@ async function load() {
   }
 }
 
-async function handleStartEvolution() {
-  starting.value = true
-  try {
-    const res = await startEvolution()
-    if (res.success) {
-      ElMessage.success('已启动进化管道，将自动扫描本机历史记录并生成推荐。')
-      window.setTimeout(load, 1500)
-    } else {
-      ElMessage.error(res.error || '启动进化管道失败')
-    }
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '启动进化管道失败')
-  } finally {
-    starting.value = false
-  }
-}
-
 function rankClass(score: number): string {
   if (score >= 88) return 'high'
   if (score >= 78) return 'med'
@@ -88,11 +68,8 @@ onMounted(load)
       <div class="head">
         <div>
           <h2>推荐技能</h2>
-          <p>启动进化后会自动完成扫描、聚类、生成草稿和社区对比，不需要先去系统管理手动扫描。</p>
+          <p>进化管道运行后，推荐结果会展示在这里。请前往「Skills 工作台」→「进化管道」启动。</p>
         </div>
-        <el-button @click="handleStartEvolution" :loading="starting" type="primary" size="default">
-          {{ starting ? '启动中...' : '启动进化' }}
-        </el-button>
       </div>
 
       <div v-if="workflows.length > 0" class="body" v-loading="loading">
@@ -160,7 +137,7 @@ onMounted(load)
 
       <div v-else class="body empty-state" v-loading="loading">
         <p>暂无推荐。</p>
-        <p>点击"启动进化"后，系统会自动扫描已启用 Agent 的历史记录，提取用户请求和压缩摘要，再生成工作流推荐。</p>
+        <p>暂无推荐，请前往「进化管道」启动进化。</p>
         <p>如果进化完成后仍为 0，请到"数据源"确认目标 Agent 已检测到历史会话路径。</p>
       </div>
     </section>

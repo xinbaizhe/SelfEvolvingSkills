@@ -163,6 +163,77 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS evolution_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status TEXT NOT NULL DEFAULT 'running',
+            agent_ids TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            summary TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS evolution_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            phase TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            progress INTEGER DEFAULT 0,
+            started_at TEXT,
+            completed_at TEXT,
+            error_message TEXT,
+            degraded_reason TEXT,
+            summary TEXT,
+            FOREIGN KEY (run_id) REFERENCES evolution_runs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS evolution_artifacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            step_id INTEGER NOT NULL,
+            agent_name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            input_summary TEXT,
+            output_summary TEXT,
+            error_message TEXT,
+            duration_ms INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (step_id) REFERENCES evolution_steps(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS community_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            step_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            name TEXT NOT NULL,
+            url TEXT,
+            description TEXT,
+            summary TEXT,
+            frontmatter TEXT,
+            stars INTEGER DEFAULT 0,
+            license TEXT,
+            relevance_score INTEGER,
+            selected INTEGER DEFAULT 0,
+            raw_data TEXT,
+            FOREIGN KEY (step_id) REFERENCES evolution_steps(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS workflow_recommendations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            step_id INTEGER NOT NULL,
+            workflow_id INTEGER NOT NULL,
+            recommendation_type TEXT NOT NULL,
+            target_type TEXT,
+            target_community_id INTEGER,
+            target_local_skill_id INTEGER,
+            confidence REAL DEFAULT 0,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (step_id) REFERENCES evolution_steps(id)
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+            first_prompt, compressed_summary, project_name, content='sessions', content_rowid='id'
+        );
+
         CREATE TABLE IF NOT EXISTS community_skills (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -173,6 +244,17 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
             skill_md_content TEXT,
             file_url TEXT,
             installed INTEGER DEFAULT 0,
+            verified INTEGER DEFAULT 0,
+            relevance_score REAL DEFAULT 0,
+            quality_score REAL DEFAULT 0,
+            weighted_score REAL DEFAULT 0,
+            license TEXT,
+            pushed_at TEXT,
+            matched_file TEXT,
+            readme_excerpt TEXT,
+            source TEXT DEFAULT 'github',
+            recommendation_reason TEXT,
+            topic TEXT DEFAULT 'AI coding agent skills',
             fetched_at TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(name, repo_full_name)
@@ -211,12 +293,31 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_evolution_jobs_status ON evolution_jobs(status);
         CREATE INDEX IF NOT EXISTS idx_community_skills_name ON community_skills(name);
         CREATE INDEX IF NOT EXISTS idx_workflow_clusters_status ON workflow_clusters(status);
+        CREATE INDEX IF NOT EXISTS idx_evolution_steps_run ON evolution_steps(run_id);
+        CREATE INDEX IF NOT EXISTS idx_evolution_artifacts_step ON evolution_artifacts(step_id);
+        CREATE INDEX IF NOT EXISTS idx_community_candidates_step ON community_candidates(step_id);
+        CREATE INDEX IF NOT EXISTS idx_workflow_recommendations_step ON workflow_recommendations(step_id);
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE sessions ADD COLUMN compressed_summary TEXT", []);
     let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_score INTEGER", []);
     let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_summary TEXT", []);
     let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_feedback TEXT", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN verified INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN relevance_score REAL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN quality_score REAL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN weighted_score REAL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN license TEXT", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN pushed_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN matched_file TEXT", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN readme_excerpt TEXT", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN source TEXT DEFAULT 'github'", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN recommendation_reason TEXT", []);
+    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN topic TEXT DEFAULT 'AI coding agent skills'", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_community_skills_source ON community_skills(source)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_community_skills_topic ON community_skills(topic)", []);
+    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN optimize_failed INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_failed INTEGER DEFAULT 0", []);
     conn.execute(
         "INSERT OR IGNORE INTO admin_users (id, username, password_hash, is_active, created_at)
          VALUES (1, 'local', '', 1, ?1)",

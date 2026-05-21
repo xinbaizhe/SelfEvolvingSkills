@@ -3272,23 +3272,25 @@ fn now_string() -> String {
 }
 
 fn url_decode(value: &str) -> String {
-    let mut out = String::new();
+    let mut buf: Vec<u8> = Vec::new();
     let bytes = value.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
                 if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte as char);
+                    buf.push(byte);
                     i += 3;
                     continue;
                 }
             }
         }
-        out.push(bytes[i] as char);
+        buf.push(bytes[i]);
         i += 1;
     }
-    out
+    String::from_utf8(buf).unwrap_or_else(|err| {
+        String::from_utf8_lossy(&err.into_bytes()).into_owned()
+    })
 }
 
 

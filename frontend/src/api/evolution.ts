@@ -25,6 +25,7 @@ export interface EvolutionJob {
   steps: EvolutionStep[]
   running: boolean
   current_phase?: string | null
+  any_failed?: boolean
   last_completed?: {
     run_id: number
     completed_at: string | null

@@ -17,16 +17,17 @@ const loading = ref(false)
 const resetting = ref(false)
 const statusLoading = ref(false)
 const staleDetected = ref(false)
+const anyFailed = ref(false)
 const unlisten = ref<(() => void) | null>(null)
 
 const steps: EvolutionStep[] = [
-  { phase: 'detect', label: '发现', start: 0, end: 10 },
-  { phase: 'scan', label: '扫描', start: 10, end: 30 },
-  { phase: 'cluster', label: '聚类', start: 30, end: 55 },
-  { phase: 'generate', label: '生成草稿', start: 55, end: 75 },
-  { phase: 'fetch_community', label: '社区检索', start: 75, end: 85 },
-  { phase: 'diff', label: '差异分析', start: 85, end: 95 },
-  { phase: 'review', label: '等待审核', start: 95, end: 100 },
+  { phase: 'discover', label: '扫描发现', start: 0, end: 20 },
+  { phase: 'reference_retrieval', label: '参考检索', start: 20, end: 32 },
+  { phase: 'cluster', label: '聚类分析', start: 32, end: 50 },
+  { phase: 'draft_generate', label: '生成草稿', start: 50, end: 62 },
+  { phase: 'optimize', label: '智能优化', start: 62, end: 78 },
+  { phase: 'qa_review', label: '质量评审', start: 78, end: 90 },
+  { phase: 'diff_recommend', label: '差异推荐', start: 90, end: 100 },
 ]
 
 const availableSources = computed(() => sources.value.filter((source) => source.is_enabled || source.is_available))
@@ -51,14 +52,17 @@ const phaseStatuses = computed(() => {
 })
 
 const progressPercent = computed(() => {
-  if (!job.value?.phases) {
+  if (!job.value?.phases || job.value.phases.length === 0) {
     return job.value?.last_completed ? 100 : 0
   }
-  const completed = job.value.phases.filter((p) => p.status === 'completed').length
-  if (completed === steps.length) return 100
   const running = job.value.phases.find((p) => p.status === 'running')
   if (running) return running.progress
-  return 0
+  const completed = job.value.phases.filter((p) => p.status === 'completed').length
+  if (completed === steps.length) return 100
+  const lastDone = job.value.phases
+    .filter((p) => p.status === 'completed' || p.status === 'failed')
+    .reduce((max, p) => (p.progress > max ? p.progress : max), 0)
+  return lastDone || 0
 })
 
 const currentMessage = computed(() => {
@@ -68,20 +72,35 @@ const currentMessage = computed(() => {
 })
 
 const isRunning = computed(() => job.value?.running ?? false)
+
+const statusText = computed(() => {
+  if (isRunning.value) return '进行中'
+  if (!job.value?.phases || job.value.phases.length === 0) return '待启动'
+  const allDone = job.value.phases.every((p) => p.status === 'completed')
+  if (allDone) return '已完成'
+  if (anyFailed.value) return '部分失败'
+  return '待启动'
+})
+
 const circumference = 2 * Math.PI * 54
 const dashOffset = computed(() => circumference - (progressPercent.value / 100) * circumference)
 
-const phaseOrder = ['detect', 'scan', 'cluster', 'generate', 'fetch_community', 'diff', 'review']
+const phaseOrder = ['discover', 'reference_retrieval', 'cluster', 'draft_generate', 'optimize', 'qa_review', 'diff_recommend']
 
 function phaseCompleted(phase: string): boolean {
   if (!job.value?.phases) return false
-  if (job.value.running === false && job.value.last_completed) return true
   const status = phaseStatuses.value.get(phase)
   return status === 'completed'
 }
 
 function phaseActive(phase: string): boolean {
   return currentPhase.value === phase && isRunning.value
+}
+
+function phaseFailed(phase: string): boolean {
+  if (!job.value?.phases) return false
+  const status = phaseStatuses.value.get(phase)
+  return status === 'failed'
 }
 
 async function loadSources() {
@@ -99,8 +118,9 @@ async function loadStatus() {
   try {
     const res = await getEvolutionStatus()
     if (res.success && res.data) {
-      const data = res.data as EvolutionJob & { auto_failed?: number }
+      const data = res.data as EvolutionJob & { auto_failed?: number; any_failed?: boolean }
       job.value = data
+      anyFailed.value = data.any_failed ?? false
       if (data.auto_failed && data.auto_failed > 0) {
         staleDetected.value = true
         ElMessage.warning(`检测到 ${data.auto_failed} 个阶段超时（>10分钟），已自动标记为失败。`)
@@ -141,12 +161,12 @@ async function handleStart() {
         })),
         steps,
         running: true,
-        current_phase: 'detect',
+        current_phase: 'discover',
         last_completed: null,
       }
       startListening()
       emit('started')
-      ElMessage.success('进化管道已启动，请等待 7 步流程完成后查看推荐。')
+      ElMessage.success('进化管道已启动，执行 7 步流程：扫描发现 → 参考检索 → 聚类分析 → 生成草稿 → 智能优化 → 质量评审 → 差异推荐')
     } else {
       ElMessage.error(res.error || '启动进化管道失败')
     }
@@ -170,20 +190,38 @@ function startListening() {
   listen<{ run_id: number; phase: string; progress: number; message: string }>('evolution-progress', (event) => {
     if (!job.value || job.value.run_id !== event.payload.run_id) return
 
+    // When the "completed" terminal event arrives, mark everything done
+    if (event.payload.phase === 'completed') {
+      const finalPhases = job.value.phases.map((p) => ({
+        ...p,
+        status: 'completed' as const,
+        completed_at: p.completed_at || new Date().toISOString(),
+      }))
+      job.value = { ...job.value, phases: finalPhases, running: false, current_phase: null }
+      stopListening()
+      emit('completed')
+      ElMessage.success('进化流程已完成，推荐、草稿和社区对比已刷新。')
+      return
+    }
+
     const phases = job.value.phases.map((p) => {
       if (p.phase === event.payload.phase) {
+        const step = steps.find((s) => s.phase === p.phase)
+        const reachedEnd = step ? event.payload.progress >= step.end : false
         return {
           ...p,
-          status: event.payload.phase === 'completed' ? 'completed' as const : p.status === 'pending' ? 'running' as const : p.status,
+          status: reachedEnd ? 'completed' as const : p.status === 'pending' ? 'running' as const : p.status,
           progress: event.payload.progress,
           message: event.payload.message,
           started_at: p.started_at || new Date().toISOString(),
+          completed_at: reachedEnd ? (p.completed_at || new Date().toISOString()) : p.completed_at,
         }
       }
       const phaseIdx = phaseOrder.indexOf(p.phase)
       const eventIdx = phaseOrder.indexOf(event.payload.phase)
-      if (phaseIdx < eventIdx && p.status === 'pending') {
-        return { ...p, status: 'completed' as const, completed_at: p.completed_at || new Date().toISOString() }
+      if (phaseIdx < eventIdx && p.status !== 'completed') {
+        const step = steps.find((s) => s.phase === p.phase)
+        return { ...p, status: 'completed' as const, progress: step?.end ?? p.progress, completed_at: p.completed_at || new Date().toISOString() }
       }
       return p
     })
@@ -197,7 +235,7 @@ function startListening() {
       running: !allDone,
     }
 
-    if (event.payload.phase === 'completed' || allDone) {
+    if (allDone) {
       stopListening()
       emit('completed')
       ElMessage.success('进化流程已完成，推荐、草稿和社区对比已刷新。')
@@ -243,7 +281,7 @@ onUnmounted(stopListening)
     <div class="pipeline-header">
       <div>
         <h3>Skill 进化管道</h3>
-        <p>选择 Agent 后启动，系统会真实执行：发现 → 扫描 → 聚类 → 生成草稿 → 社区检索 → 差异分析 → 等待审核。</p>
+        <p>选择 Agent 后启动，系统会真实执行：扫描发现 → 参考检索 → 聚类分析 → 生成草稿 → 智能优化 → 质量评审 → 差异推荐。</p>
       </div>
       <el-button type="primary" :loading="loading" :disabled="isRunning" @click="handleStart">
         {{ isRunning ? '进化中...' : '启动进化' }}
@@ -301,9 +339,7 @@ onUnmounted(stopListening)
           transform="rotate(-90 60 60)"
         />
         <text x="60" y="56" text-anchor="middle" class="ring-text-large">{{ progressPercent }}%</text>
-        <text x="60" y="74" text-anchor="middle" class="ring-text-small">
-          {{ isRunning ? '进行中' : job?.last_completed ? '已完成' : '待启动' }}
-        </text>
+        <text x="60" y="74" text-anchor="middle" class="ring-text-small">{{ statusText }}</text>
       </svg>
     </div>
 
@@ -320,10 +356,12 @@ onUnmounted(stopListening)
         :class="{
           active: phaseActive(step.phase),
           completed: phaseCompleted(step.phase),
+          failed: phaseFailed(step.phase),
         }"
       >
         <div class="step-dot">
           <span v-if="phaseCompleted(step.phase)" class="check">&#10003;</span>
+          <span v-else-if="phaseFailed(step.phase)" class="cross">&#10007;</span>
           <span v-else-if="phaseActive(step.phase)" class="pulse" />
           <span v-else class="num">{{ index + 1 }}</span>
         </div>
@@ -470,6 +508,12 @@ onUnmounted(stopListening)
   color: #fff;
 }
 
+.step-item.failed .step-dot {
+  border-color: var(--el-color-danger);
+  background: var(--el-color-danger);
+  color: #fff;
+}
+
 .step-label {
   font-size: 12px;
   color: var(--el-text-color-secondary);
@@ -482,12 +526,17 @@ onUnmounted(stopListening)
   font-weight: 600;
 }
 
+.step-item.failed .step-label {
+  color: var(--el-color-danger);
+}
+
 .step-range {
   font-size: 10px;
   color: var(--el-text-color-placeholder);
 }
 
 .check { font-size: 14px; color: #fff; }
+.cross { font-size: 14px; color: #fff; font-weight: 700; }
 .pulse {
   width: 10px;
   height: 10px;

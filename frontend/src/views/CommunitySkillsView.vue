@@ -1,92 +1,37 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { getInstalledSkills, installCommunitySkill, searchCommunitySkills, type CommunitySkill } from '../api/community'
-import { fetchSkillInstallTargets, type SkillInstallTarget } from '../api/workflows'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { searchCommunitySkills, type CommunitySkill } from '../api/community'
 
 const query = ref('')
 const skills = ref<CommunitySkill[]>([])
-const installTargets = ref<SkillInstallTarget[]>([])
-const selectedAgentId = ref('')
 const total = ref(0)
 const page = ref(1)
-const perPage = 20
+const perPage = 10
 const loading = ref(false)
-const loadingTargets = ref(false)
-const activeTab = ref('all')
-const installing = ref<Set<number>>(new Set())
+const refreshTimer = ref<number | null>(null)
+const lastUpdatedAt = ref<string | null>(null)
 
-const filteredSkills = computed(() => {
-  if (activeTab.value === 'installed') return skills.value.filter((skill) => skill.installed)
-  if (activeTab.value === 'available') return skills.value.filter((skill) => !skill.installed)
-  return skills.value
-})
+const recommendedSkills = computed(() => skills.value)
 
-const availableTargets = computed(() => installTargets.value.filter((target) => target.skills_path))
-const selectedTarget = computed(() => availableTargets.value.find((target) => target.agent_id === selectedAgentId.value) || null)
-
-async function loadTargets() {
-  loadingTargets.value = true
-  try {
-    const res = await fetchSkillInstallTargets()
-    if (res.success) {
-      installTargets.value = res.data || []
-      if (!selectedAgentId.value && availableTargets.value.length > 0) {
-        selectedAgentId.value = availableTargets.value[0].agent_id
-      }
-    }
-  } catch (error: any) {
-    ElMessage.error(error.message || '读取 Agent 安装目标失败')
-  } finally {
-    loadingTargets.value = false
-  }
-}
-
-async function search() {
+async function search(showErrors = true) {
   loading.value = true
   try {
-    const res = activeTab.value === 'installed'
-      ? await getInstalledSkills()
-      : await searchCommunitySkills(query.value || 'skill', page.value, perPage)
+    const res = await searchCommunitySkills(query.value || 'AI coding agent skills', page.value, perPage)
     if (res.success) {
       skills.value = (res.data as any).items ?? []
       total.value = (res.data as any).total ?? 0
-    } else {
-      ElMessage.error((res as any).error || '社区 Skills 搜索失败')
+      lastUpdatedAt.value = formatDateTime(new Date())
+    } else if (showErrors) {
+      ElMessage.error((res as any).error || '社区 Skills 推荐失败')
     }
   } catch (error: any) {
-    ElMessage.error(error.message ? `社区 Skills 搜索失败：${error.message}` : '社区 Skills 搜索失败，请检查网络连接后重试')
+    if (showErrors) {
+      ElMessage.error(error.message ? `社区 Skills 推荐失败：${error.message}` : '社区 Skills 推荐失败，请检查网络或大模型配置')
+    }
   } finally {
     loading.value = false
   }
-}
-
-async function handleInstall(skill: CommunitySkill) {
-  if (!selectedAgentId.value) {
-    ElMessage.warning('请先选择要安装到的 Agent')
-    return
-  }
-
-  installing.value.add(skill.id)
-  try {
-    const res = await installCommunitySkill(skill.id, selectedAgentId.value)
-    if (res.success) {
-      skill.installed = true
-      skill.status = '已安装'
-      ElMessage.success(`已安装 ${skill.name} 到 ${res.data?.agent_name || selectedTarget.value?.agent_name || '目标 Agent'}`)
-    } else {
-      ElMessage.error((res as any).error || '安装失败')
-    }
-  } catch (error: any) {
-    ElMessage.error(error.message || '安装失败，请确认网络可访问 GitHub 且目标 Agent 目录可写')
-  } finally {
-    installing.value.delete(skill.id)
-  }
-}
-
-function handleTabChange() {
-  page.value = 1
-  search()
 }
 
 function formatStars(value: number) {
@@ -94,9 +39,71 @@ function formatStars(value: number) {
   return value.toString()
 }
 
-onMounted(() => {
-  loadTargets()
+function formatScore(value?: number) {
+  if (value == null) return '-'
+  return Math.round(value * 100).toString()
+}
+
+function formatDateTime(value: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`
+}
+
+function sourceType(source?: string) {
+  return source === 'LLM' ? 'success' : 'info'
+}
+
+function hasRepositoryUpdatedAt(skill: CommunitySkill) {
+  return skill.source === 'GitHub' && Boolean(skill.pushed_at)
+}
+
+function scheduleFollowupRefresh() {
+  window.setTimeout(() => search(false), 3000)
+}
+
+function showReason(skill: CommunitySkill) {
+  const body = (skill.recommendation_reason || '暂无推荐理由。后台大模型刷新后会补充中文推荐理由。')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `<p>${escapeHtml(line)}</p>`)
+    .join('')
+  ElMessageBox.alert(
+    body,
+    `推荐理由：${skill.name}`,
+    {
+      confirmButtonText: '知道了',
+      dangerouslyUseHTMLString: true,
+    },
+  )
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function handlePageChange(nextPage: number) {
+  page.value = nextPage
   search()
+  scheduleFollowupRefresh()
+}
+
+onMounted(() => {
+  search()
+  scheduleFollowupRefresh()
+  refreshTimer.value = window.setInterval(() => {
+    search(false)
+    scheduleFollowupRefresh()
+  }, 5 * 60 * 1000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer.value != null) window.clearInterval(refreshTimer.value)
 })
 </script>
 
@@ -104,98 +111,78 @@ onMounted(() => {
   <div class="community-skills">
     <div class="page-header">
       <div>
-        <h2>社区 Skills</h2>
-        <p class="subtitle">来源为 GitHub Search API，搜索结果会缓存到本地 community_skills 表。</p>
+        <h2>社区 Skills 推荐</h2>
+        <p class="subtitle">
+          后台持续补充社区 Skill 推荐，最多保留评分和 stars 排名前 100 条；本页每 10 条分页展示，只做推荐，不安装到 Agent。
+        </p>
       </div>
+      <span v-if="lastUpdatedAt" class="updated">更新：{{ lastUpdatedAt }}</span>
     </div>
 
     <div class="toolbar">
       <el-input
         v-model="query"
         class="search-input"
-        placeholder="搜索 GitHub 社区 Skills..."
+        placeholder="输入工作流、工具或 Skill 方向..."
         clearable
-        @keyup.enter="search"
+        @keyup.enter="search()"
       />
-      <el-button type="primary" :loading="loading" @click="search">搜索</el-button>
-      <el-select
-        v-model="selectedAgentId"
-        class="agent-select"
-        :loading="loadingTargets"
-        placeholder="选择安装目标 Agent"
-      >
-        <el-option
-          v-for="target in availableTargets"
-          :key="target.agent_id"
-          :label="`${target.agent_name} - ${target.skills_path}`"
-          :value="target.agent_id"
-        />
-      </el-select>
+      <el-button type="primary" :loading="loading" @click="search().then(scheduleFollowupRefresh)">刷新推荐</el-button>
     </div>
-
-    <p v-if="selectedTarget" class="target-hint">
-      当前安装目标：{{ selectedTarget.agent_name }}，目录：{{ selectedTarget.skills_path }}
-    </p>
-    <el-alert
-      v-else
-      type="warning"
-      show-icon
-      :closable="false"
-      title="未检测到可安装的 Agent Skills 目录，请先到数据源配置 Agent 路径。"
-    />
-
-    <el-tabs v-model="activeTab" class="tabs" @tab-change="handleTabChange">
-      <el-tab-pane label="全部" name="all" />
-      <el-tab-pane label="可安装" name="available" />
-      <el-tab-pane label="已安装" name="installed" />
-    </el-tabs>
 
     <div v-loading="loading" class="skills-grid">
       <article
-        v-for="skill in filteredSkills"
+        v-for="skill in recommendedSkills"
         :key="skill.id"
         class="skill-card"
-        :class="{ installed: skill.installed }"
       >
         <div class="card-header">
           <h4 class="skill-name">{{ skill.name }}</h4>
-          <el-tag :type="skill.installed ? 'success' : 'info'" size="small">{{ skill.status }}</el-tag>
+          <el-tag :type="sourceType(skill.source)" size="small">{{ skill.source || 'GitHub' }}</el-tag>
         </div>
 
         <p class="skill-desc">{{ skill.description || '暂无描述' }}</p>
 
         <div class="card-meta">
           <span class="repo">{{ skill.repo }}</span>
-          <span class="stars">★ {{ formatStars(skill.stars) }}</span>
+          <span class="stars">★ {{ formatStars(skill.stars || 0) }}</span>
+          <span v-if="skill.license">License {{ skill.license }}</span>
+        </div>
+
+        <div class="score-line">
+          <span>综合 {{ formatScore(skill.weighted_score) }}</span>
+          <span>相关 {{ formatScore(skill.relevance_score) }}</span>
+          <span>质量 {{ formatScore(skill.quality_score) }}</span>
         </div>
 
         <div class="source-line">
-          来源：{{ skill.source || 'GitHub' }}
-          <span v-if="skill.fetched_at"> · 获取时间：{{ skill.fetched_at }}</span>
+          <span v-if="skill.fetched_at">推荐刷新：{{ skill.fetched_at }}</span>
+          <span v-if="hasRepositoryUpdatedAt(skill)">仓库更新：{{ skill.pushed_at }}</span>
         </div>
 
         <div class="card-actions">
-          <a :href="skill.repo_url" target="_blank" class="repo-link">
-            <el-button size="small" text>查看仓库</el-button>
+          <a :href="skill.repo_url" target="_blank" class="repo-link" rel="noreferrer">
+            <el-button size="small" text>查看来源</el-button>
           </a>
-          <el-button
-            v-if="!skill.installed"
-            type="primary"
-            size="small"
-            :disabled="!selectedAgentId"
-            :loading="installing.has(skill.id)"
-            @click="handleInstall(skill)"
-          >
-            安装到 Agent
-          </el-button>
-          <el-tag v-else type="success" size="small" effect="plain">已安装</el-tag>
+          <el-button size="small" text type="primary" @click="showReason(skill)">推荐理由</el-button>
         </div>
       </article>
 
-      <div v-if="!loading && filteredSkills.length === 0" class="empty-state">
-        <p>暂无社区 Skills</p>
-        <p class="hint">请输入关键词搜索 GitHub；网络失败时不会生成模拟数据。</p>
+      <div v-if="!loading && recommendedSkills.length === 0" class="empty-state">
+        <p>暂无社区 Skills 推荐</p>
+        <p class="hint">请确认已配置大模型，或输入关键词后刷新。GitHub 轻量补充不会拉取 README/SKILL.md 文件。</p>
       </div>
+    </div>
+
+    <div v-if="total > perPage" class="pagination-row">
+      <el-pagination
+        background
+        layout="prev, pager, next"
+        :current-page="page"
+        :page-size="perPage"
+        :total="total"
+        @current-change="handlePageChange"
+      />
     </div>
   </div>
 </template>
@@ -210,6 +197,7 @@ onMounted(() => {
 .page-header {
   display: flex;
   justify-content: space-between;
+  gap: 16px;
   align-items: flex-start;
   margin-bottom: 20px;
 }
@@ -222,30 +210,25 @@ onMounted(() => {
 }
 
 .subtitle,
-.target-hint {
+.updated {
   margin: 6px 0 0;
   font-size: 13px;
   color: var(--el-text-color-secondary);
+}
+
+.updated {
+  white-space: nowrap;
 }
 
 .toolbar {
   display: flex;
   gap: 12px;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 18px;
 }
 
 .search-input {
-  max-width: 420px;
-}
-
-.agent-select {
-  min-width: 360px;
-  flex: 1;
-}
-
-.tabs {
-  margin: 18px 0;
+  max-width: 520px;
 }
 
 .skills-grid {
@@ -262,11 +245,6 @@ onMounted(() => {
   background: var(--el-bg-color);
 }
 
-.skill-card.installed {
-  border-color: var(--el-color-success-light-5);
-  background: var(--el-color-success-light-9);
-}
-
 .card-header,
 .card-meta,
 .card-actions {
@@ -274,6 +252,13 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.card-meta,
+.score-line,
+.source-line {
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 .skill-name {
@@ -293,16 +278,17 @@ onMounted(() => {
 }
 
 .card-meta,
+.score-line,
 .source-line {
+  display: flex;
+  gap: 10px;
   margin-bottom: 12px;
   font-size: 12px;
   color: var(--el-text-color-placeholder);
 }
 
 .repo {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .stars {
@@ -330,5 +316,11 @@ onMounted(() => {
   margin-top: 8px;
   font-size: 13px;
   color: var(--el-text-color-placeholder);
+}
+
+.pagination-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
 }
 </style>

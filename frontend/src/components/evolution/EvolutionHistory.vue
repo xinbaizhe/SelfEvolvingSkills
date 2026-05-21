@@ -9,16 +9,16 @@ const size = 10
 const loading = ref(false)
 
 const phaseLabel: Record<string, string> = {
-  detect: '发现',
-  scan: '扫描',
-  cluster: '聚类',
-  generate: '生成草稿',
-  fetch_community: '社区检索',
-  diff: '差异分析',
-  review: '等待审核',
+  discover: '扫描发现',
+  reference_retrieval: '参考检索',
+  cluster: '聚类分析',
+  draft_generate: '生成草稿',
+  optimize: '智能优化',
+  qa_review: '质量评审',
+  diff_recommend: '差异推荐',
 }
 
-const phaseOrder = ['detect', 'scan', 'cluster', 'generate', 'fetch_community', 'diff', 'review']
+const phaseOrder = ['discover', 'reference_retrieval', 'cluster', 'draft_generate', 'optimize', 'qa_review', 'diff_recommend']
 
 const statusTag: Record<string, 'success' | 'warning' | 'info' | 'danger'> = {
   completed: 'success',

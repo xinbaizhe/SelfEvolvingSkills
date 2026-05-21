@@ -12,6 +12,13 @@ export interface CommunitySkill {
   source?: string
   status: string
   fetched_at: string | null
+  relevance_score?: number
+  quality_score?: number
+  weighted_score?: number
+  license?: string | null
+  pushed_at?: string | null
+  matched_file?: string | null
+  recommendation_reason?: string | null
 }
 
 export interface PaginatedResult<T> {

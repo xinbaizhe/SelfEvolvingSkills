@@ -56,7 +56,7 @@ async function load() {
   try {
     const res = await fetchWorkflows()
     const items = Array.isArray(res.data) ? res.data : ((res.data as any)?.items || [])
-    drafts.value = items.filter((workflow: Workflow) => workflow.can_generate_skill)
+    drafts.value = items.filter((workflow: Workflow) => workflow.draft_body)
     const currentId = selectedDraft.value?.id
     selectedDraft.value = drafts.value.find((draft) => draft.id === currentId) || drafts.value[0] || null
   } finally {
