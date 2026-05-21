@@ -18,7 +18,7 @@
 
 ## 这是什么
 
-Self Evolving Skills 是一款**本地优先**的桌面应用。它会扫描你本机安装的 AI 编程工具，收集已有的 Skills、Agents、会话历史，然后从真实工作流中**自动发现高频重复任务**，生成可安装的 Skill 草稿。
+Self Evolving Skills 是一款**本地优先**的桌面应用。它会扫描你本机安装的 AI 编程工具，收集已有的 Skills、Agents、会话历史，然后通过 **7 步进化管道**从真实工作流中自动发现高频重复任务，生成可安装的 Skill 草稿。
 
 > 所有数据默认留在本机，不上传任何内容。
 
@@ -28,16 +28,33 @@ Self Evolving Skills 是一款**本地优先**的桌面应用。它会扫描你�
 |:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Skills · Agents · Sessions · Memory | Skills · Sessions | Skills · Sessions | Sessions | Sessions | Skills · Sessions | Skills · Sessions | Skills · Sessions |
 
-## 核心流程
+## 核心流程：7 步进化管道
 
-```mermaid
-flowchart LR
-  Scan[扫描本机 Agent 数据] --> Cluster[会话压缩 & 工作流聚类]
-  Cluster --> Draft[生成 Skill 草稿]
-  Draft --> Compare[GitHub 社区对比参考]
-  Compare --> Review[人工审核编辑]
-  Review --> Install[一键安装到目标 Agent]
 ```
+扫描发现 ──→ 参考检索 ──→ 聚类分析 ──→ 生成草稿 ──→ 智能优化 ──→ 质量评审 ──→ 差异推荐
+(0-20%)     (20-32%)     (32-50%)     (50-62%)    (62-78%)     (78-90%)      (90-100%)
+```
+
+| # | 阶段 | 说明 |
+|---|------|------|
+| 1 | **扫描发现** | 检测已安装 AI 助手，扫描会话/Skills/Agents/Memories |
+| 2 | **参考检索** | 从 GitHub 社区搜索相似 Skills 作为聚类参考 |
+| 3 | **聚类分析** | 对历史会话做工作流聚类 + LLM 复核排序 |
+| 4 | **生成草稿** | 纯本地模板生成 Skill 草稿（不调用 LLM） |
+| 5 | **智能优化** | LLM 逐条优化草稿，注入社区参考 |
+| 6 | **质量评审** | QA Agent 评审 + 6 项 guardrails（frontmatter 校验、名称唯一性、工具安全、可执行性等） |
+| 7 | **差异推荐** | 对比社区 Skills，输出 replace / merge / keep / install 可操作建议 |
+
+## Skills 工作台
+
+| Tab | 功能 |
+|:---|:---|
+| **进化管道** | 启动 7 步进化，实时进度环 + 阶段状态条 |
+| **推荐** | 聚类工作流列表，按来源筛选（频率分析 / 大模型复核 / 手动进化） |
+| **草稿** | 查看和编辑生成的 Skill 草稿，支持保存、删除、安装 |
+| **社区对比** | 本地草稿 vs GitHub 社区 Skills 并行对比 |
+| **已生成** | 可安装的已审核草稿，一键安装到目标 Agent |
+| **操作记录** | 历史进化管道执行记录，分页查看每步状态 |
 
 ## 技术栈
 
@@ -79,18 +96,24 @@ npm run tauri:build
 
 | 模块 | 端点 | 说明 |
 |:---|:---|:---|
-| 扫描 | `POST /scan` | 启动全量扫描 |
+| 进化管道 | `POST /evolution/start` | 启动 7 步进化管道 |
+| | `GET /evolution/status` | 获取当前管道进度和阶段状态 |
+| | `POST /evolution/reset` | 重置卡住的管道 |
+| | `GET /evolution/history` | 历史执行记录（分页） |
 | Skills | `GET /skills` | 分页列表（支持搜索、按 Agent 筛选） |
 | | `PUT /skills/:name` | 编辑 Skill |
 | | `DELETE /skills/:name` | 删除 Skill |
 | | `POST /skills/import` | 导入 Markdown / JSON / ZIP |
 | | `POST /skills/:name/evolve` | 手动进化 |
-| 工作流 | `GET /workflows` | 聚类草稿列表 |
-| | `POST /workflows/cluster` | 触发聚类 |
-| | `POST /workflows/:id/install` | 安装草稿到 Agent |
-| 进化 | `POST /evolution/start` | 启动进化管道 |
-| 社区 | `GET /community/search` | GitHub 搜索 Skills |
+| 工作流 | `GET /workflows` | 推荐工作流列表（含聚类草稿） |
+| | `PUT /workflows/:id` | 更新草稿正文 |
+| | `DELETE /workflows/:id` | 删除草稿 |
+| | `POST /workflows/:id/install` | 安装草稿到目标 Agent |
+| | `GET /workflows/install-targets` | 可安装的 Agent 目标列表 |
+| 社区 | `GET /community/search` | 搜索 GitHub 社区 Skills |
 | | `POST /community/install` | 下载安装社区 Skill |
+| 系统 | `GET /system/monitor` | 系统资源监控（CPU / 内存 / 磁盘） |
+| | `GET /system/database` | 数据库信息 |
 
 ## 隐私
 
