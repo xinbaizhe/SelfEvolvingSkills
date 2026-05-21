@@ -76,6 +76,12 @@ jobs:
           name: release-${{ matrix.os }}-${{ matrix.target }}
           path: frontend/src-tauri/target/${{ matrix.target }}/release/bundle/
 
+      - name: Upload latest.json for updater
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-json-${{ matrix.os }}-${{ matrix.target }}
+          path: frontend/src-tauri/target/${{ matrix.target }}/release/bundle/latest.json
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
@@ -106,6 +112,18 @@ jobs:
             cp "$f" "dist/$(basename "$f")"
           done
           ls -la dist/
+
+      - name: Merge latest.json for updater
+        shell: bash
+        run: |
+          first=$(ls latest-json-*/latest.json | head -1)
+          cp "$first" dist/latest.json
+          # Merge platforms from all latest.json into one
+          for f in latest-json-*/latest.json; do
+            jq -s '.[0].platforms * .[1].platforms' dist/latest.json "$f" > dist/latest-tmp.json && mv dist/latest-tmp.json dist/latest.json
+          done
+          echo "Merged latest.json:"
+          cat dist/latest.json
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
