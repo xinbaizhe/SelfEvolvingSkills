@@ -58,3 +58,7 @@ export function getEvolutionStatus() {
 export function getEvolutionHistory(page = 1, size = 20) {
   return api<ApiResponse<PaginatedResult<EvolutionRun>>>('GET', '/evolution/history', { page, size })
 }
+
+export function resetEvolution() {
+  return api<ApiResponse<{ reset: number; message: string }>>('POST', '/evolution/reset')
+}

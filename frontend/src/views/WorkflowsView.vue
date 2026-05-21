@@ -7,10 +7,22 @@ import { fetchWorkflows, type Workflow } from '../api/workflows'
 const workflows = ref<Workflow[]>([])
 const loading = ref(false)
 const starting = ref(false)
+const activeFilter = ref<string | null>(null)
 
-const llmCount = computed(() => workflows.value.filter((workflow) => workflow.recommendation_source === 'llm').length)
-const fallbackCount = computed(() => workflows.value.length - llmCount.value)
-const installableCount = computed(() => workflows.value.filter((workflow) => workflow.can_generate_skill).length)
+const manualCount = computed(() => workflows.value.filter((w) => w.recommendation_source === 'manual-existing-skill' || w.status === 'manual-draft').length)
+const pipelineCount = computed(() => workflows.value.filter((w) => w.recommendation_source !== 'manual-existing-skill' && w.recommendation_source !== 'llm').length)
+const llmCount = computed(() => workflows.value.filter((w) => w.recommendation_source === 'llm').length)
+
+const filteredWorkflows = computed(() => {
+  if (activeFilter.value === 'manual') return workflows.value.filter((w) => w.recommendation_source === 'manual-existing-skill' || w.status === 'manual-draft')
+  if (activeFilter.value === 'pipeline') return workflows.value.filter((w) => w.recommendation_source !== 'manual-existing-skill' && w.recommendation_source !== 'llm')
+  if (activeFilter.value === 'llm') return workflows.value.filter((w) => w.recommendation_source === 'llm')
+  return workflows.value
+})
+
+function setFilter(key: string | null) {
+  activeFilter.value = activeFilter.value === key ? null : key
+}
 
 function parseSourceAgents(workflow: Workflow): string[] {
   const raw = workflow.source_agents as unknown
@@ -85,13 +97,26 @@ onMounted(load)
 
       <div v-if="workflows.length > 0" class="body" v-loading="loading">
         <div class="workflow-summary">
-          <span class="chip green">大模型 {{ llmCount }}</span>
-          <span class="chip orange">本地分析 {{ fallbackCount }}</span>
-          <span class="chip">合计 {{ workflows.length }}</span>
-          <span class="chip violet">可生成 {{ installableCount }}</span>
+          <span
+            :class="'chip green filter-chip' + (activeFilter === 'manual' ? ' active' : '')"
+            @click="setFilter('manual')"
+          >手动进化 {{ manualCount }}</span>
+          <span
+            :class="'chip orange filter-chip' + (activeFilter === 'pipeline' ? ' active' : '')"
+            @click="setFilter('pipeline')"
+          >进化管道推荐 {{ pipelineCount }}</span>
+          <span
+            :class="'chip violet filter-chip' + (activeFilter === 'llm' ? ' active' : '')"
+            @click="setFilter('llm')"
+          >大模型复核 {{ llmCount }}</span>
+          <span
+            v-if="activeFilter"
+            class="chip filter-chip"
+            @click="setFilter(null)"
+          >显示全部 {{ workflows.length }}</span>
         </div>
 
-        <article v-for="(workflow, index) in workflows" :key="workflow.id" class="item workflow-item">
+        <article v-for="(workflow, index) in filteredWorkflows" :key="workflow.id" class="item workflow-item">
           <div :class="'rank ' + rankClass(workflow.skill_score)">{{ index + 1 }}</div>
           <div class="workflow-main">
             <div class="workflow-title">
@@ -128,15 +153,20 @@ onMounted(load)
         </article>
       </div>
 
+      <div v-else-if="activeFilter" class="body empty-state" v-loading="loading">
+        <p>该筛选条件下暂无工作流。</p>
+        <el-button link type="primary" @click="setFilter(null)">显示全部</el-button>
+      </div>
+
       <div v-else class="body empty-state" v-loading="loading">
         <p>暂无推荐。</p>
-        <p>点击“启动进化”后，系统会自动扫描已启用 Agent 的历史记录，提取用户请求和压缩摘要，再生成工作流推荐。</p>
-        <p>如果进化完成后仍为 0，请到“数据源”确认目标 Agent 已检测到历史会话路径。</p>
+        <p>点击"启动进化"后，系统会自动扫描已启用 Agent 的历史记录，提取用户请求和压缩摘要，再生成工作流推荐。</p>
+        <p>如果进化完成后仍为 0，请到"数据源"确认目标 Agent 已检测到历史会话路径。</p>
       </div>
     </section>
 
-    <section class="two" style="margin-top: 20px" v-if="workflows.some((workflow) => workflow.can_generate_skill)">
-      <section class="panel" v-for="workflow in workflows.filter((item) => item.can_generate_skill).slice(0, 4)" :key="'draft-' + workflow.id">
+    <section class="two" style="margin-top: 20px" v-if="filteredWorkflows.some((w) => w.can_generate_skill)">
+      <section class="panel" v-for="workflow in filteredWorkflows.filter((w) => w.can_generate_skill).slice(0, 4)" :key="'draft-' + workflow.id">
         <div class="head">
           <div>
             <h2>{{ workflow.name }}</h2>
@@ -163,7 +193,26 @@ onMounted(load)
 </template>
 
 <style scoped>
-.workflow-summary,
+.workflow-summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.filter-chip {
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 12px;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.filter-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+.filter-chip.active {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 2px currentColor, 0 2px 8px rgba(0,0,0,0.15);
+}
 .tag-row,
 .similar { margin-bottom: 8px; }
 .tag-row { display: flex; gap: 6px; flex-wrap: wrap; }

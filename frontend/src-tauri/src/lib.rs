@@ -496,11 +496,12 @@ async fn dispatch_api(
         // Evolution pipeline
         ("POST", "/evolution/start") | ("POST", "evolution/start") => {
             sync_source_configs(&conn)?;
+            services::evolution_service::cleanup_stale_jobs(&conn);
             if services::evolution_service::has_incomplete_run(&conn) {
                 return Ok(json!(ApiResponse::<Value> {
                     success: false,
                     data: json!(null),
-                    error: Some("An evolution job is still running. Wait for it to finish before starting a new one.".to_string()),
+                    error: Some("进化管道正在运行中，请等待完成后再启动新的进化。如果确认已中断，请点击「加载状态」后使用「重置卡住的管道」。".to_string()),
                 }));
             }
             let scope = parse_scope_payload(body)?;
@@ -516,7 +517,11 @@ async fn dispatch_api(
         ("GET", "/evolution/status") | ("GET", "evolution/status") => {
             Ok(json!(ApiResponse::ok(services::evolution_service::get_evolution_status(&conn))))
         }
+        ("POST", "/evolution/reset") | ("POST", "evolution/reset") => {
+            Ok(json!(ApiResponse::ok(services::evolution_service::reset_stuck_evolution(&conn))))
+        }
         ("GET", "/evolution/history") | ("GET", "evolution/history") => {
+            services::evolution_service::cleanup_stale_jobs(&conn);
             Ok(json!(ApiResponse::ok(services::evolution_service::list_evolution_history(&conn, &query))))
         }
         // System monitoring
@@ -569,7 +574,8 @@ fn list_workflows(conn: &Connection, query: PageQuery) -> Result<Value> {
     let mut stmt = conn.prepare(
         "SELECT id, name, description, frequency, source_agents, estimated_time_saved,
                 can_generate_skill, skill_score, status, draft_body, sample_tasks,
-                recommendation_source, confidence, reasoning, source_skills, similar_skills
+                recommendation_source, confidence, reasoning, source_skills, similar_skills,
+                review_score, review_summary, review_feedback
          FROM workflow_clusters ORDER BY skill_score DESC LIMIT ?1 OFFSET ?2",
     )?;
     let items: Vec<Value> = stmt
@@ -578,6 +584,7 @@ fn list_workflows(conn: &Connection, query: PageQuery) -> Result<Value> {
             let sample_tasks: Option<String> = row.get(10)?;
             let source_skills: Option<String> = row.get(14)?;
             let similar_skills: Option<String> = row.get(15)?;
+            let review_feedback: Option<String> = row.get(18)?;
             Ok(json!({
                 "id": row.get::<_, i64>(0)?,
                 "name": row.get::<_, String>(1)?,
@@ -595,6 +602,9 @@ fn list_workflows(conn: &Connection, query: PageQuery) -> Result<Value> {
                 "reasoning": row.get::<_, Option<String>>(13)?,
                 "source_skills": source_skills.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!([])),
                 "similar_skills": similar_skills.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!([])),
+                "review_score": row.get::<_, Option<i64>>(16)?,
+                "review_summary": row.get::<_, Option<String>>(17)?,
+                "review_feedback": review_feedback.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!(null)),
             }))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -2623,10 +2633,24 @@ fn delete_skill(conn: &Connection, name: &str) -> Result<Value> {
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
     ).optional()?.ok_or_else(|| anyhow!("Skill not found"))?;
 
-    // Delete file from disk
     let file_path = std::path::Path::new(&row.0);
     if file_path.exists() {
-        std::fs::remove_file(file_path)?;
+        // On Windows, clear read-only attribute before attempting deletion
+        if let Ok(metadata) = std::fs::metadata(file_path) {
+            let mut perms = metadata.permissions();
+            if perms.readonly() {
+                perms.set_readonly(false);
+                std::fs::set_permissions(file_path, perms)
+                    .with_context(|| format!("无法修改文件权限: {}", file_path.display()))?;
+            }
+        }
+        std::fs::remove_file(file_path)
+            .with_context(|| format!("无法删除文件 {}，可能被其他进程占用", file_path.display()))?;
+    }
+
+    // Try to remove the parent skill directory if empty
+    if let Some(parent) = file_path.parent() {
+        let _ = std::fs::remove_dir(parent);
     }
 
     conn.execute("DELETE FROM skills WHERE name = ?1", [name])?;
@@ -2961,7 +2985,7 @@ async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
     if status.is_success() {
-        Ok(json!({ "message": "connection test succeeded" }))
+        Ok(json!({ "message": "大模型连接测试成功" }))
     } else {
         let message = serde_json::from_str::<Value>(&text)
             .ok()
@@ -2973,7 +2997,7 @@ async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
                     .map(ToString::to_string)
             })
             .unwrap_or_else(|| text.chars().take(300).collect::<String>());
-        Err(anyhow!("connection test failed: HTTP {} {}", status.as_u16(), message))
+        Err(anyhow!("大模型连接测试失败：HTTP {} {}", status.as_u16(), message))
     }
 }
 

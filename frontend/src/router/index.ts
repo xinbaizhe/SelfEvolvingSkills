@@ -13,7 +13,7 @@ const router = createRouter({
     { path: '/skills', name: 'skills', component: () => import('../views/SkillsView.vue') },
     { path: '/garden', name: 'garden', component: () => import('../views/SkillGardenView.vue') },
     { path: '/agents', name: 'agents', component: () => import('../views/AgentsView.vue') },
-    { path: '/conversations', redirect: '/admin' },
+    { path: '/conversations', name: 'conversations', component: () => import('../views/ConversationsView.vue') },
     { path: '/scan', redirect: '/admin' },
     { path: '/export', redirect: '/skills' },
     { path: '/community', name: 'community', component: () => import('../views/CommunitySkillsView.vue') },

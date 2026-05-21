@@ -195,6 +195,9 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
             reasoning TEXT,
             source_skills TEXT,
             similar_skills TEXT,
+            review_score INTEGER,
+            review_summary TEXT,
+            review_feedback TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
@@ -211,6 +214,9 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
         "#,
     )?;
     let _ = conn.execute("ALTER TABLE sessions ADD COLUMN compressed_summary TEXT", []);
+    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_score INTEGER", []);
+    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_summary TEXT", []);
+    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_feedback TEXT", []);
     conn.execute(
         "INSERT OR IGNORE INTO admin_users (id, username, password_hash, is_active, created_at)
          VALUES (1, 'local', '', 1, ?1)",

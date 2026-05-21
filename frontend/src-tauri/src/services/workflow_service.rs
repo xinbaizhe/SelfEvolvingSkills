@@ -9,6 +9,7 @@ pub(crate) struct WorkflowCluster {
     pub estimated_time_saved: String,
     pub can_generate_skill: bool,
     pub skill_score: i64,
+    pub confidence: f64,
     pub sample_tasks: Vec<String>,
     pub source_skills: Vec<String>,
 }
@@ -20,6 +21,8 @@ struct SessionRow {
     first_prompt: Option<String>,
     compressed_summary: Option<String>,
     entrypoint: Option<String>,
+    message_count: i64,
+    started_at: Option<String>,
 }
 
 impl SessionRow {
@@ -42,7 +45,7 @@ impl SessionRow {
 
 pub(crate) fn cluster_workflows(conn: &Connection) -> Vec<WorkflowCluster> {
     let mut stmt = match conn.prepare(
-        "SELECT project_name, agent_source, first_prompt, compressed_summary, entrypoint
+        "SELECT project_name, agent_source, first_prompt, compressed_summary, entrypoint, message_count, started_at
          FROM sessions
          WHERE (first_prompt IS NOT NULL AND first_prompt != '')
             OR (compressed_summary IS NOT NULL AND compressed_summary != '')
@@ -60,6 +63,8 @@ pub(crate) fn cluster_workflows(conn: &Connection) -> Vec<WorkflowCluster> {
                 first_prompt: row.get(2)?,
                 compressed_summary: row.get(3)?,
                 entrypoint: row.get(4)?,
+                message_count: row.get(5)?,
+                started_at: row.get(6)?,
             })
         })
         .map(|rows| rows.filter_map(|row| row.ok()).collect())
@@ -74,6 +79,9 @@ pub(crate) fn cluster_workflows(conn: &Connection) -> Vec<WorkflowCluster> {
         clusters = cluster_by_keywords(&sessions);
     }
 
+    merge_duplicate_named_clusters(&mut clusters);
+    mark_existing_skill_duplicates(conn, &mut clusters);
+    make_cluster_names_unique(&mut clusters);
     clusters.sort_by_key(|cluster| std::cmp::Reverse(cluster.skill_score));
     clusters
 }
@@ -120,9 +128,8 @@ fn build_cluster(label: &str, rows: &[&SessionRow]) -> WorkflowCluster {
     let analysis_texts = rows.iter().map(|row| row.analysis_text()).collect::<Vec<_>>();
     let analysis_refs = analysis_texts.iter().map(String::as_str).collect::<Vec<_>>();
     let keywords = extract_keywords(&analysis_refs);
-    let name = classify_prompt(&analysis_refs.join("\n"))
-        .or_else(|| keywords.first().cloned())
-        .unwrap_or_else(|| label.to_string());
+    let base_name = classify_prompt(&analysis_refs.join("\n")).unwrap_or_else(|| label.to_string());
+    let name = skill_name_from_keywords(&base_name, &keywords);
     let agents = rows
         .iter()
         .filter_map(|row| row.agent_source.clone())
@@ -136,8 +143,48 @@ fn build_cluster(label: &str, rows: &[&SessionRow]) -> WorkflowCluster {
         .map(|prompt| crate::utils::text::truncate_chars(prompt, 200))
         .collect::<Vec<_>>();
     let frequency = rows.len() as i64;
-    let score = ((frequency as f64 / 5.0) * 100.0).round() as i64;
-    let score = score.clamp(60, 95);
+    let unique_agents = agents.len() as i64;
+
+    // Average message count per session — proxy for workflow complexity
+    let total_msgs: i64 = rows.iter().map(|r| r.message_count).sum();
+    let avg_msg_count = if frequency > 0 {
+        total_msgs as f64 / frequency as f64
+    } else {
+        0.0
+    };
+
+    // --- skill_score: multi-factor (0-100, clamped 15-95) ---
+    // Frequency component: more occurrences → higher base score
+    let freq_score = (frequency as f64 * 7.0).min(60.0);
+    // Complexity component: longer sessions suggest a more valuable, reusable workflow
+    let complexity_score = (avg_msg_count / 3.0).min(25.0);
+    // Agent diversity: workflows spanning multiple agents are more reusable
+    let agent_score = ((unique_agents - 1) as f64 * 5.0).min(10.0).max(0.0);
+    let score = (freq_score + complexity_score + agent_score).clamp(15.0, 95.0).round() as i64;
+
+    // --- confidence: independent of score, measures data reliability (0.0-1.0) ---
+    let size_conf = (frequency as f64 / 20.0).min(0.55);
+    let complexity_conf = if avg_msg_count > 15.0 {
+        0.25
+    } else if avg_msg_count > 8.0 {
+        0.15
+    } else {
+        0.05
+    };
+    let agent_conf = if unique_agents > 2 {
+        0.15
+    } else if unique_agents > 1 {
+        0.08
+    } else {
+        0.0
+    };
+    let confidence = (size_conf + complexity_conf + agent_conf).clamp(0.2, 0.95);
+
+    // --- estimated_time_saved: based on actual message counts ---
+    // Each message represents ~2.5 minutes of AI-assisted work
+    let total_minutes = frequency as f64 * avg_msg_count * 2.5;
+    let time_label = compute_time_span_label(rows, total_minutes);
+
     let keyword_text = if keywords.is_empty() {
         name.clone()
     } else {
@@ -152,11 +199,159 @@ fn build_cluster(label: &str, rows: &[&SessionRow]) -> WorkflowCluster {
         ),
         frequency,
         source_agents: agents,
-        estimated_time_saved: format!("{:.1}h/周", frequency as f64 * 0.3),
+        estimated_time_saved: time_label,
         can_generate_skill: true,
         skill_score: score,
+        confidence,
         sample_tasks,
         source_skills: vec![],
+    }
+}
+
+/// Compute a human-readable time-saved label using actual session timestamps.
+fn compute_time_span_label(rows: &[&SessionRow], total_minutes: f64) -> String {
+    let timestamps: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.started_at.as_deref())
+        .collect();
+    if timestamps.len() < 2 {
+        return format!("{:.1}h 总计", total_minutes / 60.0);
+    }
+    // Parse the earliest and latest started_at (format: yyyy-MM-dd HH:mm:ss or ISO)
+    let parse_ts = |s: &str| {
+        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+            .ok()
+    };
+    let earliest = timestamps.iter().filter_map(|t| parse_ts(t)).min();
+    let latest = timestamps.iter().filter_map(|t| parse_ts(t)).max();
+    match (earliest, latest) {
+        (Some(first), Some(last)) if last > first => {
+            let span_hours = (last - first).num_hours() as f64;
+            let span_weeks = (span_hours / (24.0 * 7.0)).max(0.5); // minimum half-week to avoid inflating
+            format!("{:.1}h/周", total_minutes / 60.0 / span_weeks)
+        }
+        _ => format!("{:.1}h 总计", total_minutes / 60.0),
+    }
+}
+
+fn skill_name_from_keywords(base_name: &str, keywords: &[String]) -> String {
+    let details = keywords
+        .iter()
+        .filter(|word| word.as_str() != base_name)
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>();
+    if details.is_empty() {
+        return base_name.to_string();
+    }
+    format!("{}-{}", base_name, details.join("-"))
+}
+
+fn merge_duplicate_named_clusters(clusters: &mut Vec<WorkflowCluster>) {
+    let mut merged: Vec<WorkflowCluster> = Vec::new();
+    for cluster in clusters.drain(..) {
+        if let Some(existing) = merged.iter_mut().find(|item| item.name == cluster.name) {
+            existing.frequency += cluster.frequency;
+            existing.skill_score = existing.skill_score.max(cluster.skill_score).min(100);
+            existing.confidence = existing.confidence.max(cluster.confidence);
+            for agent in cluster.source_agents {
+                if !existing.source_agents.contains(&agent) {
+                    existing.source_agents.push(agent);
+                }
+            }
+            for task in cluster.sample_tasks {
+                if existing.sample_tasks.len() < 8 && !existing.sample_tasks.contains(&task) {
+                    existing.sample_tasks.push(task);
+                }
+            }
+            for source_skill in cluster.source_skills {
+                if !existing.source_skills.contains(&source_skill) {
+                    existing.source_skills.push(source_skill);
+                }
+            }
+            existing.description = format!(
+                "{}\n已合并同名候选，累计出现 {} 次。",
+                existing.description, existing.frequency
+            );
+        } else {
+            merged.push(cluster);
+        }
+    }
+    *clusters = merged;
+}
+
+pub(crate) fn make_cluster_names_unique(clusters: &mut [WorkflowCluster]) {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for cluster in clusters {
+        let count = seen.entry(cluster.name.clone()).or_insert(0);
+        if *count > 0 {
+            let suffix = extract_keywords(
+                &cluster
+                    .sample_tasks
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+            )
+            .into_iter()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("-");
+            cluster.name = if suffix.is_empty() {
+                format!("{}-{}", cluster.name, *count + 1)
+            } else {
+                format!("{}-{}", cluster.name, suffix)
+            };
+        }
+        *count += 1;
+    }
+}
+
+fn mark_existing_skill_duplicates(conn: &Connection, clusters: &mut [WorkflowCluster]) {
+    let mut stmt = match conn.prepare("SELECT name, description, body_text FROM skills") {
+        Ok(stmt) => stmt,
+        Err(_) => return,
+    };
+    let existing = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            ))
+        })
+        .map(|rows| rows.filter_map(|row| row.ok()).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    if existing.is_empty() {
+        return;
+    }
+
+    for cluster in clusters {
+        let cluster_words = tokenize(&format!(
+            "{}\n{}\n{}",
+            cluster.name,
+            cluster.description,
+            cluster.sample_tasks.join("\n")
+        ));
+        let mut best_match: Option<(String, f64)> = None;
+        for (name, description, body) in &existing {
+            let skill_words = tokenize(&format!("{name}\n{description}\n{body}"));
+            let score = jaccard_similarity(&cluster_words, &skill_words);
+            if score >= 0.72 && best_match.as_ref().map(|(_, best)| score > *best).unwrap_or(true) {
+                best_match = Some((name.clone(), score));
+            }
+        }
+
+        if let Some((name, score)) = best_match {
+            cluster.can_generate_skill = false;
+            cluster.skill_score = cluster.skill_score.min(55);
+            cluster.source_skills.push(format!(
+                "Existing Skill Matcher Agent: 与已有 Skill「{}」高度相似，相似度 {:.0}%，建议进化已有 Skill 而不是新建。",
+                name,
+                score * 100.0
+            ));
+        }
     }
 }
 
@@ -247,7 +442,10 @@ fn is_stop_word(word: &str) -> bool {
 }
 
 pub(crate) fn save_clusters(conn: &Connection, clusters: &[WorkflowCluster]) -> anyhow::Result<i64> {
-    conn.execute("DELETE FROM workflow_clusters", [])?;
+    conn.execute(
+        "DELETE FROM workflow_clusters WHERE recommendation_source != 'manual-existing-skill' AND status != 'manual-draft'",
+        [],
+    )?;
 
     let now = crate::utils::time::now_string();
     for cluster in clusters {
@@ -267,7 +465,7 @@ pub(crate) fn save_clusters(conn: &Connection, clusters: &[WorkflowCluster]) -> 
                 cluster.can_generate_skill as i64,
                 cluster.skill_score,
                 serde_json::to_string(&cluster.sample_tasks)?,
-                cluster.skill_score as f64 / 100.0,
+                cluster.confidence,
                 format!("在 {} 条历史会话中发现相似模式，已使用本地压缩摘要降低上下文成本", cluster.frequency),
                 serde_json::to_string(&cluster.source_skills)?,
                 now,
@@ -345,13 +543,25 @@ pub(crate) fn generate_skill_drafts(conn: &Connection, clusters: &[WorkflowClust
             .replace("{agent_list}", &agent_list);
 
         let now = crate::utils::time::now_string();
-        let _ = conn.execute(
-            "UPDATE workflow_clusters SET draft_body = ?2, can_generate_skill = 1, updated_at = ?3
-             WHERE name = ?1 AND can_generate_skill = 1",
-            params![cluster.name, draft, now],
-        );
+        if let Ok(id) = workflow_id_for_cluster(conn, cluster) {
+            let _ = conn.execute(
+                "UPDATE workflow_clusters SET draft_body = ?2, can_generate_skill = 1, updated_at = ?3
+                 WHERE id = ?1",
+                params![id, draft, now],
+            );
+        }
         count += 1;
     }
 
     count
+}
+
+pub(crate) fn workflow_id_for_cluster(conn: &Connection, cluster: &WorkflowCluster) -> anyhow::Result<i64> {
+    let sample_tasks = serde_json::to_string(&cluster.sample_tasks)?;
+    conn.query_row(
+        "SELECT id FROM workflow_clusters WHERE name = ?1 AND sample_tasks = ?2 LIMIT 1",
+        params![cluster.name, sample_tasks],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
 }

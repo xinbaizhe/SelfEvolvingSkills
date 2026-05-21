@@ -50,9 +50,34 @@ const clearing = ref(false)
 const initializing = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
+const tableNameLabels: Record<string, string> = {
+  admin_users: '管理员',
+  agents: 'AI 助手',
+  community_skills: '社区 Skills',
+  evolution_jobs: '进化任务',
+  memories: '记忆',
+  scan_jobs: '扫描任务',
+  sessions: '会话',
+  skill_usage: 'Skill 使用记录',
+  skills: 'Skills',
+  source_configs: '数据源配置',
+  workflow_clusters: '工作流聚类',
+}
+
+const dbTotalRows = computed(() => dbTables.value.reduce((sum, t) => sum + t.count, 0))
+
 const dbTables = computed(() => {
   if (!dbInfo.value) return []
-  return Object.entries(dbInfo.value.table_counts).map(([name, count]) => ({ name, count }))
+  const entries = Object.entries(dbInfo.value.table_counts).map(([name, count]) => ({
+    name,
+    label: tableNameLabels[name] || name,
+    count,
+  }))
+  const maxCount = Math.max(...entries.map((e) => e.count), 1)
+  return entries.map((e) => ({
+    ...e,
+    pct: ((e.count / maxCount) * 100).toFixed(1),
+  }))
 })
 
 const latestScan = computed(() => scanStore.history[0] ?? null)
@@ -207,7 +232,7 @@ function handleHealthCardClick(key: string) {
       ElMessage.warning('会话为空，请先执行扫描')
       return
     }
-    openSessionsDrawer()
+    router.push('/conversations')
   }
 }
 
@@ -551,13 +576,36 @@ async function handleInitializeDatabase() {
       </el-card>
 
       <el-card class="history-card" shadow="never" v-if="dbInfo">
-        <template #header>数据库表统计</template>
-        <div class="db-path">{{ dbInfo.db_path }}</div>
-        <div class="db-tables">
-          <div v-for="table in dbTables" :key="table.name" class="db-table-row">
-            <span>{{ table.name }}</span>
-            <span class="db-table-count">{{ table.count.toLocaleString() }}</span>
+        <template #header>
+          <div class="db-card-header">
+            <span>数据库表统计</span>
+            <span class="db-card-sub">共 {{ dbTables.length }} 张表</span>
           </div>
+        </template>
+        <div class="db-path">{{ dbInfo.db_path }}</div>
+        <el-table :data="dbTables" stripe size="small" class="db-table">
+          <el-table-column prop="label" label="表名" width="180" />
+          <el-table-column prop="name" label="英文名" width="200">
+            <template #default="{ row }">
+              <code class="db-table-code">{{ row.name }}</code>
+            </template>
+          </el-table-column>
+          <el-table-column prop="count" label="记录数" width="120" sortable>
+            <template #default="{ row }">
+              <span class="db-table-count">{{ row.count.toLocaleString() }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="数据占比" min-width="240">
+            <template #default="{ row }">
+              <div class="db-bar-row">
+                <el-progress :percentage="Number(row.pct)" :stroke-width="8" :show-text="false" />
+                <span class="db-bar-label">{{ row.pct }}%</span>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="db-footer">
+          总记录数：<strong>{{ dbTotalRows.toLocaleString() }}</strong>
         </div>
       </el-card>
     </section>
@@ -936,11 +984,25 @@ async function handleInitializeDatabase() {
   padding: 0;
 }
 
-.db-path {
-  margin: 0;
-  padding: 14px 16px;
+.db-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.db-card-sub {
   color: #64748b;
   font-size: 12px;
+  font-weight: 400;
+}
+
+.db-path {
+  margin: 0;
+  padding: 10px 16px;
+  color: #64748b;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   background: #fbfdff;
   border-bottom: 1px solid #eef2f7;
   overflow: hidden;
@@ -948,27 +1010,64 @@ async function handleInitializeDatabase() {
   white-space: nowrap;
 }
 
-.db-tables {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0;
-  padding: 8px 16px 14px;
+.db-table :deep(.el-table__header-wrapper th) {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 700;
 }
 
-.db-table-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid #f1f5f9;
-  color: #334155;
-  font-size: 13px;
-  padding: 8px 0;
+.db-table-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 3px;
 }
 
 .db-table-count {
   color: #0f766e;
   font-weight: 800;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
+}
+
+.db-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.db-bar-row :deep(.el-progress-bar__outer) {
+  background: #e9eef5;
+  flex: 1;
+}
+
+.db-bar-row :deep(.el-progress-bar__inner) {
+  background: linear-gradient(90deg, #14b8a6, #0891b2);
+}
+
+.db-bar-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+  text-align: right;
+}
+
+.db-footer {
+  padding: 10px 16px;
+  color: #64748b;
+  font-size: 12px;
+  text-align: right;
+  border-top: 1px solid #eef2f7;
+  background: #f8fafc;
+}
+
+.db-footer strong {
+  color: #0f766e;
+  font-weight: 800;
 }
 
 .error-text {

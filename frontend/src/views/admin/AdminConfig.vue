@@ -13,7 +13,7 @@ interface ProviderPreset {
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
   { key: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.2', 'gpt-5.2-chat-latest', 'gpt-5.2-pro', 'gpt-5.1', 'gpt-4.1', 'o3'], defaultModel: 'gpt-5.2' },
-  { key: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api/deepseek.com/v1', models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-v4-pro' },
+  { key: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-v4-pro' },
   { key: 'siliconflow', label: '硅基流动 (SiliconFlow)', baseUrl: 'https://api.siliconflow.cn/v1', models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen3-235B-A22B-Instruct-2507'], defaultModel: 'deepseek-ai/DeepSeek-V3' },
   { key: 'bailian', label: '阿里百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-235b-a22b'], defaultModel: 'qwen-plus' },
   { key: 'zhipu', label: '智谱 AI (GLM)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4.6', 'glm-4.5', 'glm-4-plus', 'glm-4-flash'], defaultModel: 'glm-4.6' },
@@ -28,8 +28,24 @@ const scanPaths = ref<any[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const lastTestOk = ref<boolean | null>(null)
+const lastTestError = ref('')
 
 const activePreset = computed(() => PROVIDER_PRESETS.find((p) => p.key === selectedProvider.value))
+
+const llmStatusLabel = computed(() => {
+  if (lastTestOk.value === true) return '大模型可用'
+  if (lastTestOk.value === false) return `连接失败：${lastTestError.value || '未知错误'}`
+  if (form.llm_enabled && form.api_key_configured) return '已配置，未测试连接'
+  return '使用本地回退'
+})
+
+const llmStatusType = computed<'' | 'success' | 'danger' | 'warning' | 'info'>(() => {
+  if (lastTestOk.value === true) return 'success'
+  if (lastTestOk.value === false) return 'danger'
+  if (form.llm_enabled && form.api_key_configured) return 'warning'
+  return 'info'
+})
 
 const modelOptions = computed(() => {
   const preset = activePreset.value
@@ -58,6 +74,8 @@ function onProviderChange(key: string) {
   if (!preset) return
   form.llm_base_url = preset.baseUrl
   form.llm_model = preset.defaultModel
+  lastTestOk.value = null
+  lastTestError.value = ''
 }
 
 async function load() {
@@ -132,13 +150,22 @@ async function save() {
 async function testConnection() {
   if (!validateLlmForm()) return
   testing.value = true
+  lastTestOk.value = null
+  lastTestError.value = ''
   try {
     const res = await testLlmConnection(llmPayload())
     if (res.success) {
+      lastTestOk.value = true
       ElMessage.success(res.data?.message || '连接测试成功')
     } else {
+      lastTestOk.value = false
+      lastTestError.value = res.error || '连接测试失败'
       ElMessage.error(res.error || '连接测试失败')
     }
+  } catch (e: any) {
+    lastTestOk.value = false
+    lastTestError.value = e?.message || '连接测试异常'
+    ElMessage.error(e?.message || '连接测试异常')
   } finally {
     testing.value = false
   }
@@ -244,9 +271,7 @@ function getSourcePaths(source: any): any[] {
         <el-form-item>
           <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
           <el-button :loading="testing" @click="testConnection">测试连接</el-button>
-          <span class="hint">
-            状态：{{ form.llm_enabled && form.api_key_configured ? '大模型可用' : '使用本地回退' }}
-          </span>
+          <el-tag :type="llmStatusType" size="small">{{ llmStatusLabel }}</el-tag>
         </el-form-item>
       </el-form>
     </el-card>

@@ -18,6 +18,10 @@ function syncTabFromRoute() {
   if (allowedTabs.has(tab)) activeTab.value = tab
 }
 
+async function handlePipelineStarted() {
+  refreshKey.value += 1
+}
+
 async function handlePipelineCompleted() {
   refreshKey.value += 1
   await nextTick()
@@ -39,7 +43,7 @@ watch(() => route.query.tab, syncTabFromRoute)
 
     <el-tabs v-model="activeTab" class="workspace-tabs">
       <el-tab-pane label="进化管道" name="pipeline">
-        <EvolutionPipeline @completed="handlePipelineCompleted" />
+        <EvolutionPipeline @started="handlePipelineStarted" @completed="handlePipelineCompleted" />
       </el-tab-pane>
       <el-tab-pane label="推荐" name="recommend">
         <WorkflowsView :key="`recommend-${refreshKey}`" />

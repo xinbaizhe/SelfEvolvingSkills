@@ -18,8 +18,20 @@ export interface Workflow {
   reasoning?: string | null
   source_skills?: string[]
   similar_skills?: { name: string; source: string; url?: string }[]
+  review_score?: number | null
+  review_summary?: string | null
+  review_feedback?: SkillReviewFeedback | null
   created_at: string
   updated_at: string
+}
+
+export interface SkillReviewFeedback {
+  verdict?: string
+  safety?: string[]
+  performance?: string[]
+  functionality?: string[]
+  writing?: string[]
+  improvements?: string[]
 }
 
 export interface SkillInstallTarget {

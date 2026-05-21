@@ -234,6 +234,9 @@ pub(crate) fn compare_with_community(
     let mut comparisons = 0;
 
     for cluster in clusters.iter().filter(|cluster| cluster.can_generate_skill) {
+        let Ok(workflow_id) = crate::services::workflow_service::workflow_id_for_cluster(conn, cluster) else {
+            continue;
+        };
         let lower_name = cluster.name.to_lowercase();
         let mut stmt = match conn.prepare(
             "SELECT name, repo_url, stars, description FROM community_skills
@@ -259,9 +262,9 @@ pub(crate) fn compare_with_community(
         if !similar.is_empty() {
             let now = now_string();
             let _ = conn.execute(
-                "UPDATE workflow_clusters SET similar_skills = ?2, updated_at = ?3 WHERE name = ?1",
+                "UPDATE workflow_clusters SET similar_skills = ?2, updated_at = ?3 WHERE id = ?1",
                 params![
-                    cluster.name,
+                    workflow_id,
                     serde_json::to_string(&similar).unwrap_or_default(),
                     now,
                 ],

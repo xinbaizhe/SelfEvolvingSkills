@@ -2,17 +2,21 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { ElMessage } from 'element-plus'
-import { getEvolutionStatus, startEvolution, type EvolutionJob, type EvolutionPhase, type EvolutionStep } from '../../api/evolution'
+import { getEvolutionStatus, resetEvolution, startEvolution, type EvolutionJob, type EvolutionPhase, type EvolutionStep } from '../../api/evolution'
 import { fetchSources, type SourceConfig } from '../../api/scan'
 
 const emit = defineEmits<{
   (e: 'completed'): void
+  (e: 'started'): void
 }>()
 
 const job = ref<EvolutionJob | null>(null)
 const sources = ref<SourceConfig[]>([])
 const selectedAgentIds = ref<string[]>([])
 const loading = ref(false)
+const resetting = ref(false)
+const statusLoading = ref(false)
+const staleDetected = ref(false)
 const unlisten = ref<(() => void) | null>(null)
 
 const steps: EvolutionStep[] = [
@@ -47,7 +51,9 @@ const phaseStatuses = computed(() => {
 })
 
 const progressPercent = computed(() => {
-  if (!job.value?.phases) return 0
+  if (!job.value?.phases) {
+    return job.value?.last_completed ? 100 : 0
+  }
   const completed = job.value.phases.filter((p) => p.status === 'completed').length
   if (completed === steps.length) return 100
   const running = job.value.phases.find((p) => p.status === 'running')
@@ -89,14 +95,26 @@ async function loadSources() {
 }
 
 async function loadStatus() {
+  statusLoading.value = true
   try {
     const res = await getEvolutionStatus()
     if (res.success && res.data) {
-      job.value = res.data
-      if (res.data.running) startListening()
+      const data = res.data as EvolutionJob & { auto_failed?: number }
+      job.value = data
+      if (data.auto_failed && data.auto_failed > 0) {
+        staleDetected.value = true
+        ElMessage.warning(`检测到 ${data.auto_failed} 个阶段超时（>10分钟），已自动标记为失败。`)
+      }
+      // Check for stuck state: running but current_phase is null or no progress
+      if (data.running && !data.current_phase) {
+        staleDetected.value = true
+      }
+      if (data.running) startListening()
     }
   } catch {
     // 状态查询失败不阻断页面。
+  } finally {
+    statusLoading.value = false
   }
 }
 
@@ -127,6 +145,7 @@ async function handleStart() {
         last_completed: null,
       }
       startListening()
+      emit('started')
       ElMessage.success('进化管道已启动，请等待 7 步流程完成后查看推荐。')
     } else {
       ElMessage.error(res.error || '启动进化管道失败')
@@ -193,6 +212,25 @@ function stopListening() {
   unlisten.value = null
 }
 
+async function handleReset() {
+  resetting.value = true
+  try {
+    const res = await resetEvolution()
+    if (res.success && res.data) {
+      ElMessage.success(res.data.message || '已重置')
+      staleDetected.value = false
+      job.value = null
+      await loadStatus()
+    } else {
+      ElMessage.error(res.error || '重置失败')
+    }
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '重置失败')
+  } finally {
+    resetting.value = false
+  }
+}
+
 onMounted(() => {
   loadSources()
 })
@@ -210,7 +248,10 @@ onUnmounted(stopListening)
       <el-button type="primary" :loading="loading" :disabled="isRunning" @click="handleStart">
         {{ isRunning ? '进化中...' : '启动进化' }}
       </el-button>
-      <el-button text @click="loadStatus">加载状态</el-button>
+      <el-button text :loading="statusLoading" @click="loadStatus">加载状态</el-button>
+      <el-button v-if="staleDetected" type="warning" text :loading="resetting" @click="handleReset">
+        重置卡住的管道
+      </el-button>
     </div>
 
     <div class="scope-panel">
