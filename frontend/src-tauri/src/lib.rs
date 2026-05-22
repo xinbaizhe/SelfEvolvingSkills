@@ -1,4 +1,4 @@
-﻿mod db;
+mod db;
 mod services;
 mod utils;
 
@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
-    io::Cursor,
     fs,
+    io::Cursor,
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -90,6 +90,7 @@ struct PageQuery {
     project: Option<String>,
     limit: Option<i64>,
     format: Option<String>,
+    source_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -237,7 +238,10 @@ async fn api_request(
 }
 
 #[tauri::command]
-async fn start_watchers(state: State<'_, AppState>, app: AppHandle) -> AppResult<ApiResponse<Value>> {
+async fn start_watchers(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> AppResult<ApiResponse<Value>> {
     use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
     let conn = open_conn(&state.db_path).map_err(|e| e.to_string())?;
@@ -291,10 +295,14 @@ async fn dispatch_api(
     body: Option<Value>,
 ) -> Result<Value> {
     let clean_path = path.trim_start_matches("/api").trim_end_matches('/');
-    let query: PageQuery = serde_json::from_value(params_value.unwrap_or(Value::Null)).unwrap_or_default();
+    let query: PageQuery =
+        serde_json::from_value(params_value.unwrap_or(Value::Null)).unwrap_or_default();
 
     // LLM test: pre-fill stored API key if not provided in request
-    if matches!((method, clean_path), ("POST", "/admin/config/llm/test") | ("POST", "admin/config/llm/test")) {
+    if matches!(
+        (method, clean_path),
+        ("POST", "/admin/config/llm/test") | ("POST", "admin/config/llm/test")
+    ) {
         let mut body = body.unwrap_or(Value::Null);
         let api_key_empty = body
             .get("llm_api_key")
@@ -309,7 +317,9 @@ async fn dispatch_api(
                 }
             }
         }
-        return test_llm_connection(Some(body)).await.map(|value| json!(ApiResponse::ok(value)));
+        return test_llm_connection(Some(body))
+            .await
+            .map(|value| json!(ApiResponse::ok(value)));
     }
 
     // Scan requires the lock to be acquired before opening the connection
@@ -317,20 +327,32 @@ async fn dispatch_api(
         let _guard = state.scan_lock.lock().await;
         let conn = open_conn(&state.db_path)?;
         let scope = parse_scope_payload(body)?;
-        return run_full_scan(&conn, app, scope.agent_ids.as_deref()).map(|value| json!(ApiResponse::ok(value)));
-    }
-
-    // Community search uses async HTTP and manages its own connection
-    if matches!((method, clean_path), ("GET", "/community/search") | ("GET", "community/search")) {
-        let q_str = query.search.unwrap_or_default();
-        let page = query.page.unwrap_or(1);
-        let size = query.size.unwrap_or(20);
-        return services::community_service::search_community_skills(&state.db_path, &q_str, page, size)
-            .await
+        return run_full_scan(&conn, app, scope.agent_ids.as_deref())
             .map(|value| json!(ApiResponse::ok(value)));
     }
 
-    if matches!((method, clean_path), ("POST", "/community/install") | ("POST", "community/install")) {
+    // Community search uses async HTTP and manages its own connection
+    if matches!(
+        (method, clean_path),
+        ("GET", "/community/search") | ("GET", "community/search")
+    ) {
+        let q_str = query.search.unwrap_or_default();
+        let page = query.page.unwrap_or(1);
+        let size = query.size.unwrap_or(20);
+        return services::community_service::search_community_skills(
+            &state.db_path,
+            &q_str,
+            page,
+            size,
+        )
+        .await
+        .map(|value| json!(ApiResponse::ok(value)));
+    }
+
+    if matches!(
+        (method, clean_path),
+        ("POST", "/community/install") | ("POST", "community/install")
+    ) {
         return install_community_skill(&state.db_path, body)
             .await
             .map(|value| json!(ApiResponse::ok(value)));
@@ -339,7 +361,9 @@ async fn dispatch_api(
     let conn = open_conn(&state.db_path)?;
 
     match (method, clean_path) {
-        ("GET", "/health") | ("GET", "health") => Ok(json!(ApiResponse::ok(json!({ "status": "ok" })))),
+        ("GET", "/health") | ("GET", "health") => {
+            Ok(json!(ApiResponse::ok(json!({ "status": "ok" }))))
+        }
         ("GET", "/scan/history") | ("GET", "scan/history") => {
             list_scan_history(&conn, query).map(|value| json!(ApiResponse::ok(value)))
         }
@@ -352,23 +376,34 @@ async fn dispatch_api(
             list_sources(&conn).map(|value| json!(ApiResponse::ok(value)))
         }
         ("PUT", p) if p.starts_with("/scan/sources/") || p.starts_with("scan/sources/") => {
-            let agent_id = p.trim_start_matches('/').trim_start_matches("scan/sources/");
+            let agent_id = p
+                .trim_start_matches('/')
+                .trim_start_matches("scan/sources/");
             let payload: SourceUpdate = serde_json::from_value(body.unwrap_or(Value::Null))?;
             update_source(&conn, agent_id, payload).map(|value| json!(ApiResponse::ok(value)))
         }
         ("DELETE", p) if p.starts_with("/scan/sources/") || p.starts_with("scan/sources/") => {
-            let agent_id = p.trim_start_matches('/').trim_start_matches("scan/sources/");
+            let agent_id = p
+                .trim_start_matches('/')
+                .trim_start_matches("scan/sources/");
             reset_source(&conn, agent_id)?;
-            Ok(json!(ApiResponse::ok(json!({ "agent_id": agent_id, "message": "Source reset" }))))
+            Ok(json!(ApiResponse::ok(
+                json!({ "agent_id": agent_id, "message": "Source reset" })
+            )))
         }
-        ("GET", "/skills") | ("GET", "skills") => list_skills(&conn, query).map(|value| json!(ApiResponse::ok(value))),
+        ("GET", "/skills") | ("GET", "skills") => {
+            list_skills(&conn, query).map(|value| json!(ApiResponse::ok(value)))
+        }
         ("GET", "/skills/categories") | ("GET", "skills/categories") => {
             list_categories(&conn).map(|value| json!(ApiResponse::ok(value)))
         }
         ("POST", "/skills/import") | ("POST", "skills/import") => {
             import_skills(&conn, body).map(|value| json!(ApiResponse::ok(value)))
         }
-        ("POST", p) if p.starts_with("/skills/") && p.ends_with("/evolve") || p.starts_with("skills/") && p.ends_with("/evolve") => {
+        ("POST", p)
+            if p.starts_with("/skills/") && p.ends_with("/evolve")
+                || p.starts_with("skills/") && p.ends_with("/evolve") =>
+        {
             let name = url_decode(
                 p.trim_start_matches('/')
                     .trim_start_matches("skills/")
@@ -378,7 +413,8 @@ async fn dispatch_api(
         }
         ("PUT", p) if p.starts_with("/skills/") || p.starts_with("skills/") => {
             let name = url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
-            update_skill(&conn, &name, &body.unwrap_or(Value::Null)).map(|value| json!(ApiResponse::ok(value)))
+            update_skill(&conn, &name, &body.unwrap_or(Value::Null))
+                .map(|value| json!(ApiResponse::ok(value)))
         }
         ("DELETE", p) if p.starts_with("/skills/") || p.starts_with("skills/") => {
             let name = url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
@@ -386,9 +422,12 @@ async fn dispatch_api(
         }
         ("GET", p) if p.starts_with("/skills/") || p.starts_with("skills/") => {
             let name = url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
-            get_skill(&conn, &name).map(|value| json!(ApiResponse::ok(value)))
+            get_skill(&conn, &name, query.source_type.as_deref())
+                .map(|value| json!(ApiResponse::ok(value)))
         }
-        ("GET", "/agents") | ("GET", "agents") => list_agents(&conn, query).map(|value| json!(ApiResponse::ok(value))),
+        ("GET", "/agents") | ("GET", "agents") => {
+            list_agents(&conn, query).map(|value| json!(ApiResponse::ok(value)))
+        }
         ("GET", p) if p.starts_with("/agents/") || p.starts_with("agents/") => {
             let name = url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
             get_agent(&conn, &name).map(|value| json!(ApiResponse::ok(value)))
@@ -402,7 +441,9 @@ async fn dispatch_api(
         ("GET", "/stats/skills/by-category") | ("GET", "stats/skills/by-category") => {
             skills_by_category(&conn).map(|value| json!(ApiResponse::ok(value)))
         }
-        ("GET", "/sessions") | ("GET", "sessions") => list_sessions(&conn, query).map(|value| json!(ApiResponse::ok(value))),
+        ("GET", "/sessions") | ("GET", "sessions") => {
+            list_sessions(&conn, query).map(|value| json!(ApiResponse::ok(value)))
+        }
         ("GET", p) if p.starts_with("/sessions/") || p.starts_with("sessions/") => {
             let session_id = url_decode(p.trim_start_matches('/').trim_start_matches("sessions/"));
             get_session(&conn, &session_id).map(|value| json!(ApiResponse::ok(value)))
@@ -410,18 +451,21 @@ async fn dispatch_api(
         ("GET", "/admin/system") | ("GET", "admin/system") => {
             sync_source_configs(&conn)?;
             system_info(&conn).map(|value| json!(ApiResponse::ok(value)))
-        },
+        }
         ("GET", "/admin/config/scan-paths") | ("GET", "admin/config/scan-paths") => {
             sync_source_configs(&conn)?;
             list_sources(&conn).map(|value| json!(ApiResponse::ok(value)))
         }
-        ("GET", "/admin/config/llm") | ("GET", "admin/config/llm") => Ok(json!(ApiResponse::ok(json!({
-            "enabled": get_config_bool(&conn, "llm_enabled", false)?,
-            "provider": get_config(&conn, "llm_provider")?.unwrap_or_else(|| "openai".to_string()),
-            "base_url": get_config(&conn, "llm_base_url")?.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
-            "model": get_config(&conn, "llm_model")?.unwrap_or_else(|| "gpt-5.2".to_string()),
-            "has_api_key": get_config(&conn, "llm_api_key")?.is_some()
-        })))),
+        ("GET", "/admin/config/llm") | ("GET", "admin/config/llm") => {
+            Ok(json!(ApiResponse::ok(json!({
+                "enabled": get_config_bool(&conn, "llm_enabled", false)?,
+                "provider": get_config(&conn, "llm_provider")?.unwrap_or_else(|| "openai".to_string()),
+                "base_url": get_config(&conn, "llm_base_url")?.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+                "model": get_config(&conn, "llm_model")?.unwrap_or_else(|| "gpt-5.5".to_string()),
+                "api_format": get_config(&conn, "llm_api_format")?.unwrap_or_else(|| "openai".to_string()),
+                "has_api_key": get_config(&conn, "llm_api_key")?.is_some()
+            }))))
+        }
         ("GET", "/export/skills") | ("GET", "export/skills") => {
             export_skills(&conn, query).map(|value| json!(ApiResponse::ok(value)))
         }
@@ -485,7 +529,10 @@ async fn dispatch_api(
             delete_workflow_draft(&conn, id)?;
             Ok(json!(ApiResponse::ok(json!({ "id": id }))))
         }
-        ("POST", p) if p.starts_with("/workflows/") && p.ends_with("/install") || p.starts_with("workflows/") && p.ends_with("/install") => {
+        ("POST", p)
+            if p.starts_with("/workflows/") && p.ends_with("/install")
+                || p.starts_with("workflows/") && p.ends_with("/install") =>
+        {
             let id_text = p
                 .trim_start_matches('/')
                 .trim_start_matches("workflows/")
@@ -514,41 +561,49 @@ async fn dispatch_api(
             );
             Ok(json!(ApiResponse::ok(result)))
         }
-        ("GET", "/evolution/status") | ("GET", "evolution/status") => {
-            Ok(json!(ApiResponse::ok(services::evolution_service::get_evolution_status(&conn))))
-        }
-        ("POST", "/evolution/reset") | ("POST", "evolution/reset") => {
-            Ok(json!(ApiResponse::ok(services::evolution_service::reset_stuck_evolution(&conn))))
-        }
+        ("GET", "/evolution/status") | ("GET", "evolution/status") => Ok(json!(ApiResponse::ok(
+            services::evolution_service::get_evolution_status(&conn)
+        ))),
+        ("POST", "/evolution/reset") | ("POST", "evolution/reset") => Ok(json!(ApiResponse::ok(
+            services::evolution_service::reset_stuck_evolution(&conn)
+        ))),
         ("GET", "/evolution/history") | ("GET", "evolution/history") => {
             services::evolution_service::cleanup_stale_jobs(&conn);
-            Ok(json!(ApiResponse::ok(services::evolution_service::list_evolution_history(&conn, &query))))
+            Ok(json!(ApiResponse::ok(
+                services::evolution_service::list_evolution_history(&conn, &query)
+            )))
         }
         // System monitoring
-        ("GET", "/system/monitor") | ("GET", "system/monitor") => {
-            Ok(json!(ApiResponse::ok(services::system_service::get_system_monitor())))
-        }
-        ("GET", "/system/database") | ("GET", "system/database") => {
-            Ok(json!(ApiResponse::ok(services::system_service::get_database_info(&state.db_path, &conn))))
-        }
-        ("POST", "/system/clear-data") | ("POST", "system/clear-data") => {
-            Ok(json!(ApiResponse::ok(services::system_service::clear_all_data(&conn))))
-        }
-        ("POST", "/system/clear-logs") | ("POST", "system/clear-logs") => {
-            Ok(json!(ApiResponse::ok(services::system_service::clear_logs(&conn))))
-        }
+        ("GET", "/system/monitor") | ("GET", "system/monitor") => Ok(json!(ApiResponse::ok(
+            services::system_service::get_system_monitor()
+        ))),
+        ("GET", "/system/database") | ("GET", "system/database") => Ok(json!(ApiResponse::ok(
+            services::system_service::get_database_info(&state.db_path, &conn)
+        ))),
+        ("POST", "/system/clear-data") | ("POST", "system/clear-data") => Ok(json!(
+            ApiResponse::ok(services::system_service::clear_all_data(&conn))
+        )),
+        ("POST", "/system/clear-logs") | ("POST", "system/clear-logs") => Ok(json!(
+            ApiResponse::ok(services::system_service::clear_logs(&conn))
+        )),
         ("POST", "/system/initialize-database") | ("POST", "system/initialize-database") => {
             let value = services::system_service::initialize_database(&conn);
             sync_source_configs(&conn)?;
             Ok(json!(ApiResponse::ok(value)))
         }
         // Community skills
-        ("POST", "/community/install") | ("POST", "community/install") => unreachable!("handled before opening DB connection"),
+        ("POST", "/community/install") | ("POST", "community/install") => {
+            unreachable!("handled before opening DB connection")
+        }
         ("GET", "/community/installed") | ("GET", "community/installed") => {
             services::community_service::get_installed_skills(&conn)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
-        _ => Err(anyhow!("unsupported local Tauri API route: {} {}", method, path)),
+        _ => Err(anyhow!(
+            "unsupported local Tauri API route: {} {}",
+            method,
+            path
+        )),
     }
 }
 
@@ -566,11 +621,9 @@ fn parse_scope_payload(body: Option<Value>) -> Result<ScopePayload> {
 fn list_workflows(conn: &Connection, query: PageQuery) -> Result<Value> {
     let page = query.page.unwrap_or(1).max(1);
     let size = query.size.unwrap_or(50).clamp(1, 200);
-    let total: i64 = conn.query_row(
-        "SELECT COUNT(id) FROM workflow_clusters",
-        [],
-        |row| row.get(0),
-    )?;
+    let total: i64 = conn.query_row("SELECT COUNT(id) FROM workflow_clusters", [], |row| {
+        row.get(0)
+    })?;
     let mut stmt = conn.prepare(
         "SELECT id, name, description, frequency, source_agents, estimated_time_saved,
                 can_generate_skill, skill_score, status, draft_body, sample_tasks,
@@ -640,13 +693,24 @@ fn create_manual_skill_draft(conn: &Connection, skill_name: &str) -> Result<Valu
             "SELECT name, description, category, agent_source, file_path, body_text
              FROM skills WHERE name = ?1 LIMIT 1",
             [skill_name],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
         )
         .optional()?
         .ok_or_else(|| anyhow!("Skill not found: {}", skill_name))?;
 
     let draft_name = format!("{}-manual-evolution", sanitize_file_name(&name));
-    let description_text = description.clone().unwrap_or_else(|| format!("Manual evolution draft based on existing Skill {}", name));
+    let description_text = description
+        .clone()
+        .unwrap_or_else(|| format!("Manual evolution draft based on existing Skill {}", name));
     let draft_body = format!(
         "---\nname: {}\ndescription: {}\ncategory: {}\norigin: manual-existing-skill\nsource_type: evolved-draft\n---\n\n# {}\n\n## Evolution Goal\nThis draft was created from an existing Skill. Edit this section to describe the improvements, split, merge, or restructuring you want.\n\n## Original Description\n{}\n\n## Original Content\n\n{}",
         yaml_scalar(&draft_name),
@@ -657,8 +721,16 @@ fn create_manual_skill_draft(conn: &Connection, skill_name: &str) -> Result<Valu
         body_text.clone().unwrap_or_default()
     );
     let now = now_string();
-    let sample_tasks = serde_json::to_string(&vec![format!("Manual evolution from existing Skill: {}", name)])?;
-    let source_agents = serde_json::to_string(&agent_source.clone().map(|value| vec![value]).unwrap_or_default())?;
+    let sample_tasks = serde_json::to_string(&vec![format!(
+        "Manual evolution from existing Skill: {}",
+        name
+    )])?;
+    let source_agents = serde_json::to_string(
+        &agent_source
+            .clone()
+            .map(|value| vec![value])
+            .unwrap_or_default(),
+    )?;
     let source_skills = serde_json::to_string(&vec![json!({
         "name": name,
         "file_path": file_path,
@@ -688,11 +760,23 @@ fn create_manual_skill_draft(conn: &Connection, skill_name: &str) -> Result<Valu
     get_workflow_by_id(conn, id)
 }
 fn get_workflow_by_id(conn: &Connection, id: i64) -> Result<Value> {
-    let value = list_workflows(conn, PageQuery { page: Some(1), size: Some(200), ..Default::default() })?;
+    let value = list_workflows(
+        conn,
+        PageQuery {
+            page: Some(1),
+            size: Some(200),
+            ..Default::default()
+        },
+    )?;
     value
         .get("items")
         .and_then(Value::as_array)
-        .and_then(|items| items.iter().find(|item| item.get("id").and_then(Value::as_i64) == Some(id)).cloned())
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("id").and_then(Value::as_i64) == Some(id))
+                .cloned()
+        })
         .ok_or_else(|| anyhow!("workflow draft not found: {}", id))
 }
 
@@ -723,7 +807,11 @@ fn delete_workflow_draft(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
-fn install_workflow_skill(conn: &Connection, workflow_id: i64, body: Option<Value>) -> Result<Value> {
+fn install_workflow_skill(
+    conn: &Connection,
+    workflow_id: i64,
+    body: Option<Value>,
+) -> Result<Value> {
     let agent_id = body
         .as_ref()
         .and_then(|value| value.get("agent_id"))
@@ -791,7 +879,13 @@ async fn install_community_skill(db_path: &Path, body: Option<Value>) -> Result<
         .ok_or_else(|| anyhow!("agent_id is required"))?
         .to_string();
 
-    let (name, repo_full_name, repo_url, description, file_url): (String, String, String, Option<String>, Option<String>) = {
+    let (name, repo_full_name, repo_url, description, file_url): (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = {
         let conn = open_conn(db_path)?;
         conn.query_row(
             "SELECT name, repo_full_name, repo_url, description, file_url FROM community_skills WHERE id = ?1",
@@ -862,7 +956,9 @@ fn community_skill_raw_url(repo_full_name: &str, file_url: Option<&str>) -> Opti
                 let repo = format!("{}/{}", parts[0], parts[1]);
                 let branch = parts[3];
                 let file_path = parts[4..].join("/");
-                return Some(format!("https://raw.githubusercontent.com/{repo}/{branch}/{file_path}"));
+                return Some(format!(
+                    "https://raw.githubusercontent.com/{repo}/{branch}/{file_path}"
+                ));
             }
         }
         if file_url.starts_with("https://raw.githubusercontent.com/") {
@@ -870,7 +966,9 @@ fn community_skill_raw_url(repo_full_name: &str, file_url: Option<&str>) -> Opti
         }
     }
     if repo_full_name.contains('/') {
-        Some(format!("https://raw.githubusercontent.com/{repo_full_name}/main/SKILL.md"))
+        Some(format!(
+            "https://raw.githubusercontent.com/{repo_full_name}/main/SKILL.md"
+        ))
     } else {
         None
     }
@@ -929,7 +1027,8 @@ fn import_skills(conn: &Connection, body: Option<Value>) -> Result<Value> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded)
             .context("failed to decode zip base64 content")?;
-        let (imported, skipped) = import_skills_from_zip(conn, &install_dir, &target.agent_id, &bytes)?;
+        let (imported, skipped) =
+            import_skills_from_zip(conn, &install_dir, &target.agent_id, &bytes)?;
         return Ok(json!({
             "agent_id": target.agent_id,
             "agent_name": target.agent_name,
@@ -958,12 +1057,22 @@ fn import_skills(conn: &Connection, body: Option<Value>) -> Result<Value> {
         "count": imported.len()
     }))
 }
-fn import_skills_from_json(conn: &Connection, install_dir: &Path, agent_id: &str, content: &str) -> Result<Vec<Value>> {
-    let value: Value = serde_json::from_str(content).context("invalid JSON; cannot import Skills")?;
+fn import_skills_from_json(
+    conn: &Connection,
+    install_dir: &Path,
+    agent_id: &str,
+    content: &str,
+) -> Result<Vec<Value>> {
+    let value: Value =
+        serde_json::from_str(content).context("invalid JSON; cannot import Skills")?;
     let items = match value {
         Value::Array(items) => items,
         Value::Object(map) => vec![Value::Object(map)],
-        _ => return Err(anyhow!("JSON must be a Skill object or an array of Skill objects")),
+        _ => {
+            return Err(anyhow!(
+                "JSON must be a Skill object or an array of Skill objects"
+            ))
+        }
     };
     if items.is_empty() {
         return Err(anyhow!("JSON does not contain any importable Skill"));
@@ -985,7 +1094,10 @@ fn import_skills_from_json(conn: &Connection, install_dir: &Path, agent_id: &str
         let markdown = if body.trim_start().starts_with("---") {
             body.to_string()
         } else {
-            let description = item.get("description").and_then(Value::as_str).unwrap_or("");
+            let description = item
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             format!(
                 "---\nname: {}\ndescription: {}\n---\n\n{}",
                 yaml_scalar(name),
@@ -999,20 +1111,30 @@ fn import_skills_from_json(conn: &Connection, install_dir: &Path, agent_id: &str
     }
     Ok(imported)
 }
-fn import_skills_from_zip(conn: &Connection, install_dir: &Path, agent_id: &str, bytes: &[u8]) -> Result<(Vec<Value>, Vec<Value>)> {
+fn import_skills_from_zip(
+    conn: &Connection,
+    install_dir: &Path,
+    agent_id: &str,
+    bytes: &[u8],
+) -> Result<(Vec<Value>, Vec<Value>)> {
     const MAX_ZIP_BYTES: usize = 100 * 1024 * 1024;
     const MAX_FILES: usize = 2_000;
     const MAX_TOTAL_UNCOMPRESSED: u64 = 300 * 1024 * 1024;
     const MAX_SINGLE_FILE: u64 = 50 * 1024 * 1024;
 
     if bytes.len() > MAX_ZIP_BYTES {
-        return Err(anyhow!("zip file is too large; maximum supported size is 100MB"));
+        return Err(anyhow!(
+            "zip file is too large; maximum supported size is 100MB"
+        ));
     }
 
     let reader = Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(reader).context("invalid or corrupted zip file")?;
     if archive.len() > MAX_FILES {
-        return Err(anyhow!("zip contains too many files; maximum supported file count is {}", MAX_FILES));
+        return Err(anyhow!(
+            "zip contains too many files; maximum supported file count is {}",
+            MAX_FILES
+        ));
     }
 
     let mut safe_entries = Vec::new();
@@ -1037,7 +1159,9 @@ fn import_skills_from_zip(conn: &Connection, install_dir: &Path, agent_id: &str,
         }
         total_uncompressed = total_uncompressed.saturating_add(size);
         if total_uncompressed > MAX_TOTAL_UNCOMPRESSED {
-            return Err(anyhow!("zip uncompressed content is too large; maximum supported size is 300MB"));
+            return Err(anyhow!(
+                "zip uncompressed content is too large; maximum supported size is 300MB"
+            ));
         }
         if relative_path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
             if let Some(root) = skill_root_from_skill_md(&relative_path) {
@@ -1054,7 +1178,9 @@ fn import_skills_from_zip(conn: &Connection, install_dir: &Path, agent_id: &str,
     let mut imported_paths: HashMap<PathBuf, PathBuf> = HashMap::new();
     for (index, raw_name, relative_path, _) in safe_entries {
         let Some(root) = matching_skill_root(&relative_path, &skill_roots) else {
-            skipped.push(json!({ "path": raw_name, "reason": "not under a directory containing SKILL.md" }));
+            skipped.push(
+                json!({ "path": raw_name, "reason": "not under a directory containing SKILL.md" }),
+            );
             continue;
         };
         let target_root = install_dir.join(sanitize_file_name(&skill_root_name(root)));
@@ -1133,11 +1259,15 @@ fn skill_root_name(root: &Path) -> String {
 }
 
 fn ensure_child_path(parent: &Path, child: &Path) -> Result<()> {
-    let parent = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+    let parent = parent
+        .canonicalize()
+        .unwrap_or_else(|_| parent.to_path_buf());
     let child_parent = child
         .parent()
         .ok_or_else(|| anyhow!("invalid target path: {}", child.display()))?;
-    let child_parent = child_parent.canonicalize().unwrap_or_else(|_| child_parent.to_path_buf());
+    let child_parent = child_parent
+        .canonicalize()
+        .unwrap_or_else(|_| child_parent.to_path_buf());
     if !child_parent.starts_with(&parent) {
         return Err(anyhow!("zip path traversal rejected: {}", child.display()));
     }
@@ -1174,7 +1304,9 @@ fn looks_like_json(filename: &Option<String>, content: &str) -> bool {
         .and_then(|name| Path::new(name).extension())
         .and_then(|value| value.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("json"))
-        .unwrap_or_else(|| content.trim_start().starts_with('{') || content.trim_start().starts_with('['))
+        .unwrap_or_else(|| {
+            content.trim_start().starts_with('{') || content.trim_start().starts_with('[')
+        })
 }
 
 fn skill_name_from_markdown(content: &str) -> Option<String> {
@@ -1241,17 +1373,24 @@ fn agent_sources() -> Vec<AgentSource> {
             default_enabled: true,
         },
         AgentSource {
+            id: "openclaw",
+            name: "OpenClaw",
+            skills_path: Some(home.join(".openclaw").join("skills")),
+            agents_path: Some(home.join(".openclaw").join("agents")),
+            sessions_path: Some(home.join(".openclaw").join("sessions")),
+            projects_path: Some(home.join(".openclaw").join("projects")),
+            plugins_path: None,
+            memory_path: None,
+            default_enabled: true,
+        },
+        AgentSource {
             id: "claude-code",
             name: "Claude Code",
             skills_path: Some(home.join(".claude").join("skills")),
             agents_path: Some(home.join(".claude").join("agents")),
             sessions_path: Some(home.join(".claude").join("sessions")),
             projects_path: Some(home.join(".claude").join("projects")),
-            plugins_path: Some(
-                home.join(".claude")
-                    .join("plugins")
-                    .join("cache"),
-            ),
+            plugins_path: Some(home.join(".claude").join("plugins").join("cache")),
             memory_path: Some(home.join(".claude").join("projects")),
             default_enabled: true,
         },
@@ -1332,18 +1471,42 @@ fn agent_sources() -> Vec<AgentSource> {
 
 fn source_default_paths(src: &AgentSource) -> HashMap<String, Option<String>> {
     let mut paths = HashMap::from([
-        ("skills_path".into(), src.skills_path.as_ref().map(path_to_string)),
-        ("agents_path".into(), src.agents_path.as_ref().map(path_to_string)),
-        ("sessions_path".into(), src.sessions_path.as_ref().map(path_to_string)),
-        ("projects_path".into(), src.projects_path.as_ref().map(path_to_string)),
-        ("plugins_path".into(), src.plugins_path.as_ref().map(path_to_string)),
-        ("memory_path".into(), src.memory_path.as_ref().map(path_to_string)),
+        (
+            "skills_path".into(),
+            src.skills_path.as_ref().map(path_to_string),
+        ),
+        (
+            "agents_path".into(),
+            src.agents_path.as_ref().map(path_to_string),
+        ),
+        (
+            "sessions_path".into(),
+            src.sessions_path.as_ref().map(path_to_string),
+        ),
+        (
+            "projects_path".into(),
+            src.projects_path.as_ref().map(path_to_string),
+        ),
+        (
+            "plugins_path".into(),
+            src.plugins_path.as_ref().map(path_to_string),
+        ),
+        (
+            "memory_path".into(),
+            src.memory_path.as_ref().map(path_to_string),
+        ),
     ]);
     if src.id == "claude-code" {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let agent_skills_path = home.join(".claude").join(".agents").join("skills");
-        paths.insert("extra_skills_path".into(), Some(path_to_string(&agent_skills_path)));
-        paths.insert("extra_agents_path".into(), Some(path_to_string(&agent_skills_path)));
+        paths.insert(
+            "extra_skills_path".into(),
+            Some(path_to_string(&agent_skills_path)),
+        );
+        paths.insert(
+            "extra_agents_path".into(),
+            Some(path_to_string(&agent_skills_path)),
+        );
     }
     paths
 }
@@ -1409,7 +1572,10 @@ pub(crate) fn sync_source_configs(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn existing_custom_paths(conn: &Connection, agent_id: &str) -> Result<Option<HashMap<String, Option<String>>>> {
+fn existing_custom_paths(
+    conn: &Connection,
+    agent_id: &str,
+) -> Result<Option<HashMap<String, Option<String>>>> {
     let raw: Option<String> = conn
         .query_row(
             "SELECT custom_paths FROM source_configs WHERE agent_id = ?1",
@@ -1429,7 +1595,14 @@ fn detect_source_status(
     let mut count = 0;
     let mut latest: Option<std::time::SystemTime> = None;
 
-    for key in ["sessions_path", "projects_path", "skills_path", "extra_skills_path", "agents_path", "extra_agents_path"] {
+    for key in [
+        "sessions_path",
+        "projects_path",
+        "skills_path",
+        "extra_skills_path",
+        "agents_path",
+        "extra_agents_path",
+    ] {
         if let Some(Some(path)) = paths.get(key) {
             let p = Path::new(path);
             if !p.exists() {
@@ -1445,7 +1618,12 @@ fn detect_source_status(
         }
     }
 
-    Ok((available, detected_path, count, latest.map(format_system_time)))
+    Ok((
+        available,
+        detected_path,
+        count,
+        latest.map(format_system_time),
+    ))
 }
 
 fn count_records(path: &Path, key: &str) -> (i64, Option<std::time::SystemTime>) {
@@ -1460,9 +1638,16 @@ fn count_records(path: &Path, key: &str) -> (i64, Option<std::time::SystemTime>)
     for entry in walker.into_iter().flatten() {
         let file_type = entry.file_type();
         let matches = match key {
-            "skills_path" | "extra_skills_path" => file_type.is_file() && entry.file_name() == "SKILL.md",
-            "agents_path" | "extra_agents_path" => file_type.is_file() && is_agent_definition_file(entry.path()),
-            "projects_path" => file_type.is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("jsonl"),
+            "skills_path" | "extra_skills_path" => {
+                file_type.is_file() && entry.file_name() == "SKILL.md"
+            }
+            "agents_path" | "extra_agents_path" => {
+                file_type.is_file() && is_agent_definition_file(entry.path())
+            }
+            "projects_path" => {
+                file_type.is_file()
+                    && entry.path().extension().and_then(|s| s.to_str()) == Some("jsonl")
+            }
             "sessions_path" => {
                 file_type.is_file()
                     && matches!(
@@ -1476,7 +1661,9 @@ fn count_records(path: &Path, key: &str) -> (i64, Option<std::time::SystemTime>)
             count += 1;
             if let Ok(meta) = entry.metadata() {
                 if let Ok(modified) = meta.modified() {
-                    latest = Some(latest.map_or(modified, |cur: std::time::SystemTime| cur.max(modified)));
+                    latest = Some(
+                        latest.map_or(modified, |cur: std::time::SystemTime| cur.max(modified)),
+                    );
                 }
             }
         }
@@ -1500,7 +1687,9 @@ fn list_sources(conn: &Connection) -> Result<Vec<SourcePayload>> {
         let mut paths = defaults.get(&agent_id).cloned().unwrap_or_default();
         let custom_paths: Option<String> = row.get(3)?;
         if let Some(custom_paths) = custom_paths {
-            if let Ok(custom) = serde_json::from_str::<HashMap<String, Option<String>>>(&custom_paths) {
+            if let Ok(custom) =
+                serde_json::from_str::<HashMap<String, Option<String>>>(&custom_paths)
+            {
                 for (key, value) in custom {
                     paths.insert(key, value);
                 }
@@ -1518,7 +1707,8 @@ fn list_sources(conn: &Connection) -> Result<Vec<SourcePayload>> {
             last_scan_at: row.get(8)?,
         })
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 fn update_source(conn: &Connection, agent_id: &str, payload: SourceUpdate) -> Result<Value> {
@@ -1530,7 +1720,11 @@ fn update_source(conn: &Connection, agent_id: &str, payload: SourceUpdate) -> Re
             .collect();
         conn.execute(
             "UPDATE source_configs SET custom_paths = ?2, updated_at = ?3 WHERE agent_id = ?1",
-            params![agent_id, serde_json::to_string(&current_custom)?, now_string()],
+            params![
+                agent_id,
+                serde_json::to_string(&current_custom)?,
+                now_string()
+            ],
         )?;
     }
     if let Some(path) = payload.detected_path {
@@ -1577,7 +1771,11 @@ pub(crate) fn enabled_source_paths(conn: &Connection) -> Result<Vec<SourcePaths>
         .collect())
 }
 
-fn run_full_scan(conn: &Connection, app: &AppHandle, agent_ids: Option<&[String]>) -> Result<Value> {
+fn run_full_scan(
+    conn: &Connection,
+    app: &AppHandle,
+    agent_ids: Option<&[String]>,
+) -> Result<Value> {
     sync_source_configs(conn)?;
     let selected = agent_ids.unwrap_or(&[]);
     let sources = enabled_source_paths(conn)?
@@ -1585,7 +1783,8 @@ fn run_full_scan(conn: &Connection, app: &AppHandle, agent_ids: Option<&[String]
         .filter(|source| selected.is_empty() || selected.iter().any(|id| id == &source.agent_id))
         .collect::<Vec<_>>();
     let started_at = now_string();
-    let config_snapshot = serde_json::to_string(&sources.iter().map(|s| &s.agent_id).collect::<Vec<_>>())?;
+    let config_snapshot =
+        serde_json::to_string(&sources.iter().map(|s| &s.agent_id).collect::<Vec<_>>())?;
 
     conn.execute(
         "INSERT INTO scan_jobs (scan_type, status, started_at, sources_scanned, config_snapshot, created_at)
@@ -1680,24 +1879,36 @@ pub(crate) fn scan_skills(sources: &[SourcePaths]) -> Vec<SkillInfo> {
     let mut results = Vec::new();
     for source in sources {
         for key in ["skills_path", "extra_skills_path"] {
-        if let Some(Some(path)) = source.paths.get(key) {
-            let base = Path::new(path);
-            if base.exists() {
-                let max_depth = if key == "extra_skills_path" { 4 } else { 3 };
-                for entry in WalkDir::new(base).min_depth(1).max_depth(max_depth).into_iter().flatten() {
-                    if entry.file_type().is_file() && entry.file_name() == "SKILL.md" {
-                        if let Some(info) = parse_skill_file(entry.path(), "user", &source.agent_id, None) {
-                            results.push(info);
+            if let Some(Some(path)) = source.paths.get(key) {
+                let base = Path::new(path);
+                if base.exists() {
+                    let max_depth = if key == "extra_skills_path" { 4 } else { 3 };
+                    for entry in WalkDir::new(base)
+                        .min_depth(1)
+                        .max_depth(max_depth)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if entry.file_type().is_file() && entry.file_name() == "SKILL.md" {
+                            if let Some(info) =
+                                parse_skill_file(entry.path(), "user", &source.agent_id, None)
+                            {
+                                results.push(info);
+                            }
                         }
                     }
                 }
             }
         }
-        }
         if let Some(Some(path)) = source.paths.get("plugins_path") {
             let base = Path::new(path);
             if base.exists() {
-                for entry in WalkDir::new(base).min_depth(1).max_depth(6).into_iter().flatten() {
+                for entry in WalkDir::new(base)
+                    .min_depth(1)
+                    .max_depth(6)
+                    .into_iter()
+                    .flatten()
+                {
                     if entry.file_type().is_file() && entry.file_name() == "SKILL.md" {
                         let plugin_name = entry
                             .path()
@@ -1705,7 +1916,9 @@ pub(crate) fn scan_skills(sources: &[SourcePaths]) -> Vec<SkillInfo> {
                             .nth(3)
                             .and_then(|p| p.file_name())
                             .map(|s| s.to_string_lossy().to_string());
-                        if let Some(info) = parse_skill_file(entry.path(), "plugin", &source.agent_id, plugin_name) {
+                        if let Some(info) =
+                            parse_skill_file(entry.path(), "plugin", &source.agent_id, plugin_name)
+                        {
                             results.push(info);
                         }
                     }
@@ -1720,21 +1933,26 @@ pub(crate) fn scan_agents(sources: &[SourcePaths]) -> Vec<AgentInfo> {
     let mut results = Vec::new();
     for source in sources {
         for key in ["agents_path", "extra_agents_path"] {
-        if let Some(Some(path)) = source.paths.get(key) {
-            let base = Path::new(path);
-            if !base.exists() {
-                continue;
-            }
-            let max_depth = if key == "extra_agents_path" { 4 } else { 2 };
-            for entry in WalkDir::new(base).min_depth(1).max_depth(max_depth).into_iter().flatten() {
-                let path = entry.path();
-                if entry.file_type().is_file() && is_agent_definition_file(path) {
-                    if let Some(info) = parse_agent_file(path, &source.agent_id) {
-                        results.push(info);
+            if let Some(Some(path)) = source.paths.get(key) {
+                let base = Path::new(path);
+                if !base.exists() {
+                    continue;
+                }
+                let max_depth = if key == "extra_agents_path" { 4 } else { 2 };
+                for entry in WalkDir::new(base)
+                    .min_depth(1)
+                    .max_depth(max_depth)
+                    .into_iter()
+                    .flatten()
+                {
+                    let path = entry.path();
+                    if entry.file_type().is_file() && is_agent_definition_file(path) {
+                        if let Some(info) = parse_agent_file(path, &source.agent_id) {
+                            results.push(info);
+                        }
                     }
                 }
             }
-        }
         }
     }
     results
@@ -1742,7 +1960,10 @@ pub(crate) fn scan_agents(sources: &[SourcePaths]) -> Vec<AgentInfo> {
 
 fn is_agent_definition_file(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|s| s.to_str()).map(str::to_ascii_lowercase).as_deref(),
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
         Some("md") | Some("yaml") | Some("yml")
     )
 }
@@ -1760,7 +1981,11 @@ pub(crate) fn scan_sessions(sources: &[SourcePaths]) -> Vec<SessionInfo> {
                 continue;
             }
             let max_depth = if key == "projects_path" { 8 } else { 5 };
-            for entry in WalkDir::new(base).max_depth(max_depth).into_iter().flatten() {
+            for entry in WalkDir::new(base)
+                .max_depth(max_depth)
+                .into_iter()
+                .flatten()
+            {
                 if !entry.file_type().is_file() {
                     continue;
                 }
@@ -1781,7 +2006,12 @@ pub(crate) fn scan_sessions(sources: &[SourcePaths]) -> Vec<SessionInfo> {
     results
 }
 
-fn parse_skill_file(path: &Path, source_type: &str, agent_source: &str, plugin_name: Option<String>) -> Option<SkillInfo> {
+fn parse_skill_file(
+    path: &Path,
+    source_type: &str,
+    agent_source: &str,
+    plugin_name: Option<String>,
+) -> Option<SkillInfo> {
     let text = fs::read_to_string(path).ok()?;
     let meta = fs::metadata(path).ok()?;
     let (yaml_raw, parsed, body) = parse_frontmatter(&text);
@@ -1789,8 +2019,15 @@ fn parse_skill_file(path: &Path, source_type: &str, agent_source: &str, plugin_n
         .get("name")
         .and_then(Value::as_str)
         .map(String::from)
-        .or_else(|| path.parent()?.file_name().map(|s| s.to_string_lossy().to_string()))?;
-    let description = parsed.get("description").and_then(Value::as_str).map(String::from);
+        .or_else(|| {
+            path.parent()?
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+        })?;
+    let description = parsed
+        .get("description")
+        .and_then(Value::as_str)
+        .map(String::from);
     let origin = parsed
         .get("origin")
         .or_else(|| parsed.get("license"))
@@ -1827,7 +2064,10 @@ fn parse_agent_file(path: &Path, agent_source: &str) -> Option<AgentInfo> {
     let text = fs::read_to_string(path).ok()?;
     let meta = fs::metadata(path).ok()?;
     let is_yaml = matches!(
-        path.extension().and_then(|s| s.to_str()).map(str::to_ascii_lowercase).as_deref(),
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
         Some("yaml") | Some("yml")
     );
     let (yaml_raw, parsed, body) = if is_yaml {
@@ -1839,7 +2079,11 @@ fn parse_agent_file(path: &Path, agent_source: &str) -> Option<AgentInfo> {
         (Some(text.clone()), parsed, text.clone())
     } else {
         let (yaml, map, body) = parse_frontmatter(&text);
-        (yaml, serde_json::to_value(map).unwrap_or_else(|_| json!({})), body)
+        (
+            yaml,
+            serde_json::to_value(map).unwrap_or_else(|_| json!({})),
+            body,
+        )
     };
     let interface = parsed.get("interface");
     let name = parsed
@@ -1864,7 +2108,11 @@ fn parse_agent_file(path: &Path, agent_source: &str) -> Option<AgentInfo> {
         name,
         description,
         tools,
-        model: parsed.get("model").or_else(|| parsed.get("default_model")).and_then(Value::as_str).map(String::from),
+        model: parsed
+            .get("model")
+            .or_else(|| parsed.get("default_model"))
+            .and_then(Value::as_str)
+            .map(String::from),
         agent_source: agent_source.into(),
         file_path: path.to_string_lossy().to_string(),
         yaml_raw,
@@ -1876,7 +2124,11 @@ fn parse_agent_file(path: &Path, agent_source: &str) -> Option<AgentInfo> {
     })
 }
 
-fn parse_session_file(path: &Path, agent_source: &str, sources: &[SourcePaths]) -> Option<SessionInfo> {
+fn parse_session_file(
+    path: &Path,
+    agent_source: &str,
+    sources: &[SourcePaths],
+) -> Option<SessionInfo> {
     let text = fs::read_to_string(path).ok()?;
     let data: Value = serde_json::from_str(&text).ok()?;
     let session_id = data.get("sessionId").and_then(Value::as_str)?.to_string();
@@ -1891,9 +2143,13 @@ fn parse_session_file(path: &Path, agent_source: &str, sources: &[SourcePaths]) 
     if let Some(project_name) = &project_name {
         for source in sources {
             if let Some(Some(projects_path)) = source.paths.get("projects_path") {
-                let candidate = Path::new(projects_path).join(project_name).join(format!("{session_id}.jsonl"));
+                let candidate = Path::new(projects_path)
+                    .join(project_name)
+                    .join(format!("{session_id}.jsonl"));
                 if candidate.exists() {
-                    jsonl_size = fs::metadata(&candidate).map(|m| m.len() as i64).unwrap_or(0);
+                    jsonl_size = fs::metadata(&candidate)
+                        .map(|m| m.len() as i64)
+                        .unwrap_or(0);
                     message_count = count_jsonl_lines(&candidate);
                     jsonl_path = Some(candidate.to_string_lossy().to_string());
                     break;
@@ -1923,8 +2179,14 @@ fn parse_session_file(path: &Path, agent_source: &str, sources: &[SourcePaths]) 
         cwd,
         project_name,
         agent_source: agent_source.into(),
-        entrypoint: data.get("entrypoint").and_then(Value::as_str).map(String::from),
-        version: data.get("version").and_then(Value::as_str).map(String::from),
+        entrypoint: data
+            .get("entrypoint")
+            .and_then(Value::as_str)
+            .map(String::from),
+        version: data
+            .get("version")
+            .and_then(Value::as_str)
+            .map(String::from),
         kind: data.get("kind").and_then(Value::as_str).map(String::from),
         started_at,
         message_count,
@@ -2181,7 +2443,9 @@ fn yaml_to_json(yaml: yaml_rust2::Yaml) -> Option<Value> {
         Yaml::Integer(i) => Some(Value::from(i)),
         Yaml::String(s) => Some(Value::String(s)),
         Yaml::Boolean(b) => Some(Value::Bool(b)),
-        Yaml::Array(values) => Some(Value::Array(values.into_iter().filter_map(yaml_to_json).collect())),
+        Yaml::Array(values) => Some(Value::Array(
+            values.into_iter().filter_map(yaml_to_json).collect(),
+        )),
         Yaml::Hash(map) => {
             let mut out = serde_json::Map::new();
             for (key, value) in map {
@@ -2355,7 +2619,9 @@ fn refresh_skill_usage_from_sessions(conn: &Connection) -> Result<i64> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     let mut inserted = 0;
-    for (session_id, agent_source, first_prompt, compressed_summary, jsonl_path, started_at) in sessions {
+    for (session_id, agent_source, first_prompt, compressed_summary, jsonl_path, started_at) in
+        sessions
+    {
         let mut haystack = String::new();
         if let Some(value) = first_prompt {
             haystack.push_str(&value);
@@ -2555,14 +2821,30 @@ fn list_categories(conn: &Connection) -> Result<Value> {
     Ok(json!(items))
 }
 
-fn get_skill(conn: &Connection, name: &str) -> Result<Value> {
-    conn.query_row(
-        "SELECT id, name, description, category, category_tags, source_type, plugin_name, origin,
-                file_path, yaml_raw, body_text, body_size, line_count, file_mtime, file_size,
-                usage_count, session_count, created_at, updated_at
-         FROM skills WHERE name = ?1 LIMIT 1",
-        [name],
-        |row| {
+fn get_skill(conn: &Connection, name: &str, source_type: Option<&str>) -> Result<Value> {
+    let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(st) =
+        source_type
+    {
+        (
+            "SELECT id, name, description, category, category_tags, source_type, plugin_name, origin,
+                    file_path, yaml_raw, body_text, body_size, line_count, file_mtime, file_size,
+                    usage_count, session_count, created_at, updated_at
+             FROM skills WHERE name = ?1 AND source_type = ?2 LIMIT 1"
+                .to_string(),
+            vec![Box::new(name.to_string()), Box::new(st.to_string())],
+        )
+    } else {
+        (
+            "SELECT id, name, description, category, category_tags, source_type, plugin_name, origin,
+                    file_path, yaml_raw, body_text, body_size, line_count, file_mtime, file_size,
+                    usage_count, session_count, created_at, updated_at
+             FROM skills WHERE name = ?1 LIMIT 1"
+                .to_string(),
+            vec![Box::new(name.to_string())],
+        )
+    };
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    conn.query_row(&sql, param_refs.as_slice(), |row| {
             let category_tags: Option<String> = row.get(4)?;
             Ok(json!({
                 "id": row.get::<_, i64>(0)?,
@@ -2592,11 +2874,14 @@ fn get_skill(conn: &Connection, name: &str) -> Result<Value> {
 }
 
 fn update_skill(conn: &Connection, name: &str, body: &Value) -> Result<Value> {
-    let existing = conn.query_row(
-        "SELECT file_path, source_type FROM skills WHERE name = ?1 LIMIT 1",
-        [name],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-    ).optional()?.ok_or_else(|| anyhow!("Skill not found"))?;
+    let existing = conn
+        .query_row(
+            "SELECT file_path, source_type FROM skills WHERE name = ?1 LIMIT 1",
+            [name],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("Skill not found"))?;
 
     let new_name = body.get("name").and_then(|v| v.as_str()).unwrap_or(name);
     let new_desc = body.get("description").and_then(|v| v.as_str());
@@ -2623,15 +2908,18 @@ fn update_skill(conn: &Connection, name: &str, body: &Value) -> Result<Value> {
         }
     }
 
-    get_skill(conn, new_name)
+    get_skill(conn, new_name, None)
 }
 
 fn delete_skill(conn: &Connection, name: &str) -> Result<Value> {
-    let row = conn.query_row(
-        "SELECT file_path, source_type FROM skills WHERE name = ?1 LIMIT 1",
-        [name],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-    ).optional()?.ok_or_else(|| anyhow!("Skill not found"))?;
+    let row = conn
+        .query_row(
+            "SELECT file_path, source_type FROM skills WHERE name = ?1 LIMIT 1",
+            [name],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("Skill not found"))?;
 
     let file_path = std::path::Path::new(&row.0);
     if file_path.exists() {
@@ -2676,20 +2964,23 @@ fn list_agents(conn: &Connection, query: PageQuery) -> Result<Value> {
          ORDER BY name ASC LIMIT ?3 OFFSET ?4",
     )?;
     let items = stmt
-        .query_map(params![query.agent_source, search, size, (page - 1) * size], |row| {
-            let tools: Option<String> = row.get(3)?;
-            Ok(json!({
-                "id": row.get::<_, i64>(0)?,
-                "name": row.get::<_, String>(1)?,
-                "description": row.get::<_, Option<String>>(2)?,
-                "tools": tools.and_then(|v| serde_json::from_str::<Value>(&v).ok()),
-                "model": row.get::<_, Option<String>>(4)?,
-                "file_path": row.get::<_, String>(5)?,
-                "body_size": row.get::<_, i64>(6)?,
-                "line_count": row.get::<_, i64>(7)?,
-                "file_mtime": row.get::<_, Option<f64>>(8)?,
-            }))
-        })?
+        .query_map(
+            params![query.agent_source, search, size, (page - 1) * size],
+            |row| {
+                let tools: Option<String> = row.get(3)?;
+                Ok(json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "name": row.get::<_, String>(1)?,
+                    "description": row.get::<_, Option<String>>(2)?,
+                    "tools": tools.and_then(|v| serde_json::from_str::<Value>(&v).ok()),
+                    "model": row.get::<_, Option<String>>(4)?,
+                    "file_path": row.get::<_, String>(5)?,
+                    "body_size": row.get::<_, i64>(6)?,
+                    "line_count": row.get::<_, i64>(7)?,
+                    "file_mtime": row.get::<_, Option<f64>>(8)?,
+                }))
+            },
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(json!({ "items": items, "total": total, "page": page, "size": size }))
 }
@@ -2899,7 +3190,7 @@ fn save_llm_config(conn: &Connection, body: Option<Value>) -> Result<Value> {
     let model = body
         .get("llm_model")
         .and_then(Value::as_str)
-        .unwrap_or("gpt-5.2")
+        .unwrap_or("gpt-5.5")
         .trim();
 
     if base_url.is_empty() {
@@ -2909,10 +3200,17 @@ fn save_llm_config(conn: &Connection, body: Option<Value>) -> Result<Value> {
         return Err(anyhow!("model is required"));
     }
 
+    let api_format = body
+        .get("llm_api_format")
+        .and_then(Value::as_str)
+        .unwrap_or("openai")
+        .trim();
+
     set_config(conn, "llm_enabled", &enabled.to_string())?;
     set_config(conn, "llm_provider", provider)?;
     set_config(conn, "llm_base_url", base_url)?;
     set_config(conn, "llm_model", model)?;
+    set_config(conn, "llm_api_format", api_format)?;
 
     if let Some(api_key) = body
         .get("llm_api_key")
@@ -2953,6 +3251,12 @@ async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
         .unwrap_or("")
         .trim()
         .to_string();
+    let api_format = body
+        .get("llm_api_format")
+        .and_then(Value::as_str)
+        .unwrap_or("openai")
+        .trim()
+        .to_string();
 
     if base_url.is_empty() {
         return Err(anyhow!("base_url is required"));
@@ -2964,23 +3268,45 @@ async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
         return Err(anyhow!("api_key is required"));
     }
 
-    let url = format!("{}/chat/completions", base_url);
+    let is_anthropic = api_format == "anthropic";
+    let url = if is_anthropic {
+        format!("{}/v1/messages", base_url)
+    } else {
+        format!("{}/chat/completions", base_url)
+    };
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()?;
-    let response = client
-        .post(url)
-        .bearer_auth(api_key)
-        .json(&json!({
+
+    let mut req = client
+        .post(&url)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json");
+    if is_anthropic {
+        req = req
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&json!({
+                "model": model,
+                "max_tokens": 1,
+                "messages": [
+                    { "role": "user", "content": "ping" }
+                ],
+                "temperature": 0
+            }));
+    } else {
+        req = req.bearer_auth(&api_key).json(&json!({
             "model": model,
             "messages": [
                 { "role": "user", "content": "ping" }
             ],
             "max_tokens": 1,
             "temperature": 0
-        }))
-        .send()
-        .await?;
+        }));
+    }
+
+    let response = req.send().await?;
 
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
@@ -2990,14 +3316,26 @@ async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
         let message = serde_json::from_str::<Value>(&text)
             .ok()
             .and_then(|value| {
-                value
-                    .get("error")
-                    .and_then(|error| error.get("message").or(Some(error)))
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
+                if is_anthropic {
+                    value
+                        .get("error")
+                        .and_then(|error| error.get("message"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                } else {
+                    value
+                        .get("error")
+                        .and_then(|error| error.get("message").or(Some(error)))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                }
             })
             .unwrap_or_else(|| text.chars().take(300).collect::<String>());
-        Err(anyhow!("大模型连接测试失败：HTTP {} {}", status.as_u16(), message))
+        Err(anyhow!(
+            "大模型连接测试失败：HTTP {} {}",
+            status.as_u16(),
+            message
+        ))
     }
 }
 
@@ -3092,9 +3430,8 @@ fn export_agents(conn: &Connection) -> Result<Value> {
 }
 
 fn list_admin_users(conn: &Connection) -> Result<Value> {
-    let mut stmt = conn.prepare(
-        "SELECT id, username, is_active, created_at FROM admin_users ORDER BY id ASC",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT id, username, is_active, created_at FROM admin_users ORDER BY id ASC")?;
     let items = stmt
         .query_map([], |row| {
             Ok(json!({
@@ -3130,7 +3467,11 @@ fn create_admin_user(conn: &Connection, body: Option<Value>) -> Result<Value> {
 
 fn update_admin_user(conn: &Connection, id: i64, body: Option<Value>) -> Result<Value> {
     let body = body.unwrap_or(Value::Null);
-    if let Some(username) = body.get("username").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+    if let Some(username) = body
+        .get("username")
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+    {
         conn.execute(
             "UPDATE admin_users SET username = ?2 WHERE id = ?1",
             params![id, username],
@@ -3142,7 +3483,11 @@ fn update_admin_user(conn: &Connection, id: i64, body: Option<Value>) -> Result<
             params![id, is_active as i64],
         )?;
     }
-    if let Some(password) = body.get("password").and_then(Value::as_str).filter(|v| !v.is_empty()) {
+    if let Some(password) = body
+        .get("password")
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty())
+    {
         conn.execute(
             "UPDATE admin_users SET password_hash = ?2 WHERE id = ?1",
             params![id, local_password_hash(password)],
@@ -3169,13 +3514,19 @@ fn csv_escape(value: String) -> String {
 }
 
 fn count_table(conn: &Connection, table: &str) -> Result<i64> {
-    conn.query_row(&format!("SELECT COUNT(id) FROM {table}"), [], |row| row.get(0))
-        .map_err(Into::into)
+    conn.query_row(&format!("SELECT COUNT(id) FROM {table}"), [], |row| {
+        row.get(0)
+    })
+    .map_err(Into::into)
 }
 
 fn count_where(conn: &Connection, table: &str, clause: &str) -> Result<i64> {
-    conn.query_row(&format!("SELECT COUNT(id) FROM {table} WHERE {clause}"), [], |row| row.get(0))
-        .map_err(Into::into)
+    conn.query_row(
+        &format!("SELECT COUNT(id) FROM {table} WHERE {clause}"),
+        [],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
 }
 
 fn derive_category(name: &str) -> String {
@@ -3184,13 +3535,67 @@ fn derive_category(name: &str) -> String {
     let groups: [(&str, &[&str]); 10] = [
         ("python", &["python"]),
         ("golang", &["golang", "go"]),
-        ("java", &["java", "kotlin", "springboot", "jpa", "android", "compose", "gradle"]),
+        (
+            "java",
+            &[
+                "java",
+                "kotlin",
+                "springboot",
+                "jpa",
+                "android",
+                "compose",
+                "gradle",
+            ],
+        ),
         ("cpp", &["cpp"]),
         ("rust", &["rust"]),
-        ("frontend", &["frontend", "vue", "react", "nextjs", "nuxt", "typescript", "javascript", "flutter", "swiftui", "swift"]),
-        ("document", &["document", "docx", "pptx", "xlsx", "pdf", "internal-comms"]),
-        ("workflow", &["tdd", "e2e", "verification", "code-review", "debugging", "build", "refactor"]),
-        ("meta", &["colleague", "continuous-learning", "skill", "configure", "eval", "harness", "project", "rules", "sessions", "strategic", "brainstorm"]),
+        (
+            "frontend",
+            &[
+                "frontend",
+                "vue",
+                "react",
+                "nextjs",
+                "nuxt",
+                "typescript",
+                "javascript",
+                "flutter",
+                "swiftui",
+                "swift",
+            ],
+        ),
+        (
+            "document",
+            &["document", "docx", "pptx", "xlsx", "pdf", "internal-comms"],
+        ),
+        (
+            "workflow",
+            &[
+                "tdd",
+                "e2e",
+                "verification",
+                "code-review",
+                "debugging",
+                "build",
+                "refactor",
+            ],
+        ),
+        (
+            "meta",
+            &[
+                "colleague",
+                "continuous-learning",
+                "skill",
+                "configure",
+                "eval",
+                "harness",
+                "project",
+                "rules",
+                "sessions",
+                "strategic",
+                "brainstorm",
+            ],
+        ),
         ("backend", &["django", "laravel", "ktor", "exposed", "api"]),
     ];
     for (category, values) in groups {
@@ -3202,7 +3607,11 @@ fn derive_category(name: &str) -> String {
 }
 
 fn derive_tags(name: &str, description: Option<&str>) -> Vec<String> {
-    let haystack = format!("{} {}", name.to_lowercase(), description.unwrap_or("").to_lowercase());
+    let haystack = format!(
+        "{} {}",
+        name.to_lowercase(),
+        description.unwrap_or("").to_lowercase()
+    );
     [
         "python",
         "golang",
@@ -3228,10 +3637,7 @@ fn derive_tags(name: &str, description: Option<&str>) -> Vec<String> {
 
 fn derive_project_name(cwd: Option<&str>, file_path: &Path) -> Option<String> {
     if let Some(cwd) = cwd {
-        return Some(
-            cwd.replace(":\\", "--")
-                .replace(['\\', '/', ' '], "-"),
-        );
+        return Some(cwd.replace(":\\", "--").replace(['\\', '/', ' '], "-"));
     }
     let path = file_path.to_string_lossy().replace('\\', "/");
     path.split("/projects/")
@@ -3264,7 +3670,9 @@ fn system_time_secs(time: std::time::SystemTime) -> f64 {
 
 fn format_system_time(time: std::time::SystemTime) -> String {
     let dt: DateTime<Utc> = time.into();
-    dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string()
+    dt.with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string()
 }
 
 fn now_string() -> String {
@@ -3288,13 +3696,6 @@ fn url_decode(value: &str) -> String {
         buf.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8(buf).unwrap_or_else(|err| {
-        String::from_utf8_lossy(&err.into_bytes()).into_owned()
-    })
+    String::from_utf8(buf)
+        .unwrap_or_else(|err| String::from_utf8_lossy(&err.into_bytes()).into_owned())
 }
-
-
-
-
-
-

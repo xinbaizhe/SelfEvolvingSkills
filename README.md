@@ -24,9 +24,24 @@ Self Evolving Skills 是一款**本地优先**的桌面应用。它会扫描你�
 
 ## 支持的数据源
 
-| Claude Code | Codex | Hermes | Cursor | VSCode | CodeBuddy | TRAE | ZeeLinClaw |
-|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Skills · Agents · Sessions · Memory | Skills · Sessions | Skills · Sessions | Sessions | Sessions | Skills · Sessions | Skills · Sessions | Skills · Sessions |
+| Claude Code | Codex | Hermes | OpenClaw | Cursor | VSCode | CodeBuddy | TRAE | ZeeLinClaw |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Skills · Agents · Sessions · Memory | Skills · Sessions | Skills · Sessions | Skills · Agents · Sessions | Sessions | Sessions | Skills · Sessions | Skills · Sessions | Skills · Sessions |
+
+## 大模型配置
+
+在"系统配置"页面可配置 LLM 连接，用于聚类复核、草稿优化和质量评审。支持 **OpenAI Chat Completions** 和 **Anthropic Messages** 两种 API 格式，切换服务商时自动匹配对应端点。
+
+| 服务商 | 推荐模型 | API 格式 |
+|:---|:---|:---:|
+| OpenAI | gpt-5.5 / gpt-5.5-pro / gpt-5.4 | OpenAI |
+| DeepSeek | deepseek-v4-pro / deepseek-v4-flash | OpenAI + Anthropic |
+| 阿里百炼 | qwen3.7-max / qwen3.6-plus | OpenAI |
+| 智谱 AI | glm-5.1 / glm-5 | OpenAI + Anthropic |
+| 月之暗面 | kimi-k2.6 / kimi-k2.5 | OpenAI |
+| MiniMax | MiniMax-M2.7 | OpenAI + Anthropic |
+
+> 未配置大模型时，进化管道自动使用本地回退逻辑，不发起网络请求。
 
 ## 核心流程：7 步进化管道
 
@@ -114,10 +129,15 @@ npm run tauri:build
 | | `POST /community/install` | 下载安装社区 Skill |
 | 系统 | `GET /system/monitor` | 系统资源监控（CPU / 内存 / 磁盘） |
 | | `GET /system/database` | 数据库信息 |
+| 管理 | `GET /admin/system` | 系统概览（Skills / Agents / Sessions 统计） |
+| | `GET /admin/config/llm` | 获取大模型配置 |
+| | `PUT /admin/config/llm` | 保存大模型配置 |
+| | `POST /admin/config/llm/test` | 测试大模型连接 |
 
 ## 隐私
 
 - 扫描、聚类、压缩均在本地执行，原始会话不上传
+- LLM 调用仅在用户主动启用并配置服务商后生效，可随时关闭回退到本地模式
 - 社区检索仅请求 GitHub 公开 API，不携带本地数据
 - ZIP 导入含路径穿越和大小校验
 - 无外部数据库依赖，无遥测采集

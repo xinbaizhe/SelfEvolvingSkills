@@ -7,17 +7,20 @@ interface ProviderPreset {
   key: string
   label: string
   baseUrl: string
+  anthropicBaseUrl?: string
   models: string[]
   defaultModel: string
+  apiFormat?: string
 }
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
-  { key: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.2', 'gpt-5.2-chat-latest', 'gpt-5.2-pro', 'gpt-5.1', 'gpt-4.1', 'o3'], defaultModel: 'gpt-5.2' },
-  { key: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-v4-pro' },
-  { key: 'siliconflow', label: '硅基流动 (SiliconFlow)', baseUrl: 'https://api.siliconflow.cn/v1', models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen3-235B-A22B-Instruct-2507'], defaultModel: 'deepseek-ai/DeepSeek-V3' },
-  { key: 'bailian', label: '阿里百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-235b-a22b'], defaultModel: 'qwen-plus' },
-  { key: 'zhipu', label: '智谱 AI (GLM)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4.6', 'glm-4.5', 'glm-4-plus', 'glm-4-flash'], defaultModel: 'glm-4.6' },
-  { key: 'moonshot', label: '月之暗面 (Moonshot)', baseUrl: 'https://api.moonshot.cn/v1', models: ['kimi-k2-0905-preview', 'moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'], defaultModel: 'kimi-k2-0905-preview' },
+  { key: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.1', 'o3', 'gpt-4.1'], defaultModel: 'gpt-5.5' },
+  { key: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', anthropicBaseUrl: 'https://api.deepseek.com/anthropic', models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-v4-pro' },
+
+  { key: 'bailian', label: '阿里百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen3.7-max', 'qwen3.6-max-preview', 'qwen3.6-plus', 'qwen-plus', 'qwen-max'], defaultModel: 'qwen3.7-max' },
+  { key: 'zhipu', label: '智谱 AI (GLM)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic', models: ['glm-5.1', 'glm-5', 'glm-4.7-flash', 'glm-4.6'], defaultModel: 'glm-5.1' },
+  { key: 'moonshot', label: '月之暗面 (Moonshot)', baseUrl: 'https://api.moonshot.cn/v1', models: ['kimi-k2.6', 'kimi-k2.5', 'moonshot-v1-128k', 'moonshot-v1-32k'], defaultModel: 'kimi-k2.6' },
+  { key: 'minimax', label: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1', anthropicBaseUrl: 'https://api.minimaxi.com/anthropic', models: ['MiniMax-M2.7'], defaultModel: 'MiniMax-M2.7', apiFormat: 'anthropic' },
   { key: 'custom', label: '自定义兼容接口', baseUrl: '', models: [], defaultModel: '' },
 ]
 
@@ -32,6 +35,13 @@ const lastTestOk = ref<boolean | null>(null)
 const lastTestError = ref('')
 
 const activePreset = computed(() => PROVIDER_PRESETS.find((p) => p.key === selectedProvider.value))
+
+const formatUnsupported = computed(() => {
+  const preset = activePreset.value
+  if (!preset) return false
+  if (form.llm_api_format === 'anthropic' && !preset.anthropicBaseUrl) return true
+  return false
+})
 
 const llmStatusLabel = computed(() => {
   if (lastTestOk.value === true) return '大模型可用'
@@ -55,15 +65,21 @@ const modelOptions = computed(() => {
 
 const baseUrlOptions = computed(() => {
   const preset = activePreset.value
-  if (!preset?.baseUrl) return []
-  return [{ label: preset.baseUrl, value: preset.baseUrl }]
+  if (!preset) return []
+  const options: { label: string; value: string }[] = []
+  if (preset.baseUrl) options.push({ label: preset.baseUrl, value: preset.baseUrl })
+  if (form.llm_api_format === 'anthropic' && preset.anthropicBaseUrl) {
+    options.push({ label: preset.anthropicBaseUrl, value: preset.anthropicBaseUrl })
+  }
+  return options
 })
 
 const form = reactive({
   llm_enabled: false,
   llm_base_url: 'https://api.openai.com/v1',
   llm_api_key: '',
-  llm_model: 'gpt-5.2',
+  llm_model: 'gpt-5.5',
+  llm_api_format: 'openai',
   api_key_configured: false,
 })
 
@@ -72,10 +88,23 @@ onMounted(load)
 function onProviderChange(key: string) {
   const preset = PROVIDER_PRESETS.find((p) => p.key === key)
   if (!preset) return
-  form.llm_base_url = preset.baseUrl
+  form.llm_api_format = preset.apiFormat || 'openai'
+  form.llm_base_url = form.llm_api_format === 'anthropic' && preset.anthropicBaseUrl
+    ? preset.anthropicBaseUrl
+    : preset.baseUrl
   form.llm_model = preset.defaultModel
   lastTestOk.value = null
   lastTestError.value = ''
+}
+
+function onApiFormatChange(format: string) {
+  const preset = activePreset.value
+  if (!preset) return
+  if (format === 'anthropic' && preset.anthropicBaseUrl) {
+    form.llm_base_url = preset.anthropicBaseUrl
+  } else {
+    form.llm_base_url = preset.baseUrl
+  }
 }
 
 async function load() {
@@ -101,6 +130,7 @@ function applyLlmConfig(data: any) {
   form.llm_base_url = data?.base_url || activePreset.value?.baseUrl || 'https://api.openai.com/v1'
   form.llm_api_key = ''
   form.llm_model = data?.model || activePreset.value?.defaultModel || 'gpt-5.2'
+  form.llm_api_format = data?.api_format || activePreset.value?.apiFormat || 'openai'
   form.api_key_configured = !!(data?.api_key_configured || data?.has_api_key)
 }
 
@@ -111,6 +141,7 @@ function llmPayload() {
     llm_base_url: form.llm_base_url.trim(),
     llm_model: form.llm_model.trim(),
     llm_api_key: form.llm_api_key.trim(),
+    llm_api_format: form.llm_api_format,
   }
 }
 
@@ -137,7 +168,7 @@ async function save() {
     const payload = llmPayload()
     const res = await updateLlmConfig(payload)
     if (res.success) {
-      applyLlmConfig(res.data || { ...payload, enabled: payload.llm_enabled, provider: payload.llm_provider, base_url: payload.llm_base_url, model: payload.llm_model, has_api_key: true })
+      applyLlmConfig(res.data || { ...payload, enabled: payload.llm_enabled, provider: payload.llm_provider, base_url: payload.llm_base_url, model: payload.llm_model, api_format: payload.llm_api_format, has_api_key: true })
       const sysRes = await fetchSystemInfo()
       if (sysRes.success) systemInfo.value = sysRes.data
       ElMessage.success('大模型配置已保存')
@@ -185,8 +216,8 @@ function getSourcePaths(source: any): any[] {
 
     <el-card header="大模型推荐配置">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
-        <template #title>兼容 OpenAI 接口</template>
-        基础 URL、API Key 和模型均可自行填写；基础 URL 和模型列表提供快捷选项。
+        <template #title>兼容 OpenAI / Anthropic 接口</template>
+        基础 URL、API Key 和模型均可自行填写；支持 OpenAI 和 Anthropic Messages 两种 API 格式。
       </el-alert>
 
       <el-form label-width="120px" style="max-width: 760px">
@@ -208,6 +239,17 @@ function getSourcePaths(source: any): any[] {
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="API 格式">
+          <el-select v-model="form.llm_api_format" style="width: 100%" @change="onApiFormatChange">
+            <el-option label="OpenAI 兼容 (Chat Completions)" value="openai" />
+            <el-option label="Anthropic (Messages API)" value="anthropic" />
+          </el-select>
+        </el-form-item>
+        <div v-if="formatUnsupported" style="max-width: 760px; margin: 0 0 18px 120px">
+          <el-alert type="warning" :closable="false" show-icon>
+            <template #title>{{ activePreset?.label }} 暂不支持 Anthropic Messages API，建议切换为 OpenAI 兼容格式</template>
+          </el-alert>
+        </div>
         <el-form-item label="基础 URL">
           <el-select
             v-model="form.llm_base_url"
@@ -301,10 +343,35 @@ function getSourcePaths(source: any): any[] {
     </el-card>
 
     <el-card header="关于" style="margin-top: 20px" v-if="systemInfo">
-      <p><strong>Self Evolving Skills</strong></p>
-      <p>扫描本地 AI Coding Agent 数据，发现重复工作流，生成可审查的 Skill 草稿。</p>
-      <p>运行时：{{ systemInfo.runtime }}</p>
-      <p>数据库：{{ systemInfo.database }}</p>
+      <div class="about">
+        <p class="about-name">Self Evolving Skills</p>
+        <p class="about-desc">
+          本地优先的 AI Coding Agent Skills 进化引擎。扫描本机已安装的 AI 编程工具（Claude Code、Codex、Cursor、VSCode 等），
+          收集已有的 Skills、Agents 与会话历史，通过 7 步进化管道自动发现高频重复工作流，生成可安装的 Skill 草稿。
+          所有数据默认留存在本机，不上传任何内容。
+        </p>
+        <div class="about-stats">
+          <div class="stat-item">
+            <span class="stat-num">{{ systemInfo.total_skills ?? 0 }}</span>
+            <span class="stat-label">Skills</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-num">{{ systemInfo.total_agents ?? 0 }}</span>
+            <span class="stat-label">Agents</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-num">{{ systemInfo.total_sessions ?? 0 }}</span>
+            <span class="stat-label">Sessions</span>
+          </div>
+        </div>
+        <div class="about-tech">
+          <el-tag size="small" type="info">Tauri 2</el-tag>
+          <el-tag size="small" type="info">Vue 3 + Element Plus</el-tag>
+          <el-tag size="small" type="info">Rust Edition 2021</el-tag>
+          <el-tag size="small" type="info">SQLite WAL</el-tag>
+        </div>
+        <p class="about-license">MIT License &mdash; <a href="https://github.com/xinbaizhe/SelfEvolvingSkills" target="_blank">GitHub</a></p>
+      </div>
     </el-card>
   </div>
 </template>
@@ -348,5 +415,52 @@ function getSourcePaths(source: any): any[] {
 }
 .api-key-eye.visible {
   color: #2563eb;
+}
+
+.about-name {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+.about-desc {
+  color: #555;
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 0 0 18px;
+}
+.about-stats {
+  display: flex;
+  gap: 32px;
+  margin-bottom: 18px;
+}
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.stat-num {
+  font-size: 24px;
+  font-weight: 700;
+  color: #0c8265;
+}
+.stat-label {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+.about-tech {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.about-license {
+  font-size: 12px;
+  color: #909399;
+  margin: 0;
+}
+.about-license a {
+  color: #1473e6;
+  text-decoration: none;
 }
 </style>

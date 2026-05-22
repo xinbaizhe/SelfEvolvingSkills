@@ -299,25 +299,76 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_workflow_recommendations_step ON workflow_recommendations(step_id);
         "#,
     )?;
-    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN compressed_summary TEXT", []);
-    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_score INTEGER", []);
-    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_summary TEXT", []);
-    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_feedback TEXT", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN verified INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN relevance_score REAL DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN quality_score REAL DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN weighted_score REAL DEFAULT 0", []);
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN compressed_summary TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN review_score INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN review_summary TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN review_feedback TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN verified INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN relevance_score REAL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN quality_score REAL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN weighted_score REAL DEFAULT 0",
+        [],
+    );
     let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN license TEXT", []);
     let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN pushed_at TEXT", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN matched_file TEXT", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN readme_excerpt TEXT", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN source TEXT DEFAULT 'github'", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN recommendation_reason TEXT", []);
-    let _ = conn.execute("ALTER TABLE community_skills ADD COLUMN topic TEXT DEFAULT 'AI coding agent skills'", []);
-    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_community_skills_source ON community_skills(source)", []);
-    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_community_skills_topic ON community_skills(topic)", []);
-    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN optimize_failed INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE workflow_clusters ADD COLUMN review_failed INTEGER DEFAULT 0", []);
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN matched_file TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN readme_excerpt TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN source TEXT DEFAULT 'github'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN recommendation_reason TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE community_skills ADD COLUMN topic TEXT DEFAULT 'AI coding agent skills'",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_community_skills_source ON community_skills(source)",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_community_skills_topic ON community_skills(topic)",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN optimize_failed INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN review_failed INTEGER DEFAULT 0",
+        [],
+    );
     conn.execute(
         "INSERT OR IGNORE INTO admin_users (id, username, password_hash, is_active, created_at)
          VALUES (1, 'local', '', 1, ?1)",
@@ -346,11 +397,9 @@ fn migrate_evolution_jobs(conn: &Connection) -> Result<()> {
 }
 
 pub(crate) fn count_table(conn: &Connection, table: &str) -> Result<i64> {
-    conn.query_row(
-        &format!("SELECT COUNT(id) FROM {table}"),
-        [],
-        |row| row.get(0),
-    )
+    conn.query_row(&format!("SELECT COUNT(id) FROM {table}"), [], |row| {
+        row.get(0)
+    })
     .map_err(Into::into)
 }
 

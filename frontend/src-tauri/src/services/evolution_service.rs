@@ -15,6 +15,7 @@ struct LlmConfig {
     base_url: String,
     api_key: String,
     model: String,
+    api_format: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,9 +26,11 @@ struct LlmClusterResponse {
 #[derive(Debug, Deserialize)]
 struct LlmClusterDecision {
     name: String,
+    new_name: Option<String>,
     description: Option<String>,
     skill_score: Option<i64>,
     can_generate_skill: Option<bool>,
+    merge_into: Option<String>,
     reasoning: Option<String>,
 }
 
@@ -110,17 +113,17 @@ pub(crate) fn get_evolution_status(conn: &Connection) -> Value {
     // Always look for the latest run (any status), so the UI can show phase
     // state even after the pipeline completes or fails.
     let latest_run: Option<i64> = conn
-        .query_row(
-            "SELECT MAX(run_id) FROM evolution_jobs",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT MAX(run_id) FROM evolution_jobs", [], |row| {
+            row.get(0)
+        })
         .ok();
 
     match latest_run {
         Some(run_id) => {
             let phases = get_run_phases(conn, run_id);
-            let has_active = phases.iter().any(|p| p["status"] == "running" || p["status"] == "pending");
+            let has_active = phases
+                .iter()
+                .any(|p| p["status"] == "running" || p["status"] == "pending");
             let current = phases.iter().find(|p| p["status"] == "running");
             let all_done = phases.iter().all(|p| p["status"] == "completed");
             let any_failed = phases.iter().any(|p| p["status"] == "failed");
@@ -240,7 +243,11 @@ pub(crate) fn start_evolution_pipeline(
 ) -> Value {
     let started_at = now_string();
     let next_run_id: i64 = conn
-        .query_row("SELECT COALESCE(MAX(run_id), 0) + 1 FROM evolution_jobs", [], |row| row.get(0))
+        .query_row(
+            "SELECT COALESCE(MAX(run_id), 0) + 1 FROM evolution_jobs",
+            [],
+            |row| row.get(0),
+        )
         .unwrap_or(1);
 
     for &(phase, _label, progress, _end) in PHASES {
@@ -256,7 +263,10 @@ pub(crate) fn start_evolution_pipeline(
     let selected_agent_ids = agent_ids.unwrap_or_default();
     conn.execute(
         "INSERT INTO evolution_runs (status, agent_ids, started_at) VALUES ('running', ?1, ?2)",
-        params![serde_json::to_string(&selected_agent_ids).unwrap_or_default(), started_at],
+        params![
+            serde_json::to_string(&selected_agent_ids).unwrap_or_default(),
+            started_at
+        ],
     )
     .unwrap();
     let run_row_id = conn.last_insert_rowid();
@@ -286,36 +296,88 @@ pub(crate) fn start_evolution_pipeline(
         // Phase 1: discover (0-20%) — 合并旧 detect + scan，单次 DB 连接
         // =====================================================================
         {
-            phase_update(&app_handle, &db_path_clone, next_run_id, "discover", 3, "正在检测已安装的 AI 编程助手...");
+            phase_update(
+                &app_handle,
+                &db_path_clone,
+                next_run_id,
+                "discover",
+                3,
+                "正在检测已安装的 AI 编程助手...",
+            );
             let conn2 = match db::open_conn(&db_path_clone) {
                 Ok(c) => c,
                 Err(e) => {
-                    phase_update(&app_handle, &db_path_clone, next_run_id, "discover", 20, &format!("数据库打开失败：{e}"));
-                    emit_only(&app_handle, next_run_id, "discover", 100, &format!("进化管道中止：数据库错误 — {e}"));
+                    phase_update(
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "discover",
+                        20,
+                        &format!("数据库打开失败：{e}"),
+                    );
+                    emit_only(
+                        &app_handle,
+                        next_run_id,
+                        "discover",
+                        100,
+                        &format!("进化管道中止：数据库错误 — {e}"),
+                    );
                     return;
                 }
             };
             if let Err(e) = crate::sync_source_configs(&conn2) {
-                phase_update(&app_handle, &db_path_clone, next_run_id, "discover", 6, &format!("检测失败：{}", e));
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "discover",
+                    6,
+                    &format!("检测失败：{}", e),
+                );
             }
             let _guard = scan_lock.lock().await;
-            let sources = filter_sources(crate::enabled_source_paths(&conn2).unwrap_or_default(), &selected_agent_ids);
+            let sources = filter_sources(
+                crate::enabled_source_paths(&conn2).unwrap_or_default(),
+                &selected_agent_ids,
+            );
             phase_update(
-                &app_handle, &db_path_clone, next_run_id, "discover", 10,
+                &app_handle,
+                &db_path_clone,
+                next_run_id,
+                "discover",
+                10,
                 &format!("检测完成，本次将扫描 {} 个 AI 助手", sources.len()),
             );
 
             let skills = crate::scan_skills(&sources);
-            phase_update(&app_handle, &db_path_clone, next_run_id, "discover", 14, &format!("发现 {} 个 Skills", skills.len()));
+            phase_update(
+                &app_handle,
+                &db_path_clone,
+                next_run_id,
+                "discover",
+                14,
+                &format!("发现 {} 个 Skills", skills.len()),
+            );
             let _ = crate::upsert_skills(&conn2, &skills);
 
             let agents = crate::scan_agents(&sources);
-            phase_update(&app_handle, &db_path_clone, next_run_id, "discover", 17, &format!("发现 {} 个 Agents", agents.len()));
+            phase_update(
+                &app_handle,
+                &db_path_clone,
+                next_run_id,
+                "discover",
+                17,
+                &format!("发现 {} 个 Agents", agents.len()),
+            );
             let _ = crate::upsert_agents(&conn2, &agents);
 
             let sessions = crate::scan_sessions(&sources);
             phase_update(
-                &app_handle, &db_path_clone, next_run_id, "discover", 20,
+                &app_handle,
+                &db_path_clone,
+                next_run_id,
+                "discover",
+                20,
                 &format!("发现 {} 条历史会话，已生成本地压缩摘要", sessions.len()),
             );
             let _ = crate::upsert_sessions(&conn2, &sessions);
@@ -326,21 +388,40 @@ pub(crate) fn start_evolution_pipeline(
         // =====================================================================
         // Phase 2: reference_retrieval (20-32%) — 社区检索前置到聚类前
         // =====================================================================
-        phase_update(&app_handle, &db_path_clone, next_run_id, "reference_retrieval", 22, "正在检索社区参考 Skills（GitHub / Web / 本地）...");
-        let community_error = match community_service::fetch_top_community_skills(&db_path_clone, &[]).await {
-            Ok(count) => {
-                phase_update(
-                    &app_handle, &db_path_clone, next_run_id, "reference_retrieval", 32,
-                    &format!("社区检索完成，新增 {} 条参考结果", count),
-                );
-                None
-            }
-            Err(err) => {
-                let message = format!("社区检索失败：{}。管道将继续执行。", err);
-                phase_update(&app_handle, &db_path_clone, next_run_id, "reference_retrieval", 32, &message);
-                Some(message)
-            }
-        };
+        phase_update(
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "reference_retrieval",
+            22,
+            "正在检索社区参考 Skills（GitHub / Web / 本地）...",
+        );
+        let community_error =
+            match community_service::fetch_top_community_skills(&db_path_clone, &[]).await {
+                Ok(count) => {
+                    phase_update(
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "reference_retrieval",
+                        32,
+                        &format!("社区检索完成，新增 {} 条参考结果", count),
+                    );
+                    None
+                }
+                Err(err) => {
+                    let message = format!("社区检索失败：{}。管道将继续执行。", err);
+                    phase_update(
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "reference_retrieval",
+                        32,
+                        &message,
+                    );
+                    Some(message)
+                }
+            };
 
         // =====================================================================
         // Phase 3: cluster (32-50%) — 聚类 + LLM 复核 + 保存
@@ -348,26 +429,74 @@ pub(crate) fn start_evolution_pipeline(
         let conn3 = match db::open_conn(&db_path_clone) {
             Ok(c) => c,
             Err(e) => {
-                phase_update(&app_handle, &db_path_clone, next_run_id, "cluster", 50, &format!("数据库打开失败：{e}"));
-                emit_only(&app_handle, next_run_id, "cluster", 100, &format!("进化管道中止：数据库错误 — {e}"));
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "cluster",
+                    50,
+                    &format!("数据库打开失败：{e}"),
+                );
+                emit_only(
+                    &app_handle,
+                    next_run_id,
+                    "cluster",
+                    100,
+                    &format!("进化管道中止：数据库错误 — {e}"),
+                );
                 return;
             }
         };
-        phase_update(&app_handle, &db_path_clone, next_run_id, "cluster", 34, "正在用本地算法聚类重复工作流...");
+        phase_update(
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "cluster",
+            34,
+            "正在用本地算法聚类重复工作流...",
+        );
         let mut clusters = workflow_service::cluster_workflows(&conn3);
         drop(conn3);
 
         phase_update(
-            &app_handle, &db_path_clone, next_run_id, "cluster", 42,
-            &format!("本地聚类完成，识别到 {} 个候选工作流，正在大模型复核...", clusters.len()),
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "cluster",
+            42,
+            &format!(
+                "本地聚类完成，识别到 {} 个候选工作流，正在大模型复核...",
+                clusters.len()
+            ),
         );
         match refine_clusters_with_llm(&db_path_clone, &mut clusters).await {
-            Ok(true) => phase_update(&app_handle, &db_path_clone, next_run_id, "cluster", 48, "大模型已完成工作流复核与重排序"),
-            Ok(false) => phase_update(&app_handle, &db_path_clone, next_run_id, "cluster", 48, "未启用大模型，使用本地聚类结果"),
+            Ok(true) => phase_update(
+                &app_handle,
+                &db_path_clone,
+                next_run_id,
+                "cluster",
+                48,
+                "大模型已完成工作流复核与重排序",
+            ),
+            Ok(false) => phase_update(
+                &app_handle,
+                &db_path_clone,
+                next_run_id,
+                "cluster",
+                48,
+                "未启用大模型，使用本地聚类结果",
+            ),
             Err(err) => {
                 let message = format!("大模型复核失败：{}。已回退使用本地聚类结果。", err);
                 llm_error = Some(message.clone());
-                phase_update(&app_handle, &db_path_clone, next_run_id, "cluster", 48, &message);
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "cluster",
+                    48,
+                    &message,
+                );
             }
         }
         workflow_service::make_cluster_names_unique(&mut clusters);
@@ -375,38 +504,87 @@ pub(crate) fn start_evolution_pipeline(
         let conn4 = match db::open_conn(&db_path_clone) {
             Ok(c) => c,
             Err(e) => {
-                phase_update(&app_handle, &db_path_clone, next_run_id, "cluster", 50, &format!("数据库打开失败：{e}"));
-                emit_only(&app_handle, next_run_id, "cluster", 100, &format!("进化管道中止：数据库错误 — {e}"));
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "cluster",
+                    50,
+                    &format!("数据库打开失败：{e}"),
+                );
+                emit_only(
+                    &app_handle,
+                    next_run_id,
+                    "cluster",
+                    100,
+                    &format!("进化管道中止：数据库错误 — {e}"),
+                );
                 return;
             }
         };
         let _ = workflow_service::save_clusters(&conn4, &clusters);
-        phase_update(&app_handle, &db_path_clone, next_run_id, "cluster", 50, "聚类结果已保存");
+        phase_update(
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "cluster",
+            50,
+            "聚类结果已保存",
+        );
 
         // =====================================================================
         // Phase 4: draft_generate (50-62%) — 纯本地模板生成，不做 LLM 调用
         // =====================================================================
-        phase_update(&app_handle, &db_path_clone, next_run_id, "draft_generate", 52, "正在基于模板生成 Skill 草稿（纯本地）...");
+        phase_update(
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "draft_generate",
+            52,
+            "正在基于模板生成 Skill 草稿（纯本地）...",
+        );
         let drafts = workflow_service::generate_skill_drafts(&conn4, &clusters);
         drop(conn4);
         phase_update(
-            &app_handle, &db_path_clone, next_run_id, "draft_generate", 62,
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "draft_generate",
+            62,
             &format!("已生成 {} 个本地 Skill 草稿", drafts),
         );
 
         // =====================================================================
         // Phase 5: optimize (62-78%) — LLM 逐条优化草稿，注入社区参考
         // =====================================================================
-        phase_update(&app_handle, &db_path_clone, next_run_id, "optimize", 64, "正在用大模型逐条优化草稿...");
+        phase_update(
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "optimize",
+            64,
+            "正在用大模型逐条优化草稿...",
+        );
         let optimized = match optimize_drafts_with_llm(&db_path_clone, &clusters).await {
             Ok(count) => {
                 if count > 0 {
                     phase_update(
-                        &app_handle, &db_path_clone, next_run_id, "optimize", 78,
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "optimize",
+                        78,
                         &format!("大模型已优化 {} 个 Skill 草稿", count),
                     );
                 } else {
-                    phase_update(&app_handle, &db_path_clone, next_run_id, "optimize", 78, "未启用大模型，使用本地草稿");
+                    phase_update(
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "optimize",
+                        78,
+                        "未启用大模型，使用本地草稿",
+                    );
                 }
                 count
             }
@@ -416,7 +594,14 @@ pub(crate) fn start_evolution_pipeline(
                     Some(existing) => format!("{existing}；{message}"),
                     None => message.clone(),
                 });
-                phase_update(&app_handle, &db_path_clone, next_run_id, "optimize", 78, &message);
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "optimize",
+                    78,
+                    &message,
+                );
                 0
             }
         };
@@ -424,26 +609,54 @@ pub(crate) fn start_evolution_pipeline(
         // =====================================================================
         // Phase 6: qa_review (78-90%) — 独立 QA Agent + guardrails
         // =====================================================================
-        phase_update(&app_handle, &db_path_clone, next_run_id, "qa_review", 80, "Skill Review Agent 正在评审草稿...");
+        phase_update(
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "qa_review",
+            80,
+            "Skill Review Agent 正在评审草稿...",
+        );
         let reviewed = match qa_drafts_with_llm(&db_path_clone, &mut clusters).await {
             Ok(count) => {
                 if count > 0 {
                     phase_update(
-                        &app_handle, &db_path_clone, next_run_id, "qa_review", 90,
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "qa_review",
+                        90,
                         &format!("Skill Review Agent 已评审 {} 个草稿", count),
                     );
                 } else {
-                    phase_update(&app_handle, &db_path_clone, next_run_id, "qa_review", 90, "未启用大模型，跳过 QA 评审");
+                    phase_update(
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "qa_review",
+                        90,
+                        "未启用大模型，跳过 QA 评审",
+                    );
                 }
                 count
             }
             Err(err) => {
-                let message = format!("Skill Review Agent 评审失败：{}。已保留草稿等待人工审核。", err);
+                let message = format!(
+                    "Skill Review Agent 评审失败：{}。已保留草稿等待人工审核。",
+                    err
+                );
                 llm_error = Some(match llm_error {
                     Some(existing) => format!("{existing}；{message}"),
                     None => message.clone(),
                 });
-                phase_update(&app_handle, &db_path_clone, next_run_id, "qa_review", 90, &message);
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "qa_review",
+                    90,
+                    &message,
+                );
                 0
             }
         };
@@ -454,15 +667,39 @@ pub(crate) fn start_evolution_pipeline(
         let conn5 = match db::open_conn(&db_path_clone) {
             Ok(c) => c,
             Err(e) => {
-                phase_update(&app_handle, &db_path_clone, next_run_id, "diff_recommend", 100, &format!("数据库打开失败：{e}"));
-                emit_only(&app_handle, next_run_id, "diff_recommend", 100, &format!("进化管道中止：数据库错误 — {e}"));
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "diff_recommend",
+                    100,
+                    &format!("数据库打开失败：{e}"),
+                );
+                emit_only(
+                    &app_handle,
+                    next_run_id,
+                    "diff_recommend",
+                    100,
+                    &format!("进化管道中止：数据库错误 — {e}"),
+                );
                 return;
             }
         };
-        phase_update(&app_handle, &db_path_clone, next_run_id, "diff_recommend", 92, "正在对比本地草稿与社区 Skills...");
+        phase_update(
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "diff_recommend",
+            92,
+            "正在对比本地草稿与社区 Skills...",
+        );
         let comparisons = community_service::compare_with_community(&conn5, &clusters);
         phase_update(
-            &app_handle, &db_path_clone, next_run_id, "diff_recommend", 96,
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "diff_recommend",
+            96,
             &format!("差异对比完成，{} 个工作流有社区参考", comparisons),
         );
 
@@ -479,7 +716,14 @@ pub(crate) fn start_evolution_pipeline(
             "UPDATE evolution_steps SET status = 'completed', completed_at = ?2 WHERE id = ?1",
             params![diff_step_id, now_string()],
         );
-        phase_update(&app_handle, &db_path_clone, next_run_id, "diff_recommend", 100, "推荐建议已生成");
+        phase_update(
+            &app_handle,
+            &db_path_clone,
+            next_run_id,
+            "diff_recommend",
+            100,
+            "推荐建议已生成",
+        );
 
         let completed_at = now_string();
         let _ = conn5.execute(
@@ -511,7 +755,13 @@ pub(crate) fn start_evolution_pipeline(
             })).unwrap_or_default()],
         );
 
-        emit_only(&app_handle, next_run_id, "completed", 100, "自进化流程完成，请在 Skills 工作台查看结果");
+        emit_only(
+            &app_handle,
+            next_run_id,
+            "completed",
+            100,
+            "自进化流程完成，请在 Skills 工作台查看结果",
+        );
     });
 
     json!({ "run_id": next_run_id, "status": "running", "started_at": started_at })
@@ -530,7 +780,14 @@ fn filter_sources(
         .collect()
 }
 
-fn phase_update(app: &AppHandle, db_path: &Path, run_id: i64, phase: &str, progress: i64, message: &str) {
+fn phase_update(
+    app: &AppHandle,
+    db_path: &Path,
+    run_id: i64,
+    phase: &str,
+    progress: i64,
+    message: &str,
+) {
     if let Ok(conn) = db::open_conn(db_path) {
         let now = now_string();
         let _ = conn.execute(
@@ -555,7 +812,13 @@ fn phase_update(app: &AppHandle, db_path: &Path, run_id: i64, phase: &str, progr
              WHERE run_id = ?1 AND id < (SELECT id FROM evolution_jobs WHERE run_id = ?1 AND phase = ?2)",
             params![run_id, phase, now],
         );
-        if progress >= PHASES.iter().find(|&&(p, ..)| p == phase).map(|&(_, _, _, e)| e).unwrap_or(progress) {
+        if progress
+            >= PHASES
+                .iter()
+                .find(|&&(p, ..)| p == phase)
+                .map(|&(_, _, _, e)| e)
+                .unwrap_or(progress)
+        {
             let _ = conn.execute(
                 "UPDATE evolution_jobs SET status = 'completed', completed_at = ?3
                  WHERE run_id = ?1 AND phase = ?2",
@@ -586,7 +849,10 @@ fn emit_only(app: &AppHandle, run_id: i64, phase: &str, progress: i64, message: 
     );
 }
 
-async fn refine_clusters_with_llm(db_path: &Path, clusters: &mut [WorkflowCluster]) -> Result<bool> {
+async fn refine_clusters_with_llm(
+    db_path: &Path,
+    clusters: &mut [WorkflowCluster],
+) -> Result<bool> {
     if clusters.is_empty() {
         return Ok(false);
     }
@@ -605,6 +871,11 @@ async fn refine_clusters_with_llm(db_path: &Path, clusters: &mut [WorkflowCluste
                 "source_agents": cluster.source_agents,
                 "skill_score": cluster.skill_score,
                 "sample_tasks": cluster.sample_tasks,
+                "llm_naming_contract": {
+                    "new_name": "optional concrete kebab-case object-action-output skill name",
+                    "merge_into": "optional common reusable skill name when this cluster overlaps another one",
+                    "avoid_names": ["frontend-ui", "code-review", "data-processing", "document-writing", "automation-workflow"]
+                },
             })
         })
         .collect::<Vec<_>>();
@@ -623,8 +894,17 @@ async fn refine_clusters_with_llm(db_path: &Path, clusters: &mut [WorkflowCluste
 
     let parsed: LlmClusterResponse = serde_json::from_str(&extract_json_object(&content)?)?;
     for decision in parsed.clusters {
-        if let Some(cluster) = clusters.iter_mut().find(|cluster| cluster.name == decision.name) {
-            if let Some(description) = decision.description.filter(|value| !value.trim().is_empty()) {
+        if let Some(cluster) = clusters
+            .iter_mut()
+            .find(|cluster| cluster.name == decision.name)
+        {
+            if let Some(new_name) = decision.new_name.filter(|value| !value.trim().is_empty()) {
+                cluster.name = sanitize_skill_name(&new_name);
+            }
+            if let Some(description) = decision
+                .description
+                .filter(|value| !value.trim().is_empty())
+            {
                 cluster.description = description;
             }
             if let Some(score) = decision.skill_score {
@@ -632,6 +912,15 @@ async fn refine_clusters_with_llm(db_path: &Path, clusters: &mut [WorkflowCluste
             }
             if let Some(can_generate) = decision.can_generate_skill {
                 cluster.can_generate_skill = can_generate;
+            }
+            if let Some(merge_into) = decision.merge_into.filter(|value| !value.trim().is_empty()) {
+                let target = sanitize_skill_name(&merge_into);
+                if target != cluster.name {
+                    cluster.can_generate_skill = false;
+                    cluster
+                        .source_skills
+                        .push(format!("LLM merge target: {}", target));
+                }
             }
             if let Some(reasoning) = decision.reasoning.filter(|value| !value.trim().is_empty()) {
                 cluster.source_skills = vec![format!("LLM 复核：{}", reasoning)];
@@ -667,6 +956,11 @@ async fn optimize_drafts_with_llm(db_path: &Path, clusters: &[WorkflowCluster]) 
                     "source_agents": cluster.source_agents,
                     "estimated_time_saved": cluster.estimated_time_saved,
                     "sample_tasks": cluster.sample_tasks,
+                    "llm_naming_contract": {
+                        "new_name": "optional concrete kebab-case object-action-output skill name",
+                        "merge_into": "optional common reusable skill name when this cluster overlaps another one",
+                        "avoid_names": ["frontend-ui", "code-review", "data-processing", "document-writing", "automation-workflow"]
+                    },
                 }))?
             ),
         )
@@ -702,7 +996,11 @@ async fn qa_drafts_with_llm(db_path: &Path, clusters: &mut [WorkflowCluster]) ->
 
     let mut fixed = 0;
     let mut seen_names = std::collections::HashSet::new();
-    for cluster in clusters.iter_mut().filter(|cluster| cluster.can_generate_skill && cluster.skill_score >= 60).take(8) {
+    for cluster in clusters
+        .iter_mut()
+        .filter(|cluster| cluster.can_generate_skill && cluster.skill_score >= 60)
+        .take(8)
+    {
         let conn = db::open_conn(db_path)?;
         let id = workflow_service::workflow_id_for_cluster(&conn, cluster)?;
         let draft_body: Option<String> = conn
@@ -763,7 +1061,10 @@ async fn qa_drafts_with_llm(db_path: &Path, clusters: &mut [WorkflowCluster]) ->
                 Ok(p) => p,
                 Err(e) => {
                     // Fallback: try to parse the entire response as JSON (old format)
-                    match extract_json_object(&content).ok().and_then(|c| serde_json::from_str::<SkillReviewResponse>(&c).ok()) {
+                    match extract_json_object(&content)
+                        .ok()
+                        .and_then(|c| serde_json::from_str::<SkillReviewResponse>(&c).ok())
+                    {
                         Some(p) => p,
                         None => {
                             return Err(anyhow!(
@@ -859,32 +1160,54 @@ fn generate_recommendations(conn: &Connection, step_id: i64, clusters: &[Workflo
             )
             .ok();
 
-        let (rec_type, target_type, target_id, confidence, reason) = match (&community_match, local_match) {
-            (Some((cid, repo, stars)), Some(_)) if *stars > 500 => (
-                "replace", "community", Some(*cid), 0.85,
-                format!("社区 {} ({} stars) 与本地 Skill 同名，建议替换", repo, stars),
-            ),
-            (Some((cid, repo, stars)), _) if *stars > 500 => (
-                "install", "community", Some(*cid), 0.80,
-                format!("社区 {} ({} stars) 质量较高，建议安装参考", repo, stars),
-            ),
-            (Some((cid, repo, stars)), _) if *stars > 100 => (
-                "merge", "community", Some(*cid), 0.65,
-                format!("社区 {} ({} stars) 有参考价值，建议合并", repo, stars),
-            ),
-            (_, Some(local_id)) => (
-                "merge", "local_skill", Some(local_id), 0.70,
-                "本地已有同名 Skill，建议合并".to_string(),
-            ),
-            (Some((cid, repo, _)), _) => (
-                "merge", "community", Some(*cid), 0.50,
-                format!("社区 {} 有相似 Skill，建议合并参考", repo),
-            ),
-            (None, None) => (
-                "keep", "none", None, 0.60,
-                "无社区或本地相似项，建议保留本地版本".to_string(),
-            ),
-        };
+        let (rec_type, target_type, target_id, confidence, reason) =
+            match (&community_match, local_match) {
+                (Some((cid, repo, stars)), Some(_)) if *stars > 500 => (
+                    "replace",
+                    "community",
+                    Some(*cid),
+                    0.85,
+                    format!(
+                        "社区 {} ({} stars) 与本地 Skill 同名，建议替换",
+                        repo, stars
+                    ),
+                ),
+                (Some((cid, repo, stars)), _) if *stars > 500 => (
+                    "install",
+                    "community",
+                    Some(*cid),
+                    0.80,
+                    format!("社区 {} ({} stars) 质量较高，建议安装参考", repo, stars),
+                ),
+                (Some((cid, repo, stars)), _) if *stars > 100 => (
+                    "merge",
+                    "community",
+                    Some(*cid),
+                    0.65,
+                    format!("社区 {} ({} stars) 有参考价值，建议合并", repo, stars),
+                ),
+                (_, Some(local_id)) => (
+                    "merge",
+                    "local_skill",
+                    Some(local_id),
+                    0.70,
+                    "本地已有同名 Skill，建议合并".to_string(),
+                ),
+                (Some((cid, repo, _)), _) => (
+                    "merge",
+                    "community",
+                    Some(*cid),
+                    0.50,
+                    format!("社区 {} 有相似 Skill，建议合并参考", repo),
+                ),
+                (None, None) => (
+                    "keep",
+                    "none",
+                    None,
+                    0.60,
+                    "无社区或本地相似项，建议保留本地版本".to_string(),
+                ),
+            };
 
         let _ = conn.execute(
             "INSERT INTO workflow_recommendations
@@ -910,7 +1233,9 @@ fn parse_qa_response(content: &str, fallback_draft: &str) -> (String, String) {
     let cleaned = content.trim();
     if let Some(draft_pos) = cleaned.find("\n===DRAFT===") {
         let meta = cleaned[..draft_pos].trim().to_string();
-        let draft = cleaned[draft_pos + "\n===DRAFT===".len()..].trim().to_string();
+        let draft = cleaned[draft_pos + "\n===DRAFT===".len()..]
+            .trim()
+            .to_string();
         let draft = strip_markdown_fence(&draft);
         if draft.trim().len() >= 80 {
             return (meta, draft);
@@ -919,7 +1244,9 @@ fn parse_qa_response(content: &str, fallback_draft: &str) -> (String, String) {
     // Try alternative sentinel: ---DRAFT---
     if let Some(draft_pos) = cleaned.find("\n---DRAFT---") {
         let meta = cleaned[..draft_pos].trim().to_string();
-        let draft = cleaned[draft_pos + "\n---DRAFT---".len()..].trim().to_string();
+        let draft = cleaned[draft_pos + "\n---DRAFT---".len()..]
+            .trim()
+            .to_string();
         let draft = strip_markdown_fence(&draft);
         if draft.trim().len() >= 80 {
             return (meta, draft);
@@ -928,7 +1255,9 @@ fn parse_qa_response(content: &str, fallback_draft: &str) -> (String, String) {
     // Try ===DRAFT=== without leading newline
     if let Some(draft_pos) = cleaned.find("===DRAFT===") {
         let meta = cleaned[..draft_pos].trim().to_string();
-        let draft = cleaned[draft_pos + "===DRAFT===".len()..].trim().to_string();
+        let draft = cleaned[draft_pos + "===DRAFT===".len()..]
+            .trim()
+            .to_string();
         let draft = strip_markdown_fence(&draft);
         if draft.trim().len() >= 80 {
             return (meta, draft);
@@ -950,8 +1279,9 @@ fn llm_config(db_path: &Path) -> Result<Option<LlmConfig>> {
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
         .trim_end_matches('/')
         .to_string();
-    let model = crate::get_config(&conn, "llm_model")?
-        .unwrap_or_else(|| "gpt-5.2".to_string());
+    let model = crate::get_config(&conn, "llm_model")?.unwrap_or_else(|| "gpt-5.2".to_string());
+    let api_format =
+        crate::get_config(&conn, "llm_api_format")?.unwrap_or_else(|| "openai".to_string());
     if api_key.trim().is_empty() || base_url.trim().is_empty() || model.trim().is_empty() {
         return Ok(None);
     }
@@ -959,6 +1289,7 @@ fn llm_config(db_path: &Path) -> Result<Option<LlmConfig>> {
         base_url,
         api_key,
         model,
+        api_format,
     }))
 }
 
@@ -972,9 +1303,13 @@ async fn call_llm_with_retry(
     user_prompt: &str,
     retries: u32,
 ) -> Result<String> {
-    let config =
-        llm_config(db_path)?.ok_or_else(|| anyhow!("大模型未启用或未配置 API Key"))?;
-    let url = format!("{}/chat/completions", config.base_url);
+    let config = llm_config(db_path)?.ok_or_else(|| anyhow!("大模型未启用或未配置 API Key"))?;
+    let is_anthropic = config.api_format == "anthropic";
+    let url = if is_anthropic {
+        format!("{}/v1/messages", config.base_url)
+    } else {
+        format!("{}/chat/completions", config.base_url)
+    };
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
@@ -986,21 +1321,35 @@ async fn call_llm_with_retry(
             tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
         }
 
-        let response = match client
+        let mut req = client
             .post(&url)
-            .bearer_auth(&config.api_key)
             .header("Accept", "application/json")
-            .json(&json!({
+            .header("Content-Type", "application/json");
+        if is_anthropic {
+            req = req
+                .header("x-api-key", &config.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&json!({
+                    "model": config.model,
+                    "max_tokens": 4096,
+                    "system": system_prompt,
+                    "messages": [
+                        { "role": "user", "content": user_prompt }
+                    ],
+                    "temperature": 0.2
+                }));
+        } else {
+            req = req.bearer_auth(&config.api_key).json(&json!({
                 "model": config.model,
                 "messages": [
                     { "role": "system", "content": system_prompt },
                     { "role": "user", "content": user_prompt }
                 ],
                 "temperature": 0.2
-            }))
-            .send()
-            .await
-        {
+            }));
+        }
+
+        let response = match req.send().await {
             Ok(r) => r,
             Err(err) => {
                 last_error = format!("大模型网络连接失败：{}", err);
@@ -1054,14 +1403,24 @@ async fn call_llm_with_retry(
 
         match serde_json::from_str::<Value>(&text) {
             Ok(value) => {
-                let content = value
-                    .get("choices")
-                    .and_then(Value::as_array)
-                    .and_then(|choices| choices.first())
-                    .and_then(|choice| choice.get("message"))
-                    .and_then(|message| message.get("content"))
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string);
+                let content = if is_anthropic {
+                    value
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .and_then(|items| items.first())
+                        .and_then(|item| item.get("text"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                } else {
+                    value
+                        .get("choices")
+                        .and_then(Value::as_array)
+                        .and_then(|choices| choices.first())
+                        .and_then(|choice| choice.get("message"))
+                        .and_then(|message| message.get("content"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                };
 
                 match content {
                     Some(c) if !c.trim().is_empty() => return Ok(c),
@@ -1095,8 +1454,12 @@ async fn call_llm_with_retry(
 
 fn extract_json_object(text: &str) -> Result<String> {
     let stripped = strip_markdown_fence(text);
-    let start = stripped.find('{').ok_or_else(|| anyhow!("大模型未返回 JSON 对象"))?;
-    let end = stripped.rfind('}').ok_or_else(|| anyhow!("大模型未返回完整 JSON 对象"))?;
+    let start = stripped
+        .find('{')
+        .ok_or_else(|| anyhow!("大模型未返回 JSON 对象"))?;
+    let end = stripped
+        .rfind('}')
+        .ok_or_else(|| anyhow!("大模型未返回完整 JSON 对象"))?;
     Ok(stripped[start..=end].to_string())
 }
 
@@ -1132,10 +1495,16 @@ fn strip_markdown_fence(text: &str) -> String {
         return trimmed.to_string();
     }
     let mut lines = trimmed.lines().collect::<Vec<_>>();
-    if lines.first().is_some_and(|line| line.trim_start().starts_with("```")) {
+    if lines
+        .first()
+        .is_some_and(|line| line.trim_start().starts_with("```"))
+    {
         lines.remove(0);
     }
-    if lines.last().is_some_and(|line| line.trim_start().starts_with("```")) {
+    if lines
+        .last()
+        .is_some_and(|line| line.trim_start().starts_with("```"))
+    {
         lines.pop();
     }
     lines.join("\n").trim().to_string()

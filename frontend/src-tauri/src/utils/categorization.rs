@@ -4,26 +4,67 @@ pub(crate) fn derive_category(name: &str) -> String {
     let groups: [(&str, &[&str]); 10] = [
         ("python", &["python"]),
         ("golang", &["golang", "go"]),
-        ("java", &[
-            "java", "kotlin", "springboot", "jpa", "android", "compose", "gradle",
-        ]),
+        (
+            "java",
+            &[
+                "java",
+                "kotlin",
+                "springboot",
+                "jpa",
+                "android",
+                "compose",
+                "gradle",
+            ],
+        ),
         ("cpp", &["cpp"]),
         ("rust", &["rust"]),
-        ("frontend", &[
-            "frontend", "vue", "react", "nextjs", "nuxt", "typescript", "javascript",
-            "flutter", "swiftui", "swift",
-        ]),
-        ("document", &[
-            "document", "docx", "pptx", "xlsx", "pdf", "internal-comms",
-        ]),
-        ("workflow", &[
-            "tdd", "e2e", "verification", "code-review", "debugging", "build",
-            "refactor",
-        ]),
-        ("meta", &[
-            "colleague", "continuous-learning", "skill", "configure", "eval",
-            "harness", "project", "rules", "sessions", "strategic", "brainstorm",
-        ]),
+        (
+            "frontend",
+            &[
+                "frontend",
+                "vue",
+                "react",
+                "nextjs",
+                "nuxt",
+                "typescript",
+                "javascript",
+                "flutter",
+                "swiftui",
+                "swift",
+            ],
+        ),
+        (
+            "document",
+            &["document", "docx", "pptx", "xlsx", "pdf", "internal-comms"],
+        ),
+        (
+            "workflow",
+            &[
+                "tdd",
+                "e2e",
+                "verification",
+                "code-review",
+                "debugging",
+                "build",
+                "refactor",
+            ],
+        ),
+        (
+            "meta",
+            &[
+                "colleague",
+                "continuous-learning",
+                "skill",
+                "configure",
+                "eval",
+                "harness",
+                "project",
+                "rules",
+                "sessions",
+                "strategic",
+                "brainstorm",
+            ],
+        ),
         ("backend", &["django", "laravel", "ktor", "exposed", "api"]),
     ];
     for (category, values) in groups {
@@ -33,4 +74,3 @@ pub(crate) fn derive_category(name: &str) -> String {
     }
     "other".into()
 }
-

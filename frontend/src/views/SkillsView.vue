@@ -30,6 +30,7 @@ const editOriginalName = ref('')
 
 const sources = [
   { id: 'hermes', name: 'Hermes', color: '#6d5bd0', icon: 'H' },
+  { id: 'openclaw', name: 'OpenClaw', color: '#7c3aed', icon: 'OC' },
   { id: 'claude-code', name: 'Claude Code', color: '#1473e6', icon: 'CC' },
   { id: 'codex', name: 'Codex', color: '#0f9f7a', icon: 'CX' },
   { id: 'vscode', name: 'VSCode', color: '#d98612', icon: 'CL' },
@@ -96,12 +97,12 @@ function clearSource() {
   loadSourceCounts()
 }
 
-async function showDetail(name: string) {
+async function showDetail(name: string, sourceType?: string) {
   detailVisible.value = true
   detailLoading.value = true
   currentDetail.value = null
   try {
-    const res = await fetchSkillDetail(name)
+    const res = await fetchSkillDetail(name, sourceType)
     if (res.success) currentDetail.value = res.data
   } catch (error: any) {
     ElMessage.error(error?.message || '加载 Skill 详情失败')
@@ -322,7 +323,7 @@ onMounted(loadSourceCounts)
 
       <template v-else>
         <div class="result-grid">
-          <div v-for="skill in skills" :key="skill.id" class="skill-card" @click="showDetail(skill.name)">
+          <div v-for="skill in skills" :key="skill.id" class="skill-card" @click="showDetail(skill.name, skill.source_type)">
             <div class="skill-actions">
               <el-button size="small" type="primary" text :loading="evolving.has(skill.id)" @click="evolveExistingSkill(skill, $event)">
                 进化

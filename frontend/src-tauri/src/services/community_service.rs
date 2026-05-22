@@ -1,4 +1,4 @@
-﻿use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use rusqlite::{params, Connection};
 use serde::Deserialize;
@@ -29,6 +29,7 @@ struct LlmConfig {
     base_url: String,
     api_key: String,
     model: String,
+    api_format: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,14 +48,21 @@ struct LlmRecommendationItem {
     score: Option<f64>,
 }
 
-async fn fetch_github_skill_candidates(query: &str, page: i64, per_page: i64) -> Result<Vec<Value>> {
+async fn fetch_github_skill_candidates(
+    query: &str,
+    page: i64,
+    per_page: i64,
+) -> Result<Vec<Value>> {
     let search_query = format!(
         "{} (awesome OR popular OR \"best practices\" OR framework OR toolkit OR agents OR prompts OR instructions) (skill OR SKILL.md OR agent instructions OR prompt engineering) stars:>1000",
         query
     );
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("Self-Evolving-Skills"));
-    headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github+json"),
+    );
 
     let client = reqwest::Client::builder()
         .default_headers(headers)
@@ -79,9 +87,18 @@ async fn fetch_github_skill_candidates(query: &str, page: i64, per_page: i64) ->
     if !status.is_success() {
         let message = serde_json::from_str::<Value>(&text)
             .ok()
-            .and_then(|value| value.get("message").and_then(Value::as_str).map(ToString::to_string))
+            .and_then(|value| {
+                value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
             .unwrap_or_else(|| text.chars().take(300).collect());
-        return Err(anyhow!("GitHub API request failed: HTTP {} {}", status.as_u16(), message));
+        return Err(anyhow!(
+            "GitHub API request failed: HTTP {} {}",
+            status.as_u16(),
+            message
+        ));
     }
 
     let payload: Value = serde_json::from_str(&text)?;
@@ -92,13 +109,19 @@ async fn fetch_github_skill_candidates(query: &str, page: i64, per_page: i64) ->
         .ok_or_else(|| anyhow!("GitHub API response is missing items"))
 }
 
-fn github_candidates_to_recommendations(query: &str, items: &[Value]) -> Vec<CommunityRecommendation> {
+fn github_candidates_to_recommendations(
+    query: &str,
+    items: &[Value],
+) -> Vec<CommunityRecommendation> {
     let mut recommendations = items
         .iter()
         .filter_map(|item| {
             let repo_full_name = item.get("full_name").and_then(Value::as_str)?;
             let repo_url = item.get("html_url").and_then(Value::as_str)?;
-            let name = item.get("name").and_then(Value::as_str).unwrap_or(repo_full_name);
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(repo_full_name);
             let description = item
                 .get("description")
                 .and_then(Value::as_str)
@@ -123,7 +146,13 @@ fn github_candidates_to_recommendations(query: &str, items: &[Value]) -> Vec<Com
                 return None;
             }
             let quality = metadata_quality_score(name, &description, repo_full_name);
-            let weighted = weighted_score(stars, relevance, quality, license.as_deref(), pushed_at.as_deref());
+            let weighted = weighted_score(
+                stars,
+                relevance,
+                quality,
+                license.as_deref(),
+                pushed_at.as_deref(),
+            );
             let reason = github_metadata_reason(query, name, &description, repo_full_name, stars);
             Some(CommunityRecommendation {
                 name: name.to_string(),
@@ -213,7 +242,10 @@ async fn enrich_recommendations_with_github_metadata(items: &mut [CommunityRecom
     }
 }
 
-async fn llm_recommend_community_skills(db_path: &Path, query: &str) -> Result<Vec<CommunityRecommendation>> {
+async fn llm_recommend_community_skills(
+    db_path: &Path,
+    query: &str,
+) -> Result<Vec<CommunityRecommendation>> {
     let Some(config) = llm_config(db_path)? else {
         return Ok(Vec::new());
     };
@@ -297,7 +329,11 @@ Return JSON only:
     enrich_recommendations_with_github_metadata(&mut recommendations).await;
     Ok(recommendations)
 }
-fn save_recommendations(conn: &Connection, topic: &str, items: &[CommunityRecommendation]) -> Result<()> {
+fn save_recommendations(
+    conn: &Connection,
+    topic: &str,
+    items: &[CommunityRecommendation],
+) -> Result<()> {
     let now = now_string();
     for item in items {
         conn.execute(
@@ -456,7 +492,9 @@ fn spawn_background_refresh(db_path: std::path::PathBuf, query: String, page: i6
     tokio::spawn(async move {
         refresh_seed_recommendations_with_metadata(&db_path, &query).await;
 
-        let llm_items = llm_recommend_community_skills(&db_path, &query).await.unwrap_or_default();
+        let llm_items = llm_recommend_community_skills(&db_path, &query)
+            .await
+            .unwrap_or_default();
         if !llm_items.is_empty() {
             if let Ok(conn) = db::open_conn(&db_path) {
                 let _ = save_recommendations(&conn, &query, &llm_items);
@@ -575,7 +613,9 @@ pub(crate) async fn fetch_top_community_skills(
         query.as_str()
     };
 
-    let llm_items = llm_recommend_community_skills(db_path, query).await.unwrap_or_default();
+    let llm_items = llm_recommend_community_skills(db_path, query)
+        .await
+        .unwrap_or_default();
     if !llm_items.is_empty() {
         let conn = db::open_conn(db_path)?;
         save_recommendations(&conn, query, &llm_items)?;
@@ -593,7 +633,9 @@ pub(crate) fn compare_with_community(
     let mut comparisons = 0;
 
     for cluster in clusters.iter().filter(|cluster| cluster.can_generate_skill) {
-        let Ok(workflow_id) = crate::services::workflow_service::workflow_id_for_cluster(conn, cluster) else {
+        let Ok(workflow_id) =
+            crate::services::workflow_service::workflow_id_for_cluster(conn, cluster)
+        else {
             continue;
         };
         let lower_name = cluster.name.to_lowercase();
@@ -649,8 +691,9 @@ fn llm_config(db_path: &Path) -> Result<Option<LlmConfig>> {
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
         .trim_end_matches('/')
         .to_string();
-    let model = crate::get_config(&conn, "llm_model")?
-        .unwrap_or_else(|| "gpt-5.2".to_string());
+    let model = crate::get_config(&conn, "llm_model")?.unwrap_or_else(|| "gpt-5.2".to_string());
+    let api_format =
+        crate::get_config(&conn, "llm_api_format")?.unwrap_or_else(|| "openai".to_string());
     if api_key.trim().is_empty() || base_url.trim().is_empty() || model.trim().is_empty() {
         return Ok(None);
     }
@@ -658,6 +701,7 @@ fn llm_config(db_path: &Path) -> Result<Option<LlmConfig>> {
         base_url,
         api_key,
         model,
+        api_format,
     }))
 }
 
@@ -671,7 +715,12 @@ async fn call_llm_with_retry(
     user_prompt: &str,
     retries: u32,
 ) -> Result<String> {
-    let url = format!("{}/chat/completions", config.base_url);
+    let is_anthropic = config.api_format == "anthropic";
+    let url = if is_anthropic {
+        format!("{}/v1/messages", config.base_url)
+    } else {
+        format!("{}/chat/completions", config.base_url)
+    };
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()?;
@@ -682,21 +731,35 @@ async fn call_llm_with_retry(
             tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
         }
 
-        let response = match client
+        let mut req = client
             .post(&url)
-            .bearer_auth(&config.api_key)
             .header("Accept", "application/json")
-            .json(&json!({
+            .header("Content-Type", "application/json");
+        if is_anthropic {
+            req = req
+                .header("x-api-key", &config.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&json!({
+                    "model": config.model,
+                    "max_tokens": 4096,
+                    "system": system_prompt,
+                    "messages": [
+                        { "role": "user", "content": user_prompt }
+                    ],
+                    "temperature": 0.2
+                }));
+        } else {
+            req = req.bearer_auth(&config.api_key).json(&json!({
                 "model": config.model,
                 "messages": [
                     { "role": "system", "content": system_prompt },
                     { "role": "user", "content": user_prompt }
                 ],
                 "temperature": 0.2
-            }))
-            .send()
-            .await
-        {
+            }));
+        }
+
+        let response = match req.send().await {
             Ok(r) => r,
             Err(err) => {
                 last_error = format!("澶фā鍨嬬綉缁滆繛鎺ュけ璐ワ細{}", err);
@@ -708,7 +771,11 @@ async fn call_llm_with_retry(
         let bytes = match response.bytes().await {
             Ok(b) => b,
             Err(err) => {
-                last_error = format!("LLM response read failed (HTTP {}): {}", status.as_u16(), err);
+                last_error = format!(
+                    "LLM response read failed (HTTP {}): {}",
+                    status.as_u16(),
+                    err
+                );
                 continue;
             }
         };
@@ -722,20 +789,34 @@ async fn call_llm_with_retry(
 
         if !status.is_success() {
             let preview: String = text.chars().take(500).collect();
-            last_error = format!("澶фā鍨?API 璇锋眰澶辫触锛欻TTP {} {}", status.as_u16(), preview);
+            last_error = format!(
+                "澶фā鍨?API 璇锋眰澶辫触锛欻TTP {} {}",
+                status.as_u16(),
+                preview
+            );
             continue;
         }
 
         match serde_json::from_str::<Value>(&text) {
             Ok(value) => {
-                let content = value
-                    .get("choices")
-                    .and_then(Value::as_array)
-                    .and_then(|choices| choices.first())
-                    .and_then(|choice| choice.get("message"))
-                    .and_then(|message| message.get("content"))
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string);
+                let content = if is_anthropic {
+                    value
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .and_then(|items| items.first())
+                        .and_then(|item| item.get("text"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                } else {
+                    value
+                        .get("choices")
+                        .and_then(Value::as_array)
+                        .and_then(|choices| choices.first())
+                        .and_then(|choice| choice.get("message"))
+                        .and_then(|message| message.get("content"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                };
 
                 match content {
                     Some(c) if !c.trim().is_empty() => return Ok(c),
@@ -745,7 +826,11 @@ async fn call_llm_with_retry(
                     }
                     None => {
                         let preview: String = text.chars().take(300).collect();
-                        last_error = format!("LLM response missing content (HTTP {}): {}", status.as_u16(), preview);
+                        last_error = format!(
+                            "LLM response missing content (HTTP {}): {}",
+                            status.as_u16(),
+                            preview
+                        );
                         continue;
                     }
                 }
@@ -768,8 +853,12 @@ async fn call_llm_with_retry(
 
 fn extract_json_object(text: &str) -> Result<String> {
     let stripped = strip_markdown_fence(text);
-    let start = stripped.find('{').ok_or_else(|| anyhow!("LLM did not return a JSON object"))?;
-    let end = stripped.rfind('}').ok_or_else(|| anyhow!("LLM did not return a complete JSON object"))?;
+    let start = stripped
+        .find('{')
+        .ok_or_else(|| anyhow!("LLM did not return a JSON object"))?;
+    let end = stripped
+        .rfind('}')
+        .ok_or_else(|| anyhow!("LLM did not return a complete JSON object"))?;
     Ok(stripped[start..=end].to_string())
 }
 
@@ -779,22 +868,36 @@ fn strip_markdown_fence(text: &str) -> String {
         return trimmed.to_string();
     }
     let mut lines = trimmed.lines().collect::<Vec<_>>();
-    if lines.first().is_some_and(|line| line.trim_start().starts_with("```")) {
+    if lines
+        .first()
+        .is_some_and(|line| line.trim_start().starts_with("```"))
+    {
         lines.remove(0);
     }
-    if lines.last().is_some_and(|line| line.trim_start().starts_with("```")) {
+    if lines
+        .last()
+        .is_some_and(|line| line.trim_start().starts_with("```"))
+    {
         lines.pop();
     }
     lines.join("\n").trim().to_string()
 }
 
-fn metadata_relevance_score(query: &str, name: &str, description: &str, repo_full_name: &str) -> f64 {
+fn metadata_relevance_score(
+    query: &str,
+    name: &str,
+    description: &str,
+    repo_full_name: &str,
+) -> f64 {
     let tokens = tokenize(query);
     if tokens.is_empty() {
         return 0.0;
     }
     let haystack = format!("{name} {description} {repo_full_name}").to_lowercase();
-    let matches = tokens.iter().filter(|token| haystack.contains(token.as_str())).count() as f64;
+    let matches = tokens
+        .iter()
+        .filter(|token| haystack.contains(token.as_str()))
+        .count() as f64;
     (matches / tokens.len() as f64).clamp(0.0, 1.0)
 }
 
@@ -804,7 +907,11 @@ fn metadata_quality_score(name: &str, description: &str, repo_full_name: &str) -
     if lower.contains("skill") {
         score += 0.25;
     }
-    if lower.contains("agent") || lower.contains("assistant") || lower.contains("claude") || lower.contains("codex") {
+    if lower.contains("agent")
+        || lower.contains("assistant")
+        || lower.contains("claude")
+        || lower.contains("codex")
+    {
         score += 0.25;
     }
     if lower.contains("instruction") || lower.contains("prompt") || lower.contains("workflow") {
@@ -816,7 +923,13 @@ fn metadata_quality_score(name: &str, description: &str, repo_full_name: &str) -
     score.clamp(0.0, 1.0)
 }
 
-fn github_metadata_reason(query: &str, name: &str, description: &str, repo_full_name: &str, stars: i64) -> String {
+fn github_metadata_reason(
+    query: &str,
+    name: &str,
+    description: &str,
+    repo_full_name: &str,
+    stars: i64,
+) -> String {
     let description = description.trim();
     let project_summary = if description.is_empty() {
         format!("这个仓库名为 {repo_full_name}，GitHub 搜索只返回了名称、star 和仓库路径，没有足够描述。")
@@ -922,5 +1035,3 @@ fn slug(value: &str) -> String {
 fn url_query(value: &str) -> String {
     value.trim().replace(' ', "+")
 }
-
-

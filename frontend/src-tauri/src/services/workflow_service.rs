@@ -27,12 +27,15 @@ struct SessionRow {
 
 impl SessionRow {
     fn analysis_text(&self) -> String {
-        [self.first_prompt.as_deref(), self.compressed_summary.as_deref()]
-            .into_iter()
-            .flatten()
-            .filter(|text| !text.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n")
+        [
+            self.first_prompt.as_deref(),
+            self.compressed_summary.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
     }
 
     fn sample_text(&self) -> Option<&str> {
@@ -90,7 +93,10 @@ fn cluster_by_project_and_similarity(sessions: &[SessionRow]) -> Vec<WorkflowClu
     let mut project_groups: HashMap<String, Vec<&SessionRow>> = HashMap::new();
     for session in sessions {
         let key = session.project_name.as_deref().unwrap_or("unknown");
-        project_groups.entry(key.to_string()).or_default().push(session);
+        project_groups
+            .entry(key.to_string())
+            .or_default()
+            .push(session);
     }
 
     let mut clusters = Vec::new();
@@ -125,11 +131,16 @@ fn cluster_by_keywords(sessions: &[SessionRow]) -> Vec<WorkflowCluster> {
 }
 
 fn build_cluster(label: &str, rows: &[&SessionRow]) -> WorkflowCluster {
-    let analysis_texts = rows.iter().map(|row| row.analysis_text()).collect::<Vec<_>>();
-    let analysis_refs = analysis_texts.iter().map(String::as_str).collect::<Vec<_>>();
+    let analysis_texts = rows
+        .iter()
+        .map(|row| row.analysis_text())
+        .collect::<Vec<_>>();
+    let analysis_refs = analysis_texts
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let keywords = extract_keywords(&analysis_refs);
-    let base_name = classify_prompt(&analysis_refs.join("\n")).unwrap_or_else(|| label.to_string());
-    let name = skill_name_from_keywords(&base_name, &keywords);
+    let name = skill_name_from_keywords(label, &keywords, &analysis_refs);
     let agents = rows
         .iter()
         .filter_map(|row| row.agent_source.clone())
@@ -160,7 +171,9 @@ fn build_cluster(label: &str, rows: &[&SessionRow]) -> WorkflowCluster {
     let complexity_score = (avg_msg_count / 3.0).min(25.0);
     // Agent diversity: workflows spanning multiple agents are more reusable
     let agent_score = ((unique_agents - 1) as f64 * 5.0).min(10.0).max(0.0);
-    let score = (freq_score + complexity_score + agent_score).clamp(15.0, 95.0).round() as i64;
+    let score = (freq_score + complexity_score + agent_score)
+        .clamp(15.0, 95.0)
+        .round() as i64;
 
     // --- confidence: independent of score, measures data reliability (0.0-1.0) ---
     let size_conf = (frequency as f64 / 20.0).min(0.55);
@@ -235,17 +248,134 @@ fn compute_time_span_label(rows: &[&SessionRow], total_minutes: f64) -> String {
     }
 }
 
-fn skill_name_from_keywords(base_name: &str, keywords: &[String]) -> String {
-    let details = keywords
-        .iter()
-        .filter(|word| word.as_str() != base_name)
-        .take(3)
-        .cloned()
-        .collect::<Vec<_>>();
-    if details.is_empty() {
-        return base_name.to_string();
+fn skill_name_from_keywords(base_name: &str, keywords: &[String], texts: &[&str]) -> String {
+    let haystack = format!("{} {}", base_name, texts.join(" ")).to_lowercase();
+    let subject = first_named_part(
+        &haystack,
+        &[
+            ("obsidian", &["obsidian"][..]),
+            ("github", &["github", "pull request", "issue", "pr"]),
+            ("git", &["git", "commit", "branch", "merge conflict"]),
+            ("sqlite", &["sqlite", "database", "db"]),
+            ("json", &["json"]),
+            ("csv", &["csv"]),
+            ("readme", &["readme"]),
+            ("docs", &["doc", "docs", "documentation"]),
+            ("vue", &["vue"]),
+            ("react", &["react"]),
+            ("css", &["css", "style", "styles"]),
+            ("typescript", &["typescript", "tsc"]),
+            ("rust", &["rust", "cargo"]),
+            ("api", &["api", "endpoint"]),
+        ],
+    )
+    .or_else(|| useful_name_keyword(keywords))
+    .unwrap_or_else(|| "workflow".to_string());
+
+    let action = first_named_part(
+        &haystack,
+        &[
+            ("review", &["review", "bug", "risk"]),
+            (
+                "test",
+                &["test", "check", "vitest", "jest", "cargo check", "tsc"],
+            ),
+            ("refactor", &["refactor"]),
+            ("generate", &["generate", "create", "draft"]),
+            ("summarize", &["summary", "summarize", "weekly"]),
+            ("migrate", &["migrate", "import", "export"]),
+            ("debug", &["debug", "fix", "error"]),
+            ("optimize", &["optimize", "performance"]),
+            ("configure", &["config", "configure"]),
+            (
+                "automate",
+                &["automation", "batch", "script", "workflow", "pipeline"],
+            ),
+        ],
+    )
+    .unwrap_or_else(|| "assist".to_string());
+
+    let artifact = first_named_part(
+        &haystack,
+        &[
+            ("report", &["report", "weekly"]),
+            ("notes", &["notes", "note"]),
+            ("component", &["component"]),
+            ("tests", &["tests"]),
+            ("release", &["release"]),
+            ("skill", &["skill", "skills"]),
+            ("docs", &["readme", "documentation"]),
+            ("data", &["data"]),
+        ],
+    );
+
+    let mut parts = vec![subject, action];
+    if let Some(artifact) = artifact {
+        if !parts.contains(&artifact) {
+            parts.push(artifact);
+        }
     }
-    format!("{}-{}", base_name, details.join("-"))
+    if parts.len() < 3 {
+        if let Some(extra) = useful_name_keyword(keywords) {
+            if !parts.contains(&extra) {
+                parts.push(extra);
+            }
+        }
+    }
+    sanitize_skill_name(&parts.join("-"))
+}
+
+fn first_named_part(haystack: &str, groups: &[(&str, &[&str])]) -> Option<String> {
+    groups.iter().find_map(|(label, keys)| {
+        keys.iter()
+            .any(|key| haystack.contains(&key.to_lowercase()))
+            .then(|| (*label).to_string())
+    })
+}
+
+fn useful_name_keyword(keywords: &[String]) -> Option<String> {
+    keywords
+        .iter()
+        .map(|word| sanitize_skill_name(word))
+        .find(|word| {
+            word.len() >= 3
+                && !matches!(
+                    word.as_str(),
+                    "frontend"
+                        | "backend"
+                        | "review"
+                        | "test"
+                        | "workflow"
+                        | "pipeline"
+                        | "component"
+                        | "style"
+                        | "skill"
+                        | "skills"
+                        | "agent"
+                        | "code"
+                        | "task"
+                )
+        })
+}
+
+fn sanitize_skill_name(name: &str) -> String {
+    let mut output = String::new();
+    let mut last_dash = false;
+    for ch in name.to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            output.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            output.push('-');
+            last_dash = true;
+        }
+    }
+    let cleaned = output.trim_matches('-').to_string();
+    if cleaned.is_empty() {
+        "general-workflow".to_string()
+    } else {
+        cleaned
+    }
 }
 
 fn merge_duplicate_named_clusters(clusters: &mut Vec<WorkflowCluster>) {
@@ -338,7 +468,12 @@ fn mark_existing_skill_duplicates(conn: &Connection, clusters: &mut [WorkflowClu
         for (name, description, body) in &existing {
             let skill_words = tokenize(&format!("{name}\n{description}\n{body}"));
             let score = jaccard_similarity(&cluster_words, &skill_words);
-            if score >= 0.72 && best_match.as_ref().map(|(_, best)| score > *best).unwrap_or(true) {
+            if score >= 0.72
+                && best_match
+                    .as_ref()
+                    .map(|(_, best)| score > *best)
+                    .unwrap_or(true)
+            {
                 best_match = Some((name.clone(), score));
             }
         }
@@ -404,12 +539,35 @@ fn jaccard_similarity(a: &[String], b: &[String]) -> f64 {
 fn classify_prompt(prompt: &str) -> Option<String> {
     let lower = prompt.to_lowercase();
     let groups: &[(&str, &[&str])] = &[
-        ("代码审查", &["review", "审查", "检查", "bug", "漏洞", "风险"]),
-        ("测试与验证", &["test", "测试", "验证", "vitest", "jest", "cargo check", "tsc"]),
-        ("前端界面", &["ui", "页面", "组件", "样式", "vue", "react", "css"]),
-        ("数据处理", &["data", "json", "csv", "数据库", "sqlite", "导入", "导出"]),
+        (
+            "代码审查",
+            &["review", "审查", "检查", "bug", "漏洞", "风险"],
+        ),
+        (
+            "测试与验证",
+            &[
+                "test",
+                "测试",
+                "验证",
+                "vitest",
+                "jest",
+                "cargo check",
+                "tsc",
+            ],
+        ),
+        (
+            "前端界面",
+            &["ui", "页面", "组件", "样式", "vue", "react", "css"],
+        ),
+        (
+            "数据处理",
+            &["data", "json", "csv", "数据库", "sqlite", "导入", "导出"],
+        ),
         ("文档写作", &["doc", "readme", "文档", "说明", "方案"]),
-        ("自动化流程", &["自动", "脚本", "workflow", "pipeline", "批量"]),
+        (
+            "自动化流程",
+            &["自动", "脚本", "workflow", "pipeline", "批量"],
+        ),
     ];
     groups.iter().find_map(|(label, keys)| {
         if keys.iter().any(|key| lower.contains(key)) {
@@ -441,7 +599,10 @@ fn is_stop_word(word: &str) -> bool {
     )
 }
 
-pub(crate) fn save_clusters(conn: &Connection, clusters: &[WorkflowCluster]) -> anyhow::Result<i64> {
+pub(crate) fn save_clusters(
+    conn: &Connection,
+    clusters: &[WorkflowCluster],
+) -> anyhow::Result<i64> {
     conn.execute(
         "DELETE FROM workflow_clusters WHERE recommendation_source != 'manual-existing-skill' AND status != 'manual-draft'",
         [],
@@ -466,7 +627,10 @@ pub(crate) fn save_clusters(conn: &Connection, clusters: &[WorkflowCluster]) -> 
                 cluster.skill_score,
                 serde_json::to_string(&cluster.sample_tasks)?,
                 cluster.confidence,
-                format!("在 {} 条历史会话中发现相似模式，已使用本地压缩摘要降低上下文成本", cluster.frequency),
+                format!(
+                    "在 {} 条历史会话中发现相似模式，已使用本地压缩摘要降低上下文成本",
+                    cluster.frequency
+                ),
                 serde_json::to_string(&cluster.source_skills)?,
                 now,
             ],
@@ -556,7 +720,10 @@ pub(crate) fn generate_skill_drafts(conn: &Connection, clusters: &[WorkflowClust
     count
 }
 
-pub(crate) fn workflow_id_for_cluster(conn: &Connection, cluster: &WorkflowCluster) -> anyhow::Result<i64> {
+pub(crate) fn workflow_id_for_cluster(
+    conn: &Connection,
+    cluster: &WorkflowCluster,
+) -> anyhow::Result<i64> {
     let sample_tasks = serde_json::to_string(&cluster.sample_tasks)?;
     conn.query_row(
         "SELECT id FROM workflow_clusters WHERE name = ?1 AND sample_tasks = ?2 LIMIT 1",

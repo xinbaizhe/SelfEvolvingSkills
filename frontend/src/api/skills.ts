@@ -49,8 +49,8 @@ export function fetchSkills(params: Record<string, any> = {}) {
   })
 }
 
-export function fetchSkillDetail(name: string) {
-  return api<ApiResponse<SkillDetail>>('GET', `/skills/${encodeURIComponent(name)}`)
+export function fetchSkillDetail(name: string, sourceType?: string) {
+  return api<ApiResponse<SkillDetail>>('GET', `/skills/${encodeURIComponent(name)}`, sourceType ? { source_type: sourceType } : null)
 }
 
 export function fetchCategories() {

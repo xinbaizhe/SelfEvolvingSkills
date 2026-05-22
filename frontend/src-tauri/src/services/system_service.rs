@@ -19,7 +19,11 @@ pub(crate) fn get_system_monitor() -> Value {
     let disks = Disks::new_with_refreshed_list();
 
     let cpu_usage = sys.global_cpu_usage();
-    let cpu_brand = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
+    let cpu_brand = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().to_string())
+        .unwrap_or_default();
     let uptime_secs = System::uptime();
     let total_memory_mb = sys.total_memory() / 1024 / 1024;
     let used_memory_mb = sys.used_memory() / 1024 / 1024;
@@ -105,7 +109,13 @@ pub(crate) fn clear_all_data(conn: &Connection) -> Value {
 }
 
 pub(crate) fn clear_logs(conn: &Connection) -> Value {
-    let tables = ["scan_jobs", "evolution_jobs", "workflow_clusters", "memories", "skill_usage"];
+    let tables = [
+        "scan_jobs",
+        "evolution_jobs",
+        "workflow_clusters",
+        "memories",
+        "skill_usage",
+    ];
     let cleared = clear_tables(conn, &tables);
     json!({
         "cleared_tables": cleared,

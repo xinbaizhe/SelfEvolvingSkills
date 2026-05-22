@@ -15,6 +15,7 @@ const detailLoading = ref(false)
 
 const sources = [
   { id: 'hermes', name: 'Hermes', color: '#6d5bd0', icon: 'H' },
+  { id: 'openclaw', name: 'OpenClaw', color: '#7c3aed', icon: 'OC' },
   { id: 'claude-code', name: 'Claude Code', color: '#1473e6', icon: 'CC' },
   { id: 'codex', name: 'Codex', color: '#0f9f7a', icon: 'CX' },
   { id: 'vscode', name: 'VSCode', color: '#d98612', icon: 'CL' },
