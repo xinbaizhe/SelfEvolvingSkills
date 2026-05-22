@@ -269,7 +269,16 @@ async function checkForAppUpdate() {
       ElMessage.success('更新已安装，重启应用后生效')
     }
   } catch (error: any) {
-    ElMessage.error(error?.message || '检查更新失败，请确认 latest.json 已发布且签名有效')
+    const msg = error?.message || String(error)
+    if (msg.includes('signature') || msg.includes('verify')) {
+      ElMessage.error('签名验证失败，请确认更新签名私钥与 App 内置公钥匹配')
+    } else if (msg.includes('network') || msg.includes('timeout') || msg.includes('fetch')) {
+      ElMessage.error('网络连接失败，无法访问 GitHub 更新服务器')
+    } else if (msg.includes('404') || msg.includes('not found')) {
+      ElMessage.error('未找到 latest.json，请确认 GitHub Release 已发布')
+    } else {
+      ElMessage.error(`检查更新失败：${msg}`)
+    }
   } finally {
     updateChecking.value = false
   }

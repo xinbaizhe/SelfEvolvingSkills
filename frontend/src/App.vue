@@ -16,8 +16,11 @@ function toggleSidebar() {
 }
 
 async function checkUpdate() {
-  // 开发模式下跳过更新检查（没有 latest.json 会 404）
-  if (import.meta.env.DEV) return
+  // 开发模式下跳过更新检查，避免本地调试触发签名校验。
+  if (import.meta.env.DEV) {
+    console.log('[Updater] Dev mode, skipping update check')
+    return
+  }
   try {
     const update = await check({ timeout: 8000 })
     if (update) {
@@ -30,8 +33,8 @@ async function checkUpdate() {
         await update.downloadAndInstall()
       }
     }
-  } catch (_) {
-    // 静默失败，不影响正常使用
+  } catch (e: any) {
+    console.warn('[Updater] Check failed:', e?.message || e)
   }
 }
 
