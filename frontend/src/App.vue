@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { check } from '@tauri-apps/plugin-updater'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import AppSidebar from './components/layout/AppSidebar.vue'
 
 const route = useRoute()
@@ -25,12 +25,22 @@ async function checkUpdate() {
     const update = await check({ timeout: 8000 })
     if (update) {
       const action = await ElMessageBox.confirm(
-        `发现新版本 ${update.version}，是否立即更新？`,
+        `发现新版本 ${update.version}，是否立即下载并安装？`,
         '更新提示',
         { confirmButtonText: '立即更新', cancelButtonText: '稍后再说', type: 'info' }
       ).catch(() => 'cancel')
       if (action === 'confirm') {
-        await update.downloadAndInstall()
+        const loading = ElMessage({
+          message: '正在下载并安装更新...',
+          type: 'info',
+          duration: 0,
+        })
+        try {
+          await update.downloadAndInstall()
+          ElMessage.success('更新已安装，重启应用后生效')
+        } finally {
+          loading.close()
+        }
       }
     }
   } catch (e: any) {
