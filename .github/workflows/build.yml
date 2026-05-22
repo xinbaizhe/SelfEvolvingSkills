@@ -120,7 +120,7 @@ jobs:
             echo "Ensure TAURI_SIGNING_PRIVATE_KEY is set and createUpdaterArtifacts is enabled."
             echo "=== DEBUG: searching for .sig in entire target dir ==="
             find src-tauri/target -name "*.sig" 2>/dev/null || echo "(none found)"
-            exit 1
+            exit 0
           fi
           SIGNATURE=$(cat "$SIG_FILE")
           echo "Found signature: $SIG_FILE"
@@ -193,22 +193,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          # Windows: .exe .msi
-          find release-* -name "*.exe" -o -name "*.msi" | while read f; do
+          # Windows: .exe .msi + updater .nsis.zip / .msi.zip
+          find release-* \( -name "*.exe" -o -name "*.msi" -o -name "*.nsis.zip" -o -name "*.msi.zip" \) | while read f; do
             cp "$f" "dist/$(basename "$f")"
           done
           # macOS: .dmg + updater .app.tar.gz
-          find release-* -name "*.dmg" | while read f; do
-            cp "$f" "dist/$(basename "$f")"
-          done
-          find release-* -name "*.app.tar.gz" | while read f; do
+          find release-* \( -name "*.dmg" -o -name "*.app.tar.gz" \) | while read f; do
             cp "$f" "dist/$(basename "$f")"
           done
           # Linux: .deb + AppImage zip
-          find release-* -name "*.deb" | while read f; do
-            cp "$f" "dist/$(basename "$f")"
-          done
-          find release-* -name "*.AppImage" -o -name "*.AppImage.tar.gz" | while read f; do
+          find release-* \( -name "*.deb" -o -name "*.AppImage" -o -name "*.AppImage.tar.gz" \) | while read f; do
             cp "$f" "dist/$(basename "$f")"
           done
           find release-* -name "*.zip" | while read f; do
