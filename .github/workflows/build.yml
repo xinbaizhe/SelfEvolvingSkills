@@ -136,13 +136,14 @@ jobs:
           fi
 
           FILENAME=$(basename "$INSTALLER_FILE")
-          export VERSION PLATFORM SIGNATURE FILENAME
+          RELEASE_FILENAME="${FILENAME// /.}"
+          export VERSION PLATFORM SIGNATURE RELEASE_FILENAME
           export PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           export OUTFILE="$BUNDLE_DIR/latest.json"
 
           node -e "
             const fs = require('fs')
-            const encodedFilename = encodeURIComponent(process.env.FILENAME)
+            const encodedFilename = encodeURIComponent(process.env.RELEASE_FILENAME)
             const manifest = {
               version: process.env.VERSION,
               notes: '',
@@ -196,18 +197,22 @@ jobs:
           mkdir -p dist
           # Windows: .exe .msi + updater .nsis.zip / .msi.zip
           find release-* \( -name "*.exe" -o -name "*.msi" -o -name "*.nsis.zip" -o -name "*.msi.zip" \) | while read f; do
-            cp "$f" "dist/$(basename "$f")"
+            name=$(basename "$f")
+            cp "$f" "dist/${name// /.}"
           done
           # macOS: .dmg + updater .app.tar.gz
           find release-* \( -name "*.dmg" -o -name "*.app.tar.gz" \) | while read f; do
-            cp "$f" "dist/$(basename "$f")"
+            name=$(basename "$f")
+            cp "$f" "dist/${name// /.}"
           done
           # Linux: .deb + AppImage zip
           find release-* \( -name "*.deb" -o -name "*.AppImage" -o -name "*.AppImage.tar.gz" \) | while read f; do
-            cp "$f" "dist/$(basename "$f")"
+            name=$(basename "$f")
+            cp "$f" "dist/${name// /.}"
           done
           find release-* -name "*.zip" | while read f; do
-            cp "$f" "dist/$(basename "$f")"
+            name=$(basename "$f")
+            cp "$f" "dist/${name// /.}"
           done
           ls -la dist/
 

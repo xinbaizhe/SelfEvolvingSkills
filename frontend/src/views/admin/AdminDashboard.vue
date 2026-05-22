@@ -274,7 +274,7 @@ async function checkForAppUpdate() {
       ElMessage.error('签名验证失败，请确认更新签名私钥与 App 内置公钥匹配')
     } else if (msg.includes('network') || msg.includes('timeout') || msg.includes('fetch')) {
       ElMessage.error('网络连接失败，无法访问 GitHub 更新服务器')
-    } else if (msg.includes('404') || msg.includes('not found')) {
+    } else if (msg.includes('404')) {
       ElMessage.error('未找到 latest.json，请确认 GitHub Release 已发布')
     } else {
       ElMessage.error(`检查更新失败：${msg}`)
