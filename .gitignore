@@ -1,5 +1,6 @@
 # Runtime data
 data/
+docs/
 .claude/
 # Tauri / Rust
 frontend/src-tauri/target/

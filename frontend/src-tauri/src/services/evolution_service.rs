@@ -120,7 +120,7 @@ pub(crate) fn get_evolution_status(conn: &Connection) -> Value {
 
     match latest_run {
         Some(run_id) => {
-            let phases = get_run_phases(conn, run_id);
+            let phases = get_run_phases(conn, run_id).unwrap_or_default();
             let has_active = phases
                 .iter()
                 .any(|p| p["status"] == "running" || p["status"] == "pending");
@@ -146,14 +146,13 @@ pub(crate) fn get_evolution_status(conn: &Connection) -> Value {
     }
 }
 
-fn get_run_phases(conn: &Connection, run_id: i64) -> Vec<Value> {
+fn get_run_phases(conn: &Connection, run_id: i64) -> Result<Vec<Value>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, phase, status, progress, message, started_at, completed_at
              FROM evolution_jobs WHERE run_id = ?1 ORDER BY id",
-        )
-        .unwrap();
-    stmt.query_map(params![run_id], |row| {
+        )?;
+    let rows: Vec<Value> = stmt.query_map(params![run_id], |row| {
         Ok(json!({
             "id": row.get::<_, i64>(0)?,
             "phase": row.get::<_, String>(1)?,
@@ -163,10 +162,10 @@ fn get_run_phases(conn: &Connection, run_id: i64) -> Vec<Value> {
             "started_at": row.get::<_, Option<String>>(5)?,
             "completed_at": row.get::<_, Option<String>>(6)?,
         }))
-    })
-    .unwrap()
+    })?
     .filter_map(|r| r.ok())
-    .collect()
+    .collect();
+    Ok(rows)
 }
 
 fn get_last_completed(conn: &Connection) -> Option<Value> {
@@ -183,7 +182,7 @@ fn get_last_completed(conn: &Connection) -> Option<Value> {
     .ok()
 }
 
-pub(crate) fn list_evolution_history(conn: &Connection, query: &crate::PageQuery) -> Value {
+pub(crate) fn list_evolution_history(conn: &Connection, query: &crate::PageQuery) -> Result<Value> {
     let page = query.page.unwrap_or(1).max(1);
     let size = query.size.unwrap_or(20).clamp(1, 100);
 
@@ -198,18 +197,16 @@ pub(crate) fn list_evolution_history(conn: &Connection, query: &crate::PageQuery
     let mut stmt = conn
         .prepare(
             "SELECT run_id FROM evolution_jobs GROUP BY run_id ORDER BY run_id DESC LIMIT ?1 OFFSET ?2",
-        )
-        .unwrap();
+        )?;
     let run_ids: Vec<i64> = stmt
-        .query_map(params![size, (page - 1) * size], |row| row.get(0))
-        .unwrap()
+        .query_map(params![size, (page - 1) * size], |row| row.get(0))?
         .filter_map(|r| r.ok())
         .collect();
 
     let items: Vec<Value> = run_ids
         .iter()
         .map(|&run_id| {
-            let phases = get_run_phases(conn, run_id);
+            let phases = get_run_phases(conn, run_id).unwrap_or_default();
             let first = phases.first();
             let last = phases.last();
             let all_done = phases.iter().all(|p| p["status"] == "completed");
@@ -231,7 +228,7 @@ pub(crate) fn list_evolution_history(conn: &Connection, query: &crate::PageQuery
         })
         .collect();
 
-    json!({ "items": items, "total": total, "page": page, "size": size })
+    Ok(json!({ "items": items, "total": total, "page": page, "size": size }))
 }
 
 pub(crate) fn start_evolution_pipeline(
@@ -240,7 +237,7 @@ pub(crate) fn start_evolution_pipeline(
     db_path: &Path,
     scan_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     agent_ids: Option<Vec<String>>,
-) -> Value {
+) -> Result<Value> {
     let started_at = now_string();
     let next_run_id: i64 = conn
         .query_row(
@@ -255,8 +252,7 @@ pub(crate) fn start_evolution_pipeline(
             "INSERT INTO evolution_jobs (run_id, phase, status, progress, message, started_at, created_at)
              VALUES (?1, ?2, 'pending', ?3, '', ?4, ?4)",
             params![next_run_id, phase, progress, started_at],
-        )
-        .unwrap();
+        )?;
     }
 
     // Insert evolution_runs and evolution_steps for FK tracing
@@ -267,8 +263,7 @@ pub(crate) fn start_evolution_pipeline(
             serde_json::to_string(&selected_agent_ids).unwrap_or_default(),
             started_at
         ],
-    )
-    .unwrap();
+    )?;
     let run_row_id = conn.last_insert_rowid();
 
     let mut step_ids: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
@@ -276,13 +271,12 @@ pub(crate) fn start_evolution_pipeline(
         conn.execute(
             "INSERT INTO evolution_steps (run_id, phase, status, started_at) VALUES (?1, ?2, 'pending', ?3)",
             params![run_row_id, phase, started_at],
-        )
-        .unwrap();
+        )?;
         step_ids.insert(phase, conn.last_insert_rowid());
     }
 
-    // 清理上一次进化管道的推荐内容，重新生成
-    let _ = conn.execute("DELETE FROM workflow_clusters", []);
+    // 清理上一次进化管道的推荐内容，但保留已安装和手动创建的
+    let _ = conn.execute("DELETE FROM workflow_clusters WHERE status != 'installed' AND status != 'manual-draft' AND recommendation_source != 'manual-existing-skill'", []);
     let _ = conn.execute("DELETE FROM community_skills", []);
 
     let app_handle = app.clone();
@@ -606,6 +600,24 @@ pub(crate) fn start_evolution_pipeline(
             }
         };
 
+        // ---- A/B Variant Generation (within optimize phase) ----
+        let ab_count = match generate_ab_variants(&db_path_clone, &clusters).await {
+            Ok(count) => {
+                if count > 0 {
+                    phase_update(
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "optimize",
+                        77,
+                        &format!("已生成 {} 个 A/B 变体", count),
+                    );
+                }
+                count
+            }
+            Err(_) => 0,
+        };
+
         // =====================================================================
         // Phase 6: qa_review (78-90%) — 独立 QA Agent + guardrails
         // =====================================================================
@@ -734,6 +746,7 @@ pub(crate) fn start_evolution_pipeline(
                 "comparisons": comparisons,
                 "optimized": optimized,
                 "reviewed": reviewed,
+                "ab_variants": ab_count,
                 "agent_ids": selected_agent_ids,
                 "llm_error": llm_error,
                 "community_error": community_error,
@@ -752,6 +765,7 @@ pub(crate) fn start_evolution_pipeline(
                 "comparisons": comparisons,
                 "optimized": optimized,
                 "reviewed": reviewed,
+                "ab_variants": ab_count,
             })).unwrap_or_default()],
         );
 
@@ -764,7 +778,7 @@ pub(crate) fn start_evolution_pipeline(
         );
     });
 
-    json!({ "run_id": next_run_id, "status": "running", "started_at": started_at })
+    Ok(json!({ "run_id": next_run_id, "status": "running", "started_at": started_at }))
 }
 
 fn filter_sources(
@@ -931,6 +945,94 @@ async fn refine_clusters_with_llm(
     Ok(true)
 }
 
+async fn multi_agent_review_draft(
+    db_path: &Path,
+    cluster: &WorkflowCluster,
+    draft_body: &str,
+) -> Result<String> {
+    let context = serde_json::to_string(&json!({
+        "name": cluster.name,
+        "description": cluster.description,
+        "frequency": cluster.frequency,
+        "source_agents": cluster.source_agents,
+        "estimated_time_saved": cluster.estimated_time_saved,
+        "sample_tasks": cluster.sample_tasks,
+    }))?;
+
+    // ---- Agent 1: Judge — 审查草稿，指出问题 ----
+    let judge_prompt = format!(
+        "请审查以下 Skill 草稿。\n\n工作流上下文：\n{}\n\n当前草稿：\n{}\n\n\
+         返回格式：只返回一个 JSON 对象，格式为：\n\
+         {{\"issues\":[\"问题1\",\"问题2\"],\"suggestions\":[\"建议1\",\"建议2\"],\"score\":0-100,\"verdict\":\"keep|revise|discard\"}}\n\
+         \n审查维度：\n\
+         1. 名称是否具体、唯一（不能是泛化大类名如 frontend-ui）\n\
+         2. 描述是否清晰描述了触发场景和解决的问题\n\
+         3. 步骤是否可执行、不空洞（不能写\"根据需求做X\"）\n\
+         4. 是否缺少安全注意事项\n\
+         5. 是否有虚假工具或危险默认操作\n\
+         6. frontmatter 是否完整",
+        context, draft_body
+    );
+    let judge_raw = call_llm(
+        db_path,
+        "你是严格的 Skill 评审专家。仔细审查草稿中的每个问题，不要遗漏。你的评审将被另一个 Agent 批判检查。",
+        &judge_prompt,
+    )
+    .await?;
+    let judge_json = extract_json_object(&judge_raw).unwrap_or_else(|_| judge_raw.clone());
+
+    // ---- Agent 2: Critic — 批判 Judge 的分析 ----
+    let critic_prompt = format!(
+        "以下是一个 Skill 草稿及其评审结果。请批判这份评审。\n\n\
+         草稿：\n{}\n\n\
+         评审结果：\n{}\n\n\
+         返回格式：只返回一个 JSON 对象，格式为：\n\
+         {{\"agreements\":[\"同意的评审点\"],\"disagreements\":[\"不同意的评审点及原因\"],\"blind_spots\":[\"评审遗漏的问题\"],\"over_criticism\":[\"评审过度苛刻的地方\"]}}\n\
+         \n注意：\n\
+         - 不要因为评审全面就不提反对意见，强制找出至少1个可改进之处\n\
+         - blind_spots 是评审没提到但你认为应该指出的问题",
+        draft_body, judge_json
+    );
+    let critic_raw = call_llm(
+        db_path,
+        "你是严格的评审批判者。你的任务是找出评审中的漏洞、误判和遗漏。即使评审看起来不错，也必须找出可以改进的地方。",
+        &critic_prompt,
+    )
+    .await?;
+    let critic_json = extract_json_object(&critic_raw).unwrap_or_else(|_| critic_raw.clone());
+
+    // ---- Agent 3: Fixer — 综合 Judge + Critic，生成最终草稿 ----
+    let fixer_prompt = format!(
+        "请根据以下信息修复并输出最终版 SKILL.md。\n\n\
+         工作流上下文：\n{}\n\n\
+         原草稿：\n{}\n\n\
+         评审结果（Judge）：\n{}\n\n\
+         批审判定（Critic）：\n{}\n\n\
+         要求：\n\
+         1. 直接输出完整的 SKILL.md（包含 YAML frontmatter），不要任何解释\n\
+         2. 综合 Judge 和 Critic 的意见：采纳 Judge 的合理建议，修正 Critic 指出的盲点\n\
+         3. 名称必须具体、kebab-case、不能是泛化大类名\n\
+         4. 正文必须包含：概述、适用场景、输入信号、执行步骤、验证方式、安全注意事项\n\
+         5. 不编造工具或流程，所有内容只能基于给定的工作流上下文",
+        context, draft_body, judge_json, critic_json
+    );
+    let fixer_raw = call_llm(
+        db_path,
+        "你是资深 AI Agent Skill 修复专家。你的任务是综合评审和批判意见，生成最优质的 SKILL.md。直接输出 Markdown，不要解释。",
+        &fixer_prompt,
+    )
+    .await?;
+
+    let fixed = strip_markdown_fence(&fixer_raw);
+    if fixed.trim().len() < 80 {
+        return Err(anyhow!(
+            "Multi-agent review produced too-short output ({} chars)",
+            fixed.trim().len()
+        ));
+    }
+    Ok(fixed)
+}
+
 async fn optimize_drafts_with_llm(db_path: &Path, clusters: &[WorkflowCluster]) -> Result<i64> {
     if llm_config(db_path)?.is_none() {
         return Ok(0);
@@ -942,45 +1044,36 @@ async fn optimize_drafts_with_llm(db_path: &Path, clusters: &[WorkflowCluster]) 
         .filter(|cluster| cluster.can_generate_skill && cluster.skill_score >= 60)
         .take(5)
     {
-        let content = call_llm(
-            db_path,
-            "你是资深 AI Agent Skill 作者。根据真实历史任务摘要写可执行的 SKILL.md，不要编造不存在的工具或流程。",
-            &format!(
-                "请为以下工作流生成一个高质量中文 SKILL.md。必须包含 YAML frontmatter，并包含：适用场景、输入信号、执行步骤、验证方式、注意事项。\n\
-                 只输出 Markdown 文件内容，不要解释。\n\
-                 工作流：{}",
-                serde_json::to_string(&json!({
-                    "name": cluster.name,
-                    "description": cluster.description,
-                    "frequency": cluster.frequency,
-                    "source_agents": cluster.source_agents,
-                    "estimated_time_saved": cluster.estimated_time_saved,
-                    "sample_tasks": cluster.sample_tasks,
-                    "llm_naming_contract": {
-                        "new_name": "optional concrete kebab-case object-action-output skill name",
-                        "merge_into": "optional common reusable skill name when this cluster overlaps another one",
-                        "avoid_names": ["frontend-ui", "code-review", "data-processing", "document-writing", "automation-workflow"]
-                    },
-                }))?
-            ),
-        )
-        .await?;
-
-        let markdown = strip_markdown_fence(&content);
-        if markdown.trim().len() < 80 {
-            continue;
-        }
         let conn = db::open_conn(db_path)?;
         let id = workflow_service::workflow_id_for_cluster(&conn, cluster)?;
+        let draft_body: Option<String> = conn
+            .query_row(
+                "SELECT draft_body FROM workflow_clusters WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap_or(None);
+        let Some(draft_body) = draft_body.filter(|v| !v.trim().is_empty()) else {
+            continue;
+        };
+
+        let fixed = match multi_agent_review_draft(db_path, cluster, &draft_body).await {
+            Ok(f) => f,
+            Err(_) => {
+                // Fall back to original draft on multi-agent failure
+                draft_body
+            }
+        };
+
         conn.execute(
             "UPDATE workflow_clusters
-             SET draft_body = ?2, recommendation_source = 'llm', confidence = 0.85,
+             SET draft_body = ?2, recommendation_source = 'multi-agent-review', confidence = 0.88,
                  reasoning = COALESCE(reasoning, '') || ?3, updated_at = ?4
              WHERE id = ?1",
             params![
                 id,
-                markdown,
-                "\n大模型已基于压缩摘要优化 Skill 草稿。",
+                fixed,
+                "\n三 Agent 审查（Judge → Critic → Fixer）已完成 Skill 草稿优化。",
                 now_string(),
             ],
         )?;
@@ -1132,6 +1225,97 @@ async fn qa_drafts_with_llm(db_path: &Path, clusters: &mut [WorkflowCluster]) ->
         fixed += 1;
     }
     Ok(fixed)
+}
+
+async fn generate_ab_variants(db_path: &Path, clusters: &[WorkflowCluster]) -> Result<i64> {
+    if llm_config(db_path)?.is_none() {
+        return Ok(0);
+    }
+
+    let variant_strategies: &[(&str, &str)] = &[
+        (
+            "A",
+            "精简直白型：用最少的文字描述核心流程，适合有经验的开发者快速查阅。省略冗余解释，只保留关键步骤和注意事项。",
+        ),
+        (
+            "B",
+            "详尽指南型：包含完整的背景说明、分步教程、代码示例和故障排查，适合新手或复杂场景。",
+        ),
+        (
+            "C",
+            "安全保守型：强调边界条件、错误处理、安全注意事项和不使用时机。在每个步骤后标注潜在风险。",
+        ),
+    ];
+
+    let mut generated = 0;
+    for cluster in clusters
+        .iter()
+        .filter(|cluster| cluster.can_generate_skill && cluster.skill_score >= 70)
+        .take(3)
+    {
+        let conn = db::open_conn(db_path)?;
+        let id = workflow_service::workflow_id_for_cluster(&conn, cluster)?;
+        let draft_body: Option<String> = conn
+            .query_row(
+                "SELECT draft_body FROM workflow_clusters WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap_or(None);
+        let Some(ref draft_body) = draft_body.filter(|v| !v.trim().is_empty()) else {
+            continue;
+        };
+
+        // Get the current run_id for tracking
+        let run_id: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(run_id) FROM evolution_jobs",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        for &(label, strategy) in variant_strategies {
+            let variant_prompt = format!(
+                "请为以下 Skill 生成一个变体版本。\n\n\
+                 原始草稿：\n{}\n\n\
+                 变体策略（{}）：{}\n\n\
+                 要求：\n\
+                 1. 遵守给定的策略风格\n\
+                 2. 保持 Skill 的核心功能不变\n\
+                 3. YAML frontmatter 中的 name 后加 -{variant} 后缀\n\
+                 4. 直接输出完整的 SKILL.md，不要解释",
+                draft_body, label, strategy,
+                variant = label.to_lowercase()
+            );
+
+            let variant_raw = match call_llm(
+                db_path,
+                "你是资深 Skill 变体生成专家。根据指定策略生成不同风格的 Skill 版本。直接输出 Markdown。",
+                &variant_prompt,
+            )
+            .await
+            {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+
+            let variant_md = strip_markdown_fence(&variant_raw);
+            if variant_md.trim().len() < 80 {
+                continue;
+            }
+
+            let variant_name = format!("{}-{}", cluster.name, label.to_lowercase());
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO skill_variants
+                 (skill_name, variant_label, draft_body, status, generation_run_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?5)",
+                params![variant_name, label, variant_md, run_id, now_string()],
+            );
+            generated += 1;
+        }
+    }
+    Ok(generated)
 }
 
 fn generate_recommendations(conn: &Connection, step_id: i64, clusters: &[WorkflowCluster]) {

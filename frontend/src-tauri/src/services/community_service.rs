@@ -415,78 +415,91 @@ fn ensure_seed_recommendations(conn: &Connection, query: &str) -> Result<()> {
         |row| row.get(0),
     )?;
     if count < 5 || missing_reason > 0 {
-        save_recommendations(conn, query, &seed_recommendations(query))?;
+        save_recommendations(conn, query, &seed_recommendations(conn, query))?;
     }
     Ok(())
 }
 
 async fn refresh_seed_recommendations_with_metadata(db_path: &Path, query: &str) {
-    let mut items = seed_recommendations(query);
+    let items = match db::open_conn(db_path) {
+        Ok(conn) => seed_recommendations(&conn, query),
+        Err(_) => Vec::new(),
+    };
+    if items.is_empty() {
+        return;
+    }
+    let mut items = items;
     enrich_recommendations_with_github_metadata(&mut items).await;
     if let Ok(conn) = db::open_conn(db_path) {
         let _ = save_recommendations(&conn, query, &items);
     }
 }
 
-fn seed_recommendations(query: &str) -> Vec<CommunityRecommendation> {
-    let items = [
-        (
-            "Claude Code Skills",
-            "anthropics/claude-code",
-            "https://github.com/anthropics/claude-code",
-            "Claude Code Skills pattern: focused SKILL.md instructions, progressive disclosure, and tool-aware workflows for reusable agent skills.",
-        ),
-        (
-            "OpenAI Agents SDK Examples",
-            "openai/openai-agents-python",
-            "https://github.com/openai/openai-agents-python",
-            "Reference implementation for agent workflows, handoffs, guardrails, tracing, and structured agent behavior.",
-        ),
-        (
-            "Awesome Copilot Instructions",
-            "github/awesome-copilot",
-            "https://github.com/github/awesome-copilot",
-            "Community collection of reusable Copilot instructions, prompts, and agent customization examples.",
-        ),
-        (
-            "Cursor Rules Templates",
-            "PatrickJS/awesome-cursorrules",
-            "https://github.com/PatrickJS/awesome-cursorrules",
-            "Reusable Cursor rule examples for framework-specific AI coding workflows and project conventions.",
-        ),
-        (
-            "Aider Conventions",
-            "paul-gauthier/aider",
-            "https://github.com/paul-gauthier/aider",
-            "AI coding assistant repository with practical conventions around repo-aware coding, editing loops, and automation workflows.",
-        ),
-    ];
+fn seed_recommendations(conn: &Connection, query: &str) -> Vec<CommunityRecommendation> {
+    let skills = match query_local_skills_for_seed(conn) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    if skills.is_empty() {
+        return Vec::new();
+    }
 
-    items
+    skills
         .into_iter()
         .enumerate()
-        .map(|(index, (name, repo, url, description))| {
-            let relevance = metadata_relevance_score(query, name, description, repo).max(0.72 - index as f64 * 0.04);
-            let quality = (0.9 - index as f64 * 0.03).max(0.72);
+        .map(|(index, (name, description, category))| {
+            let desc = if description.is_empty() {
+                format!("本地 Skill「{}」— 基于你的实际使用数据推荐相关社区项目", name)
+            } else {
+                description
+            };
+            let relevance = metadata_relevance_score(query, &name, &desc, &name).max(0.78 - index as f64 * 0.05);
+            let quality = (0.88 - index as f64 * 0.04).max(0.70);
+            let cat_hint = if category.is_empty() {
+                String::new()
+            } else {
+                format!("，归类为「{}」", category)
+            };
             CommunityRecommendation {
-                name: name.to_string(),
-                repo_full_name: repo.to_string(),
-                repo_url: url.to_string(),
+                name: format!("{} (社区参考)", name),
+                repo_full_name: format!("skill-seed/{}", slug(&name)),
+                repo_url: format!("https://github.com/search?q={}+skill+agent", url_query(&name)),
                 stars: 0,
-                description: description.to_string(),
+                description: desc,
                 reason: format!(
-                    "它是什么：{}\n\n对 Skills 工作台有什么用：它可以提供成熟的社区样例，用来改进推荐、草稿结构、质量评审或差异对比，而不是只依赖本地历史。\n\n适合什么时候看：当你想知道同类 Agent/Skill 项目如何组织指令、工具、工作流和验证标准时值得打开。\n\n建议优先看什么：README、examples、docs、prompt/instructions/rules/workflow 相关目录。",
-                    description
+                    "它是什么：根据你本地已安装的 Skill「{}」{}生成的社区参考条目。\n\n对 Skills 工作台有什么用：你的工作流中已在使用此 Skill，社区中可能有更优的同类实现可以参考、对比或合并。\n\n适合什么时候看：当你觉得当前 Skill 的指令不够精准、覆盖场景不够全，或者想看看社区如何解决同类问题时打开。\n\n建议优先看什么：搜索结果的 README、示例目录、agent instructions 或 workflow 文件。",
+                    name, cat_hint
                 ),
                 source: "Seed".to_string(),
                 license: None,
                 pushed_at: None,
                 relevance_score: relevance,
                 quality_score: quality,
-                weighted_score: (0.86 - index as f64 * 0.04).max(0.68),
+                weighted_score: (0.82 - index as f64 * 0.05).max(0.62),
             }
         })
         .collect()
+}
+
+fn query_local_skills_for_seed(conn: &Connection) -> Result<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT name, COALESCE(description, ''), COALESCE(category, '')
+         FROM skills
+         WHERE source_type = 'user'
+         ORDER BY usage_count DESC, session_count DESC
+         LIMIT 10",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .collect::<Vec<_>>();
+    Ok(rows)
 }
 fn spawn_background_refresh(db_path: std::path::PathBuf, query: String, page: i64, per_page: i64) {
     tokio::spawn(async move {
@@ -1034,4 +1047,139 @@ fn slug(value: &str) -> String {
 
 fn url_query(value: &str) -> String {
     value.trim().replace(' ', "+")
+}
+
+pub(crate) fn get_community_skill_detail(conn: &Connection, id: i64) -> Result<Value> {
+    conn.query_row(
+        "SELECT id, name, repo_full_name, repo_url, stars, description, skill_md_content, file_url,
+                installed, verified, relevance_score, quality_score, weighted_score, license,
+                pushed_at, matched_file, readme_excerpt, source, recommendation_reason, topic,
+                fetched_at, created_at
+         FROM community_skills WHERE id = ?1",
+        [id],
+        |row| {
+            Ok(json!({
+                "id": row.get::<_, i64>(0)?,
+                "name": row.get::<_, String>(1)?,
+                "repo": row.get::<_, String>(2)?,
+                "repo_url": row.get::<_, String>(3)?,
+                "stars": row.get::<_, i64>(4)?,
+                "description": row.get::<_, Option<String>>(5)?,
+                "skill_md_content": row.get::<_, Option<String>>(6)?,
+                "file_url": row.get::<_, Option<String>>(7)?,
+                "installed": row.get::<_, i64>(8)? != 0,
+                "verified": row.get::<_, i64>(9)? != 0,
+                "relevance_score": row.get::<_, Option<f64>>(10)?,
+                "quality_score": row.get::<_, Option<f64>>(11)?,
+                "weighted_score": row.get::<_, Option<f64>>(12)?,
+                "license": row.get::<_, Option<String>>(13)?,
+                "pushed_at": row.get::<_, Option<String>>(14)?,
+                "matched_file": row.get::<_, Option<String>>(15)?,
+                "readme_excerpt": row.get::<_, Option<String>>(16)?,
+                "source": row.get::<_, Option<String>>(17)?,
+                "recommendation_reason": row.get::<_, Option<String>>(18)?,
+                "topic": row.get::<_, Option<String>>(19)?,
+                "fetched_at": row.get::<_, Option<String>>(20)?,
+                "created_at": row.get::<_, Option<String>>(21)?,
+            }))
+        },
+    )
+    .map_err(|e| anyhow!("Community skill not found: {}", e))
+}
+
+pub(crate) async fn compare_with_llm(db_path: &Path, body: Option<Value>) -> Result<Value> {
+    let body = body.ok_or_else(|| anyhow!("Missing request body"))?;
+    let draft_body = body
+        .get("draft_body")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("Missing draft_body"))?;
+    let draft_name = body
+        .get("draft_name")
+        .and_then(Value::as_str)
+        .unwrap_or("本地草稿");
+    let community_name = body
+        .get("community_name")
+        .and_then(Value::as_str)
+        .unwrap_or("社区 Skill");
+    let community_content = body
+        .get("community_content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("Missing community_content"))?;
+
+    let config = match llm_config(db_path)? {
+        Some(c) => c,
+        None => {
+            // Return a basic structural comparison without LLM
+            let draft_sections: Vec<&str> = draft_body
+                .lines()
+                .filter(|l| l.starts_with('#'))
+                .collect();
+            let community_sections: Vec<&str> = community_content
+                .lines()
+                .filter(|l| l.starts_with('#'))
+                .collect();
+            return Ok(json!({
+                "dimensions": [
+                    { "label": "结构对比", "local": format!("{} 个章节", draft_sections.len()), "community": format!("{} 个章节", community_sections.len()), "verdict": "neutral" },
+                    { "label": "内容量", "local": format!("{} 字符", draft_body.chars().count()), "community": format!("{} 字符", community_content.chars().count()), "verdict": "neutral" },
+                ],
+                "suggestions": ["需要配置 LLM 才能生成智能对比分析"],
+                "source": "heuristic"
+            }));
+        }
+    };
+
+    let prompt = format!(
+        "请对比以下两个 Skill 定义，给出详细的结构化分析。\n\n\
+         【本地草稿】{}：\n{}\n\n\
+         【社区 Skill】{}：\n{}\n\n\
+         返回格式：只返回一个 JSON 对象，格式为：\n\
+         {{\n\
+           \"dimensions\": [\n\
+             {{\"label\": \"维度名\", \"local\": \"本地内容摘要\", \"community\": \"社区内容摘要\", \"verdict\": \"local_better|community_better|complementary|neutral\"}}\n\
+           ],\n\
+           \"suggestions\": [\"可操作的改进建议1\", \"建议2\"],\n\
+           \"summary\": \"一段中文总结，指出本地草稿最应该从社区 Skill 学什么\"\n\
+         }}\n\n\
+         对比维度至少包含：定位与适用场景、结构完整性、步骤可执行性、安全注意事项、示例质量。",
+        draft_name, truncate_for_prompt(draft_body),
+        community_name, truncate_for_prompt(community_content)
+    );
+
+    let content = call_llm(
+        &config,
+        "你是 Skill 对比分析专家。对比本地草稿和社区 Skill，找出差异和可改进之处。只返回 JSON，不要 Markdown。",
+        &prompt,
+    )
+    .await?;
+
+    let parsed: Value = serde_json::from_str(&extract_json(&content))
+        .unwrap_or_else(|_| json!({
+            "dimensions": [],
+            "suggestions": ["LLM 返回格式异常，请重试"],
+            "summary": "对比分析失败",
+            "source": "error"
+        }));
+
+    Ok(match parsed {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), json!("llm"));
+            Value::Object(map)
+        }
+        other => other,
+    })
+}
+
+fn truncate_for_prompt(text: &str) -> String {
+    if text.chars().count() > 6000 {
+        format!("{}...（已截断）", text.chars().take(6000).collect::<String>())
+    } else {
+        text.to_string()
+    }
+}
+
+fn extract_json(text: &str) -> String {
+    let start = text.find('{').unwrap_or(0);
+    let end = text.rfind('}').unwrap_or(text.len() - 1);
+    text[start..=end].to_string()
 }

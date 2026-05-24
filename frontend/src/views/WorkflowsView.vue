@@ -59,6 +59,9 @@ function sourceLabel(source?: string): string {
   return '历史数据分析'
 }
 
+const canGenerateWorkflows = computed(() => filteredWorkflows.value.filter((w) => w.can_generate_skill))
+const topDrafts = computed(() => canGenerateWorkflows.value.slice(0, 4))
+
 onMounted(load)
 </script>
 
@@ -142,8 +145,8 @@ onMounted(load)
       </div>
     </section>
 
-    <section class="two" style="margin-top: 20px" v-if="filteredWorkflows.some((w) => w.can_generate_skill)">
-      <section class="panel" v-for="workflow in filteredWorkflows.filter((w) => w.can_generate_skill).slice(0, 4)" :key="'draft-' + workflow.id">
+    <section class="two" style="margin-top: 20px" v-if="canGenerateWorkflows.length > 0">
+      <section class="panel" v-for="workflow in topDrafts" :key="'draft-' + workflow.id">
         <div class="head">
           <div>
             <h2>{{ workflow.name }}</h2>

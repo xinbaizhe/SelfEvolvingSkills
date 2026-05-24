@@ -21,6 +21,21 @@ export interface Workflow {
   review_score?: number | null
   review_summary?: string | null
   review_feedback?: SkillReviewFeedback | null
+  evolves_skill?: string | null
+  iteration_num?: number | null
+  installed_agent_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SkillVariant {
+  id: number
+  skill_name: string
+  variant_label: string
+  status: string
+  usage_count: number
+  avg_session_messages: number
+  performance_score: number
   created_at: string
   updated_at: string
 }
@@ -64,10 +79,21 @@ export function installWorkflowSkill(id: number, agentId: string) {
   })
 }
 
+export function deleteWorkflowSkill(id: number, agentId?: string) {
+  return api<ApiResponse<{ id: number }>>('DELETE', `/workflows/${id}`, null, agentId ? { agent_id: agentId } : null)
+}
+
 export function updateWorkflowDraft(id: number, data: { draft_body: string; description?: string | null }) {
   return api<ApiResponse<Workflow>>('PUT', `/workflows/${id}`, null, data)
 }
 
 export function deleteWorkflowDraft(id: number) {
   return api<ApiResponse<{ id: number }>>('DELETE', `/workflows/${id}`)
+}
+
+export function fetchSkillVariants(params: Record<string, any> = {}) {
+  return api<ApiResponse<{ items: SkillVariant[]; total: number }>>('GET', '/skill-variants', {
+    page: params.page || 1,
+    size: params.size || 50,
+  })
 }

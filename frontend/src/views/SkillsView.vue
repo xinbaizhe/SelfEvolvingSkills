@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { evolveSkill, fetchSkills, fetchSkillDetail, importSkills, updateSkill, deleteSkill, type SkillItem, type SkillDetail } from '../api/skills'
 import { exportSkills } from '../api/export'
+import { onSkillsChanged } from '../composables/useSkillEvents'
 
 const router = useRouter()
 const skills = ref<SkillItem[]>([])
@@ -259,7 +260,19 @@ function onSearch() {
   if (selectedSource.value) loadSkills(selectedSource.value)
 }
 
-onMounted(loadSourceCounts)
+let cleanupSkillsListener: (() => void) | null = null
+
+onMounted(() => {
+  loadSourceCounts()
+  cleanupSkillsListener = onSkillsChanged(() => {
+    loadSourceCounts()
+    if (selectedSource.value) loadSkills(selectedSource.value)
+  })
+})
+
+onUnmounted(() => {
+  cleanupSkillsListener?.()
+})
 </script>
 
 <template>
@@ -440,17 +453,23 @@ onMounted(loadSourceCounts)
 .toolbar-title { font-weight: 600; margin-right: 4px; }
 .search-input { width: 240px; margin-left: auto; }
 .hidden-input { display: none; }
-.result-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
 .empty-state { text-align: center; padding: 40px; color: var(--muted); }
 .skill-card {
   position: relative;
-  width: 280px;
   background: #fff;
   border-radius: 8px;
   padding: 16px;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   transition: box-shadow 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .skill-actions {
   position: absolute;
@@ -459,13 +478,22 @@ onMounted(loadSourceCounts)
   display: flex;
   gap: 2px;
 }
-.item-title { padding-right: 130px; }
+.item-title { font-weight: bold; font-size: 15px; padding-right: 120px; margin-bottom: 6px; }
 .skill-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
 .source-card {
   position: relative;
   cursor: pointer;
   transition: all 0.2s;
   border: 2px solid transparent;
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
 .source-card:hover {
   border-color: var(--blue);
@@ -483,7 +511,6 @@ onMounted(loadSourceCounts)
   font-size: 15px;
   margin-bottom: 8px;
 }
-.item-title { font-weight: bold; font-size: 15px; margin-bottom: 6px; }
 .item-desc {
   color: #909399;
   font-size: 13px;
@@ -509,5 +536,23 @@ onMounted(loadSourceCounts)
   display: flex;
   justify-content: center;
   margin-top: 20px;
+}
+
+@media (max-width: 960px) {
+  .result-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .result-grid {
+    grid-template-columns: 1fr;
+  }
+  .cards {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

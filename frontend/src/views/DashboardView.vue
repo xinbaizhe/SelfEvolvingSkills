@@ -21,7 +21,13 @@ const loadError = ref('')
 const availableAgentCount = computed(() => sources.value.filter((source) => source.is_available).length)
 const enabledAgentCount = computed(() => sources.value.filter((source) => source.is_enabled).length)
 const candidateWorkflows = computed(() => workflows.value.filter((workflow) => workflow.can_generate_skill))
-const estimatedSaved = computed(() => workflows.value.length > 0 ? `${(workflows.value.length * 0.5).toFixed(1)}h` : '0h')
+const estimatedSaved = computed(() => {
+  const hours = workflows.value.reduce((total, w) => {
+    const match = w.estimated_time_saved?.match(/[\d.]+/)
+    return total + (match ? Number.parseFloat(match[0]) : 0)
+  }, 0)
+  return `${hours.toFixed(1)}h`
+})
 
 function addLog(title: string, body: string) {
   const now = new Date()
@@ -43,7 +49,9 @@ async function load() {
 
     if (summaryRes.success) summary.value = summaryRes.data
     if (sourceRes.success && sourceRes.data) sources.value = sourceRes.data
-    if (workflowRes.success && workflowRes.data) workflows.value = (workflowRes.data as any)?.items || []
+    if (workflowRes.success && workflowRes.data) {
+      workflows.value = Array.isArray(workflowRes.data) ? workflowRes.data : ((workflowRes.data as any)?.items || [])
+    }
     if (skillsRes.success && skillsRes.data) topSkills.value = skillsRes.data
 
     addLog('刷新完成', `发现 ${availableAgentCount.value} 个本地 Agent，${candidateWorkflows.value.length} 个可生成 Skill 的工作流。`)

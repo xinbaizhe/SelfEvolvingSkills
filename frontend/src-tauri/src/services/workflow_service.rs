@@ -12,6 +12,8 @@ pub(crate) struct WorkflowCluster {
     pub confidence: f64,
     pub sample_tasks: Vec<String>,
     pub source_skills: Vec<String>,
+    pub evolves_skill: Option<String>,
+    pub iteration_num: Option<i64>,
 }
 
 #[allow(dead_code)]
@@ -23,6 +25,7 @@ struct SessionRow {
     entrypoint: Option<String>,
     message_count: i64,
     started_at: Option<String>,
+    matched_skill: Option<String>,
 }
 
 impl SessionRow {
@@ -48,7 +51,7 @@ impl SessionRow {
 
 pub(crate) fn cluster_workflows(conn: &Connection) -> Vec<WorkflowCluster> {
     let mut stmt = match conn.prepare(
-        "SELECT project_name, agent_source, first_prompt, compressed_summary, entrypoint, message_count, started_at
+        "SELECT project_name, agent_source, first_prompt, compressed_summary, entrypoint, message_count, started_at, matched_skill
          FROM sessions
          WHERE (first_prompt IS NOT NULL AND first_prompt != '')
             OR (compressed_summary IS NOT NULL AND compressed_summary != '')
@@ -68,6 +71,7 @@ pub(crate) fn cluster_workflows(conn: &Connection) -> Vec<WorkflowCluster> {
                 entrypoint: row.get(4)?,
                 message_count: row.get(5)?,
                 started_at: row.get(6)?,
+                matched_skill: row.get(7)?,
             })
         })
         .map(|rows| rows.filter_map(|row| row.ok()).collect())
@@ -77,9 +81,51 @@ pub(crate) fn cluster_workflows(conn: &Connection) -> Vec<WorkflowCluster> {
         return Vec::new();
     }
 
-    let mut clusters = cluster_by_project_and_similarity(&sessions);
-    if clusters.is_empty() {
-        clusters = cluster_by_keywords(&sessions);
+    let mut clusters: Vec<WorkflowCluster> = Vec::new();
+
+    // Split sessions: those matching an existing skill → iteration candidates
+    let (iter_sessions, new_sessions): (Vec<&SessionRow>, Vec<&SessionRow>) = sessions
+        .iter()
+        .partition(|s| s.matched_skill.is_some());
+
+    // ---- Iteration clusters: group by matched_skill ----
+    let mut iter_groups: HashMap<String, Vec<&SessionRow>> = HashMap::new();
+    for session in &iter_sessions {
+        if let Some(ref skill_name) = session.matched_skill {
+            iter_groups
+                .entry(skill_name.clone())
+                .or_default()
+                .push(session);
+        }
+    }
+    for (skill_name, group) in iter_groups {
+        if group.len() >= 2 {
+            if let Some(cluster) = build_iteration_cluster(conn, &skill_name, &group) {
+                clusters.push(cluster);
+            }
+        }
+    }
+
+    // ---- New clusters: existing logic for unmatched sessions ----
+    if new_sessions.len() >= 2 {
+        let owned_sessions: Vec<SessionRow> = new_sessions
+            .iter()
+            .map(|s| SessionRow {
+                project_name: s.project_name.clone(),
+                agent_source: s.agent_source.clone(),
+                first_prompt: s.first_prompt.clone(),
+                compressed_summary: s.compressed_summary.clone(),
+                entrypoint: s.entrypoint.clone(),
+                message_count: s.message_count,
+                started_at: s.started_at.clone(),
+                matched_skill: None,
+            })
+            .collect();
+        let mut new_clusters = cluster_by_project_and_similarity(&owned_sessions);
+        if new_clusters.is_empty() {
+            new_clusters = cluster_by_keywords(&owned_sessions);
+        }
+        clusters.extend(new_clusters);
     }
 
     merge_duplicate_named_clusters(&mut clusters);
@@ -87,6 +133,67 @@ pub(crate) fn cluster_workflows(conn: &Connection) -> Vec<WorkflowCluster> {
     make_cluster_names_unique(&mut clusters);
     clusters.sort_by_key(|cluster| std::cmp::Reverse(cluster.skill_score));
     clusters
+}
+
+fn build_iteration_cluster(
+    conn: &Connection,
+    skill_name: &str,
+    sessions: &[&SessionRow],
+) -> Option<WorkflowCluster> {
+    // Get current iteration_num for this skill
+    let current_iter: i64 = conn
+        .query_row(
+            "SELECT COALESCE(iteration_num, 1) FROM skills WHERE name = ?1 LIMIT 1",
+            [skill_name],
+            |row| row.get(0),
+        )
+        .unwrap_or(1);
+
+    let next_iter = current_iter + 1;
+    let frequency = sessions.len() as i64;
+
+    let agents = sessions
+        .iter()
+        .filter_map(|row| row.agent_source.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let sample_tasks = sessions
+        .iter()
+        .filter_map(|row| row.first_prompt.as_deref())
+        .take(5)
+        .map(|prompt| crate::utils::text::truncate_chars(prompt, 200))
+        .collect::<Vec<_>>();
+
+    let total_msgs: i64 = sessions.iter().map(|r| r.message_count).sum();
+    let avg_msg_count = total_msgs as f64 / frequency as f64;
+
+    let freq_score = (frequency as f64 * 7.0).min(60.0);
+    let complexity_score = (avg_msg_count / 3.0).min(25.0);
+    let score = (freq_score + complexity_score).clamp(20.0, 90.0).round() as i64;
+
+    // Higher base confidence for iteration since we know the skill is already in use
+    let confidence = ((frequency as f64 / 15.0).min(0.5) + 0.35).clamp(0.3, 0.90);
+
+    let cluster = WorkflowCluster {
+        name: format!("{}-upgrade-v{}", skill_name, next_iter),
+        description: format!(
+            "Skill「{}」的升级候选（第 {} 轮迭代）—— 基于 {} 条新会话发现的使用模式变化",
+            skill_name, next_iter, frequency
+        ),
+        frequency,
+        source_agents: agents,
+        estimated_time_saved: format!("迭代优化"),
+        can_generate_skill: true,
+        skill_score: score,
+        confidence,
+        sample_tasks,
+        source_skills: vec![skill_name.to_string()],
+        evolves_skill: Some(skill_name.to_string()),
+        iteration_num: Some(next_iter),
+    };
+    Some(cluster)
 }
 
 fn cluster_by_project_and_similarity(sessions: &[SessionRow]) -> Vec<WorkflowCluster> {
@@ -218,6 +325,8 @@ fn build_cluster(label: &str, rows: &[&SessionRow]) -> WorkflowCluster {
         confidence,
         sample_tasks,
         source_skills: vec![],
+        evolves_skill: None,
+        iteration_num: None,
     }
 }
 
@@ -604,7 +713,7 @@ pub(crate) fn save_clusters(
     clusters: &[WorkflowCluster],
 ) -> anyhow::Result<i64> {
     conn.execute(
-        "DELETE FROM workflow_clusters WHERE recommendation_source != 'manual-existing-skill' AND status != 'manual-draft'",
+        "DELETE FROM workflow_clusters WHERE recommendation_source != 'manual-existing-skill' AND status != 'manual-draft' AND status != 'installed'",
         [],
     )?;
 
@@ -614,9 +723,9 @@ pub(crate) fn save_clusters(
             "INSERT INTO workflow_clusters
              (name, description, frequency, source_agents, estimated_time_saved,
               can_generate_skill, skill_score, status, sample_tasks, recommendation_source,
-              confidence, reasoning, source_skills, created_at, updated_at)
+              confidence, reasoning, source_skills, evolves_skill, iteration_num, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8, 'local-compressed-workflow',
-                     ?9, ?10, ?11, ?12, ?12)",
+                     ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
             params![
                 cluster.name,
                 cluster.description,
@@ -632,6 +741,8 @@ pub(crate) fn save_clusters(
                     cluster.frequency
                 ),
                 serde_json::to_string(&cluster.source_skills)?,
+                cluster.evolves_skill,
+                cluster.iteration_num,
                 now,
             ],
         )?;

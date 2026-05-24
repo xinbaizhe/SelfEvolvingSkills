@@ -297,6 +297,37 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_evolution_artifacts_step ON evolution_artifacts(step_id);
         CREATE INDEX IF NOT EXISTS idx_community_candidates_step ON community_candidates(step_id);
         CREATE INDEX IF NOT EXISTS idx_workflow_recommendations_step ON workflow_recommendations(step_id);
+
+        CREATE TABLE IF NOT EXISTS skill_variants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            skill_name TEXT NOT NULL,
+            variant_label TEXT NOT NULL,
+            draft_body TEXT NOT NULL,
+            status TEXT DEFAULT 'active',
+            generation_run_id INTEGER,
+            usage_count INTEGER DEFAULT 0,
+            avg_session_messages REAL DEFAULT 0,
+            performance_score REAL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(skill_name, variant_label)
+        );
+
+        CREATE TABLE IF NOT EXISTS skill_iterations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            skill_name TEXT NOT NULL,
+            iteration_num INTEGER NOT NULL DEFAULT 1,
+            previous_draft TEXT,
+            new_draft TEXT,
+            status TEXT DEFAULT 'pending',
+            trigger_reason TEXT,
+            judge_result TEXT,
+            critic_result TEXT,
+            improvement_summary TEXT,
+            run_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
         "#,
     )?;
     let _ = conn.execute(
@@ -367,6 +398,38 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
     );
     let _ = conn.execute(
         "ALTER TABLE workflow_clusters ADD COLUMN review_failed INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE skills ADD COLUMN iteration_num INTEGER DEFAULT 1",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE skills ADD COLUMN last_evaluated_at TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE skills ADD COLUMN effectiveness_score REAL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN matched_skill TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN evolves_skill TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN iteration_num INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN parent_workflow_id INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE workflow_clusters ADD COLUMN installed_agent_id TEXT",
         [],
     );
     conn.execute(

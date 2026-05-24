@@ -158,6 +158,7 @@ struct SessionInfo {
     compressed_summary: Option<String>,
     jsonl_path: Option<String>,
     jsonl_size: i64,
+    matched_skill: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -358,6 +359,15 @@ async fn dispatch_api(
             .map(|value| json!(ApiResponse::ok(value)));
     }
 
+    if matches!(
+        (method, clean_path),
+        ("POST", "/community/compare") | ("POST", "community/compare")
+    ) {
+        return services::community_service::compare_with_llm(&state.db_path, body)
+            .await
+            .map(|value| json!(ApiResponse::ok(value)));
+    }
+
     let conn = open_conn(&state.db_path)?;
 
     match (method, clean_path) {
@@ -427,6 +437,27 @@ async fn dispatch_api(
         }
         ("GET", "/agents") | ("GET", "agents") => {
             list_agents(&conn, query).map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("PUT", p) if p.starts_with("/agents/") || p.starts_with("agents/") => {
+            let name = url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
+            update_agent(&conn, &name, &body.unwrap_or(Value::Null))
+                .map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("DELETE", p) if p.starts_with("/agents/") || p.starts_with("agents/") => {
+            let name = url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
+            delete_agent(&conn, &name).map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("POST", p)
+            if p.starts_with("/agents/") && p.ends_with("/evolve")
+                || p.starts_with("agents/") && p.ends_with("/evolve") =>
+        {
+            let name = url_decode(
+                p.trim_start_matches('/')
+                    .trim_start_matches("agents/")
+                    .trim_end_matches("/evolve"),
+            );
+            create_agent_evolution_draft(&conn, &name)
+                .map(|value| json!(ApiResponse::ok(value)))
         }
         ("GET", p) if p.starts_with("/agents/") || p.starts_with("agents/") => {
             let name = url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
@@ -518,6 +549,9 @@ async fn dispatch_api(
         ("GET", "/workflows/install-targets") | ("GET", "workflows/install-targets") => {
             list_skill_install_targets(&conn).map(|value| json!(ApiResponse::ok(value)))
         }
+        ("GET", "/skill-variants") | ("GET", "skill-variants") => {
+            list_skill_variants(&conn, query).map(|value| json!(ApiResponse::ok(value)))
+        }
         ("PUT", p) if p.starts_with("/workflows/") || p.starts_with("workflows/") => {
             let id_text = p.trim_start_matches('/').trim_start_matches("workflows/");
             let id = id_text.parse::<i64>()?;
@@ -526,7 +560,8 @@ async fn dispatch_api(
         ("DELETE", p) if p.starts_with("/workflows/") || p.starts_with("workflows/") => {
             let id_text = p.trim_start_matches('/').trim_start_matches("workflows/");
             let id = id_text.parse::<i64>()?;
-            delete_workflow_draft(&conn, id)?;
+            let agent_id = body.as_ref().and_then(|v| v.get("agent_id").and_then(Value::as_str));
+            delete_workflow_with_uninstall(&conn, id, agent_id)?;
             Ok(json!(ApiResponse::ok(json!({ "id": id }))))
         }
         ("POST", p)
@@ -558,7 +593,7 @@ async fn dispatch_api(
                 &state.db_path,
                 state.scan_lock.clone(),
                 scope.agent_ids,
-            );
+            )?;
             Ok(json!(ApiResponse::ok(result)))
         }
         ("GET", "/evolution/status") | ("GET", "evolution/status") => Ok(json!(ApiResponse::ok(
@@ -570,7 +605,7 @@ async fn dispatch_api(
         ("GET", "/evolution/history") | ("GET", "evolution/history") => {
             services::evolution_service::cleanup_stale_jobs(&conn);
             Ok(json!(ApiResponse::ok(
-                services::evolution_service::list_evolution_history(&conn, &query)
+                services::evolution_service::list_evolution_history(&conn, &query)?
             )))
         }
         // System monitoring
@@ -597,6 +632,12 @@ async fn dispatch_api(
         }
         ("GET", "/community/installed") | ("GET", "community/installed") => {
             services::community_service::get_installed_skills(&conn)
+                .map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("GET", p) if p.starts_with("/community/") || p.starts_with("community/") => {
+            let id_text = p.trim_start_matches('/').trim_start_matches("community/");
+            let id = id_text.parse::<i64>()?;
+            services::community_service::get_community_skill_detail(&conn, id)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
         _ => Err(anyhow!(
@@ -628,7 +669,7 @@ fn list_workflows(conn: &Connection, query: PageQuery) -> Result<Value> {
         "SELECT id, name, description, frequency, source_agents, estimated_time_saved,
                 can_generate_skill, skill_score, status, draft_body, sample_tasks,
                 recommendation_source, confidence, reasoning, source_skills, similar_skills,
-                review_score, review_summary, review_feedback
+                review_score, review_summary, review_feedback, installed_agent_id
          FROM workflow_clusters ORDER BY skill_score DESC LIMIT ?1 OFFSET ?2",
     )?;
     let items: Vec<Value> = stmt
@@ -658,6 +699,7 @@ fn list_workflows(conn: &Connection, query: PageQuery) -> Result<Value> {
                 "review_score": row.get::<_, Option<i64>>(16)?,
                 "review_summary": row.get::<_, Option<String>>(17)?,
                 "review_feedback": review_feedback.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!(null)),
+                "installed_agent_id": row.get::<_, Option<String>>(19)?,
             }))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -678,6 +720,34 @@ fn list_skill_install_targets(conn: &Connection) -> Result<Value> {
         }
     }
     Ok(json!(targets))
+}
+
+fn list_skill_variants(conn: &Connection, query: PageQuery) -> Result<Value> {
+    let page = query.page.unwrap_or(1).max(1);
+    let size = query.size.unwrap_or(50).clamp(1, 200);
+    let total: i64 = conn.query_row("SELECT COUNT(id) FROM skill_variants", [], |row| row.get(0))?;
+    let mut stmt = conn.prepare(
+        "SELECT id, skill_name, variant_label, status, usage_count, avg_session_messages,
+                performance_score, created_at, updated_at
+         FROM skill_variants ORDER BY performance_score DESC LIMIT ?1 OFFSET ?2",
+    )?;
+    let items: Vec<Value> = stmt
+        .query_map(params![size, (page - 1) * size], |row| {
+            Ok(json!({
+                "id": row.get::<_, i64>(0)?,
+                "skill_name": row.get::<_, String>(1)?,
+                "variant_label": row.get::<_, String>(2)?,
+                "status": row.get::<_, String>(3)?,
+                "usage_count": row.get::<_, i64>(4)?,
+                "avg_session_messages": row.get::<_, f64>(5)?,
+                "performance_score": row.get::<_, f64>(6)?,
+                "created_at": row.get::<_, Option<String>>(7)?,
+                "updated_at": row.get::<_, Option<String>>(8)?,
+            }))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(json!({ "items": items, "total": total, "page": page, "size": size }))
 }
 
 fn create_manual_skill_draft(conn: &Connection, skill_name: &str) -> Result<Value> {
@@ -760,24 +830,43 @@ fn create_manual_skill_draft(conn: &Connection, skill_name: &str) -> Result<Valu
     get_workflow_by_id(conn, id)
 }
 fn get_workflow_by_id(conn: &Connection, id: i64) -> Result<Value> {
-    let value = list_workflows(
-        conn,
-        PageQuery {
-            page: Some(1),
-            size: Some(200),
-            ..Default::default()
-        },
+    let mut stmt = conn.prepare(
+        "SELECT id, name, description, frequency, source_agents, estimated_time_saved,
+                can_generate_skill, skill_score, status, draft_body, sample_tasks,
+                recommendation_source, confidence, reasoning, source_skills, similar_skills,
+                review_score, review_summary, review_feedback, installed_agent_id
+         FROM workflow_clusters WHERE id = ?1",
     )?;
-    value
-        .get("items")
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            items
-                .iter()
-                .find(|item| item.get("id").and_then(Value::as_i64) == Some(id))
-                .cloned()
-        })
-        .ok_or_else(|| anyhow!("workflow draft not found: {}", id))
+    stmt.query_row([id], |row| {
+        let source_agents: Option<String> = row.get(4)?;
+        let sample_tasks: Option<String> = row.get(10)?;
+        let source_skills: Option<String> = row.get(14)?;
+        let similar_skills: Option<String> = row.get(15)?;
+        let review_feedback: Option<String> = row.get(18)?;
+        Ok(json!({
+            "id": row.get::<_, i64>(0)?,
+            "name": row.get::<_, String>(1)?,
+            "description": row.get::<_, Option<String>>(2)?,
+            "frequency": row.get::<_, i64>(3)?,
+            "source_agents": source_agents.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!([])),
+            "estimated_time_saved": row.get::<_, Option<String>>(5)?,
+            "can_generate_skill": row.get::<_, i64>(6)? != 0,
+            "skill_score": row.get::<_, i64>(7)?,
+            "status": row.get::<_, Option<String>>(8)?,
+            "draft_body": row.get::<_, Option<String>>(9)?,
+            "sample_tasks": sample_tasks.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!([])),
+            "recommendation_source": row.get::<_, Option<String>>(11)?,
+            "confidence": row.get::<_, Option<f64>>(12)?,
+            "reasoning": row.get::<_, Option<String>>(13)?,
+            "source_skills": source_skills.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!([])),
+            "similar_skills": similar_skills.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!([])),
+            "review_score": row.get::<_, Option<i64>>(16)?,
+            "review_summary": row.get::<_, Option<String>>(17)?,
+            "review_feedback": review_feedback.and_then(|v| serde_json::from_str::<Value>(&v).ok()).unwrap_or(json!(null)),
+            "installed_agent_id": row.get::<_, Option<String>>(19)?,
+        }))
+    })
+    .map_err(|e| anyhow!("workflow draft not found: {}", e))
 }
 
 fn update_workflow_draft(conn: &Connection, id: i64, body: Option<Value>) -> Result<Value> {
@@ -799,11 +888,35 @@ fn update_workflow_draft(conn: &Connection, id: i64, body: Option<Value>) -> Res
     get_workflow_by_id(conn, id)
 }
 
-fn delete_workflow_draft(conn: &Connection, id: i64) -> Result<()> {
-    let affected = conn.execute("DELETE FROM workflow_clusters WHERE id = ?1", [id])?;
-    if affected == 0 {
-        return Err(anyhow!("workflow draft not found: {}", id));
+fn delete_workflow_with_uninstall(conn: &Connection, id: i64, agent_id: Option<&str>) -> Result<()> {
+    let row = conn
+        .query_row(
+            "SELECT name, status FROM workflow_clusters WHERE id = ?1",
+            [id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("workflow draft not found: {}", id))?;
+
+    let (name, status) = row;
+
+    if status.as_deref() == Some("installed") {
+        if let Some(aid) = agent_id.filter(|v| !v.trim().is_empty()) {
+            let sources = list_sources(conn)?;
+            if let Some(target) = sources.iter().find(|s| s.agent_id == aid) {
+                if let Some(skills_path) = target.paths.get("skills_path").and_then(Clone::clone) {
+                    let skill_dir = PathBuf::from(&skills_path).join(sanitize_file_name(&name));
+                    if skill_dir.exists() {
+                        fs::remove_dir_all(&skill_dir)?;
+                    }
+                    let skill_path_str = skill_dir.join("SKILL.md").to_string_lossy().to_string();
+                    conn.execute("DELETE FROM skills WHERE file_path = ?1", [&skill_path_str])?;
+                }
+            }
+        }
     }
+
+    conn.execute("DELETE FROM workflow_clusters WHERE id = ?1", [id])?;
     Ok(())
 }
 
@@ -855,9 +968,13 @@ fn install_workflow_skill(
     fs::write(&skill_path, draft_body)?;
 
     conn.execute(
-        "UPDATE workflow_clusters SET status = 'installed', updated_at = ?2 WHERE id = ?1",
-        params![workflow_id, now_string()],
+        "UPDATE workflow_clusters SET status = 'installed', installed_agent_id = ?2, updated_at = ?3 WHERE id = ?1",
+        params![workflow_id, agent_id, now_string()],
     )?;
+
+    if let Some(info) = parse_skill_file(&skill_path, "generated", &target.agent_id, None) {
+        upsert_skills(conn, &[info])?;
+    }
 
     Ok(json!({
         "path": path_to_string(&skill_path),
@@ -2196,6 +2313,7 @@ fn parse_session_file(
         first_prompt,
         jsonl_path,
         jsonl_size,
+        matched_skill: None,
     })
 }
 
@@ -2249,6 +2367,7 @@ fn parse_session_jsonl_file(path: &Path, agent_source: &str) -> Option<SessionIn
         first_prompt,
         jsonl_path,
         jsonl_size,
+        matched_skill: None,
     })
 }
 
@@ -2553,8 +2672,9 @@ pub(crate) fn upsert_sessions(conn: &Connection, sessions: &[SessionInfo]) -> Re
         conn.execute(
             "INSERT INTO sessions
              (session_id, pid, cwd, project_name, agent_source, entrypoint, version, kind,
-              started_at, message_count, first_prompt, compressed_summary, jsonl_path, jsonl_size, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)
+              started_at, message_count, first_prompt, compressed_summary, jsonl_path, jsonl_size,
+              matched_skill, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)
              ON CONFLICT(session_id) DO UPDATE SET
               pid = excluded.pid,
               cwd = excluded.cwd,
@@ -2569,6 +2689,7 @@ pub(crate) fn upsert_sessions(conn: &Connection, sessions: &[SessionInfo]) -> Re
               compressed_summary = excluded.compressed_summary,
               jsonl_path = excluded.jsonl_path,
               jsonl_size = excluded.jsonl_size,
+              matched_skill = excluded.matched_skill,
               updated_at = excluded.updated_at",
             params![
                 session.session_id,
@@ -2585,6 +2706,7 @@ pub(crate) fn upsert_sessions(conn: &Connection, sessions: &[SessionInfo]) -> Re
                 session.compressed_summary,
                 session.jsonl_path,
                 session.jsonl_size,
+                session.matched_skill,
                 now_string()
             ],
         )?;
@@ -2640,6 +2762,7 @@ fn refresh_skill_usage_from_sessions(conn: &Connection) -> Result<i64> {
             continue;
         }
 
+        let mut best_skill: Option<(&str, usize)> = None;
         for skill in &skills {
             if let Some(session_agent) = &agent_source {
                 if let Some(skill_agent) = &skill.agent_source {
@@ -2667,6 +2790,15 @@ fn refresh_skill_usage_from_sessions(conn: &Connection) -> Result<i64> {
                 ],
             )?;
             inserted += 1;
+            if mention_count > best_skill.map(|(_, c)| c).unwrap_or(0) {
+                best_skill = Some((&skill.name, mention_count));
+            }
+        }
+        if let Some((skill_name, _)) = best_skill {
+            let _ = conn.execute(
+                "UPDATE sessions SET matched_skill = ?1 WHERE session_id = ?2",
+                params![skill_name, session_id],
+            );
         }
     }
 
@@ -2681,8 +2813,14 @@ fn refresh_skill_usage_from_sessions(conn: &Connection) -> Result<i64> {
              SELECT COUNT(DISTINCT session_id) FROM skill_usage
              WHERE skill_usage.skill_name = skills.name
                AND skill_usage.skill_source_type = skills.source_type
-         ), 0)",
-        [],
+         ), 0),
+         effectiveness_score = COALESCE((
+             SELECT AVG(mention_count) * 10.0 FROM skill_usage
+             WHERE skill_usage.skill_name = skills.name
+               AND skill_usage.skill_source_type = skills.source_type
+         ), 0),
+         last_evaluated_at = ?1",
+        params![now_string()],
     )?;
     Ok(inserted)
 }
@@ -3011,6 +3149,142 @@ fn get_agent(conn: &Connection, name: &str) -> Result<Value> {
     )
     .optional()?
     .ok_or_else(|| anyhow!("Agent not found"))
+}
+
+fn update_agent(conn: &Connection, name: &str, body: &Value) -> Result<Value> {
+    let description = body.get("description").and_then(Value::as_str);
+    let model = body.get("model").and_then(Value::as_str);
+    let new_name = body.get("name").and_then(Value::as_str);
+    let tools = body.get("tools");
+
+    let affected = if let Some(new_name) = new_name.filter(|v| !v.trim().is_empty() && *v != name) {
+        conn.execute(
+            "UPDATE agents SET name = ?2, description = COALESCE(?3, description),
+             model = COALESCE(?4, model), tools = COALESCE(?5, tools)
+             WHERE name = ?1",
+            params![
+                name,
+                new_name,
+                description,
+                model,
+                tools.map(|v| v.to_string()),
+            ],
+        )?
+    } else {
+        conn.execute(
+            "UPDATE agents SET description = COALESCE(?2, description),
+             model = COALESCE(?3, model), tools = COALESCE(?4, tools)
+             WHERE name = ?1",
+            params![name, description, model, tools.map(|v| v.to_string())],
+        )?
+    };
+
+    if affected == 0 {
+        return Err(anyhow!("Agent not found: {}", name));
+    }
+
+    let lookup_name = new_name.filter(|v| !v.trim().is_empty() && *v != name).unwrap_or(name);
+    get_agent(conn, lookup_name)
+}
+
+fn delete_agent(conn: &Connection, name: &str) -> Result<Value> {
+    let file_path: Option<String> = conn
+        .query_row(
+            "SELECT file_path FROM agents WHERE name = ?1 LIMIT 1",
+            [name],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+
+    let affected = conn.execute("DELETE FROM agents WHERE name = ?1", [name])?;
+    if affected == 0 {
+        return Err(anyhow!("Agent not found: {}", name));
+    }
+
+    Ok(json!({ "deleted": true, "name": name, "file_path": file_path }))
+}
+
+fn create_agent_evolution_draft(conn: &Connection, name: &str) -> Result<Value> {
+    let (description, model, agent_source, file_path, body_text): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT description, model, agent_source, file_path, body_text
+             FROM agents WHERE name = ?1 LIMIT 1",
+            [name],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("Agent not found: {}", name))?;
+
+    let draft_name = format!("{}-agent-evolution", sanitize_file_name(name));
+    let description_text = description
+        .unwrap_or_else(|| format!("Evolution draft based on Agent {}", name));
+    let model_text = model.as_deref().unwrap_or("未指定");
+    let draft_body = format!(
+        "---\nname: {}\ndescription: {}\ncategory: agent-evolution\norigin: agent-evolution\nsource_type: evolved-draft\n---\n\n# Agent Evolution: {}\n\n## Evolution Goal\nThis draft was created from an existing Agent definition. Edit to describe improvements to the agent's prompts, tools, or model configuration.\n\n## Original Agent Info\n- **Name**: {}\n- **Model**: {}\n- **Source**: {}\n- **File**: {}\n\n## Original Description\n{}\n\n## Original Definition\n\n{}",
+        yaml_scalar(&draft_name),
+        yaml_scalar(&description_text),
+        name,
+        name,
+        model_text,
+        agent_source.as_deref().unwrap_or("unknown"),
+        file_path,
+        description_text,
+        body_text.clone().unwrap_or_default()
+    );
+
+    let now = now_string();
+    let sample_tasks = serde_json::to_string(&vec![format!(
+        "Agent evolution: improve definition of {}",
+        name
+    )])?;
+    let source_agents = serde_json::to_string(
+        &agent_source
+            .clone()
+            .map(|v| vec![v])
+            .unwrap_or_default(),
+    )?;
+    let source_skills = serde_json::to_string(&vec![json!({
+        "name": name,
+        "file_path": file_path,
+        "source": "agent-evolution"
+    })])?;
+
+    conn.execute(
+        "INSERT INTO workflow_clusters
+         (name, description, frequency, source_agents, estimated_time_saved,
+          can_generate_skill, skill_score, status, draft_body, sample_tasks,
+          recommendation_source, confidence, reasoning, source_skills, created_at, updated_at)
+         VALUES (?1, ?2, 1, ?3, ?4, 1, 65, 'manual-draft', ?5, ?6,
+                 'agent-evolution', 0.65, ?7, ?8, ?9, ?9)",
+        params![
+            draft_name,
+            description_text,
+            source_agents,
+            "Agent improvement may enhance workflow efficiency",
+            draft_body,
+            sample_tasks,
+            format!("Created from Agent '{}'.", name),
+            source_skills,
+            now,
+        ],
+    )?;
+    let id = conn.last_insert_rowid();
+    get_workflow_by_id(conn, id)
 }
 
 fn stats_summary(conn: &Connection) -> Result<Value> {

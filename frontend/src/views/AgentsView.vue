@@ -1,17 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { fetchAgents, fetchAgentDetail } from '../api/agents'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { fetchAgents, fetchAgentDetail, updateAgent, deleteAgent, evolveAgent, type Agent, type AgentDetail } from '../api/agents'
 
-const agents = ref<any[]>([])
+const router = useRouter()
+const agents = ref<Agent[]>([])
 const total = ref(0)
 const loading = ref(false)
 const search = ref('')
 const selectedSource = ref<string | null>(null)
 const sourceCounts = ref<Record<string, number>>({})
+const page = ref(1)
+const pageSize = ref(10)
 
 const detailVisible = ref(false)
-const currentDetail = ref<any>(null)
+const currentDetail = ref<AgentDetail | null>(null)
 const detailLoading = ref(false)
+
+const editVisible = ref(false)
+const editSaving = ref(false)
+const editForm = reactive({ name: '', description: '', model: '' })
+const editOriginalName = ref('')
+
+const evolving = ref(new Set<number>())
 
 const sources = [
   { id: 'hermes', name: 'Hermes', color: '#6d5bd0', icon: 'H' },
@@ -42,7 +54,7 @@ async function loadSourceCounts() {
 async function loadAgents(agentSource?: string) {
   loading.value = true
   try {
-    const params: Record<string, any> = { size: 100 }
+    const params: Record<string, any> = { page: page.value, size: pageSize.value }
     if (agentSource) params.agent_source = agentSource
     if (search.value) params.search = search.value
     const res = await fetchAgents(params)
@@ -58,6 +70,7 @@ async function loadAgents(agentSource?: string) {
 function selectSource(sourceId: string) {
   selectedSource.value = sourceId
   search.value = ''
+  page.value = 1
   loadAgents(sourceId)
 }
 
@@ -82,7 +95,86 @@ async function showDetail(name: string) {
 }
 
 function onSearch() {
+  page.value = 1
   if (selectedSource.value) loadAgents(selectedSource.value)
+}
+
+function onPageChange(p: number) {
+  page.value = p
+  if (selectedSource.value) loadAgents(selectedSource.value)
+}
+
+function onSizeChange(s: number) {
+  pageSize.value = s
+  page.value = 1
+  if (selectedSource.value) loadAgents(selectedSource.value)
+}
+
+// ---- Edit ----
+function openEdit(agent: Agent, event: MouseEvent) {
+  event.stopPropagation()
+  editOriginalName.value = agent.name
+  editForm.name = agent.name
+  editForm.description = agent.description || ''
+  editForm.model = agent.model || ''
+  editVisible.value = true
+}
+
+async function saveEdit() {
+  editSaving.value = true
+  try {
+    const res = await updateAgent(editOriginalName.value, {
+      name: editForm.name || undefined,
+      description: editForm.description || null,
+      model: editForm.model || null,
+    })
+    if (!res.success) throw new Error(res.error || '更新失败')
+    ElMessage.success('Agent 已更新')
+    editVisible.value = false
+    if (selectedSource.value) await loadAgents(selectedSource.value)
+    await loadSourceCounts()
+  } catch (error: any) {
+    ElMessage.error(error?.message || '更新失败')
+  } finally {
+    editSaving.value = false
+  }
+}
+
+// ---- Delete ----
+async function confirmDelete(agent: Agent, event: MouseEvent) {
+  event.stopPropagation()
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除 "${agent.name}" 吗？此操作将从数据库中移除该 Agent 记录。`,
+      '删除确认',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+    const res = await deleteAgent(agent.name)
+    if (!res.success) throw new Error(res.error || '删除失败')
+    ElMessage.success(`已删除 ${res.data?.name || agent.name}`)
+    if (selectedSource.value) await loadAgents(selectedSource.value)
+    await loadSourceCounts()
+  } catch (error: any) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error?.message || '删除失败')
+    }
+  }
+}
+
+// ---- Evolve ----
+async function evolveExistingAgent(agent: Agent, event: MouseEvent) {
+  event.stopPropagation()
+  evolving.value.add(agent.id)
+  try {
+    const res = await evolveAgent(agent.name)
+    if (!res.success) throw new Error(res.error || '创建进化草稿失败')
+    ElMessage.success('已创建 Agent 进化草稿')
+    router.push('/workbench?tab=drafts')
+  } catch (error: any) {
+    ElMessage.error(error?.message || '创建进化草稿失败')
+  } finally {
+    evolving.value.delete(agent.id)
+  }
 }
 
 onMounted(loadSourceCounts)
@@ -134,6 +226,13 @@ onMounted(loadSourceCounts)
 
       <div v-else class="result-grid">
         <div v-for="agent in agents" :key="agent.id" class="agent-card" @click="showDetail(agent.name)">
+          <div class="agent-actions">
+            <el-button size="small" type="primary" text :loading="evolving.has(agent.id)" @click="evolveExistingAgent(agent, $event)">
+              进化
+            </el-button>
+            <el-button size="small" text @click="openEdit(agent, $event)">编辑</el-button>
+            <el-button size="small" text type="danger" @click="confirmDelete(agent, $event)">删除</el-button>
+          </div>
           <div class="agent-title">
             <span>{{ agent.name }}</span>
             <el-tag v-if="agent.model" size="small">{{ agent.model }}</el-tag>
@@ -151,8 +250,22 @@ onMounted(loadSourceCounts)
           </div>
         </div>
       </div>
+
+      <div v-if="total > pageSize" class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
+          small
+          @current-change="onPageChange"
+          @size-change="onSizeChange"
+        />
+      </div>
     </template>
 
+    <!-- Detail Dialog -->
     <el-dialog v-model="detailVisible" :title="currentDetail?.name" width="700px" top="5vh">
       <div v-if="detailLoading" class="empty-state">加载中...</div>
       <div v-else-if="currentDetail">
@@ -167,6 +280,25 @@ onMounted(loadSourceCounts)
           <div class="code-preview">{{ currentDetail.body_text || '无内容' }}</div>
         </div>
       </div>
+    </el-dialog>
+
+    <!-- Edit Dialog -->
+    <el-dialog v-model="editVisible" title="编辑 Agent" width="520px" top="10vh" @closed="editOriginalName = ''">
+      <el-form label-position="top">
+        <el-form-item label="名称">
+          <el-input v-model="editForm.name" placeholder="Agent 名称" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="editForm.description" type="textarea" :rows="3" placeholder="简要描述" />
+        </el-form-item>
+        <el-form-item label="模型">
+          <el-input v-model="editForm.model" placeholder="如 claude-sonnet-4-6" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+      </template>
     </el-dialog>
   </section>
 </template>
@@ -208,23 +340,46 @@ onMounted(loadSourceCounts)
 }
 .toolbar-title { font-weight: 600; }
 .search-input { width: 220px; margin-left: auto; }
-.result-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
 .empty-state { text-align: center; padding: 40px; color: var(--muted); }
 .agent-card {
-  width: 280px;
+  position: relative;
   background: #fff;
   border-radius: 8px;
   padding: 16px;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   transition: box-shadow 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .agent-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.agent-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+}
 .source-card {
   position: relative;
   cursor: pointer;
   transition: all 0.2s;
   border: 2px solid transparent;
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
 }
 .source-card:hover {
   border-color: var(--blue);
@@ -246,9 +401,9 @@ onMounted(loadSourceCounts)
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
   font-weight: bold;
   font-size: 15px;
+  padding-right: 120px;
 }
 .item-desc {
   color: #909399;
@@ -259,7 +414,26 @@ onMounted(loadSourceCounts)
   overflow: hidden;
 }
 .tag-row { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+.pagination-wrap { display: flex; justify-content: center; margin-top: 20px; }
 .detail-section { margin-top: 16px; }
+
+@media (max-width: 960px) {
+  .result-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .result-grid {
+    grid-template-columns: 1fr;
+  }
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}
 .code-preview {
   max-height: 400px;
   overflow-y: auto;

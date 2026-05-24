@@ -32,3 +32,15 @@ export function fetchAgents(params: Record<string, any> = {}) {
 export function fetchAgentDetail(name: string) {
   return api<ApiResponse<AgentDetail>>('GET', `/agents/${encodeURIComponent(name)}`)
 }
+
+export function updateAgent(name: string, data: { name?: string; description?: string | null; model?: string | null; tools?: unknown }) {
+  return api<ApiResponse<AgentDetail>>('PUT', `/agents/${encodeURIComponent(name)}`, null, data as unknown as Record<string, unknown>)
+}
+
+export function deleteAgent(name: string) {
+  return api<ApiResponse<{ deleted: boolean; name: string; file_path: string }>>('DELETE', `/agents/${encodeURIComponent(name)}`)
+}
+
+export function evolveAgent(name: string) {
+  return api<ApiResponse<any>>('POST', `/agents/${encodeURIComponent(name)}/evolve`)
+}

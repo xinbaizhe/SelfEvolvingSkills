@@ -8,6 +8,7 @@ export interface CommunitySkill {
   repo_url: string
   stars: number
   description: string | null
+  skill_md_content?: string | null
   installed: boolean
   source?: string
   status: string
@@ -19,6 +20,20 @@ export interface CommunitySkill {
   pushed_at?: string | null
   matched_file?: string | null
   recommendation_reason?: string | null
+}
+
+export interface CompareResult {
+  dimensions: CompareDimension[]
+  suggestions: string[]
+  summary?: string
+  source: string
+}
+
+export interface CompareDimension {
+  label: string
+  local: string
+  community: string
+  verdict: 'local_better' | 'community_better' | 'complementary' | 'neutral'
 }
 
 export interface PaginatedResult<T> {
@@ -43,4 +58,17 @@ export function installCommunitySkill(skillId: number, agentId: string) {
 
 export function getInstalledSkills() {
   return api<ApiResponse<{ items: CommunitySkill[]; total: number }>>('GET', '/community/installed')
+}
+
+export function fetchCommunitySkillDetail(id: number) {
+  return api<ApiResponse<CommunitySkill>>('GET', `/community/${id}`)
+}
+
+export function compareCommunitySkill(data: {
+  draft_body: string
+  draft_name: string
+  community_name: string
+  community_content: string
+}) {
+  return api<ApiResponse<CompareResult>>('POST', '/community/compare', null, data)
 }

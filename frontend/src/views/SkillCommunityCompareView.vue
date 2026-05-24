@@ -1,60 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { searchCommunitySkills, type CommunitySkill } from '../api/community'
-import { fetchWorkflows, type Workflow } from '../api/workflows'
+import { searchCommunitySkills, fetchCommunitySkillDetail, compareCommunitySkill, type CommunitySkill, type CompareResult } from '../api/community'
+import { fetchWorkflows, updateWorkflowDraft, type Workflow } from '../api/workflows'
 
 const drafts = ref<Workflow[]>([])
 const selectedDraftId = ref<number | null>(null)
 const communitySkills = ref<CommunitySkill[]>([])
 const selectedCommunityId = ref<number | null>(null)
+const communitySkill = ref<CommunitySkill | null>(null)
 const loadingDrafts = ref(false)
+const loadingCommunity = ref(false)
 const searching = ref(false)
-const suggestion = ref('')
+const comparing = ref(false)
+const compareResult = ref<CompareResult | null>(null)
 
-const selectedDraft = computed(() => drafts.value.find((draft) => draft.id === selectedDraftId.value) || null)
-const selectedCommunitySkill = computed(() => communitySkills.value.find((skill) => skill.id === selectedCommunityId.value) || null)
-
-const searchKeywords = computed(() => {
-  const draft = selectedDraft.value
-  if (!draft) return ''
-  return [draft.name, draft.description, draft.source_agents]
-    .filter(Boolean)
-    .join(' ')
-    .split(/\s+/)
-    .slice(0, 8)
-    .join(' ')
-})
-
-const draftSections = computed(() => splitSections(selectedDraft.value?.draft_body || ''))
-const comparisonRows = computed(() => {
-  const draft = selectedDraft.value
-  const community = selectedCommunitySkill.value
-  if (!draft || !community) return []
-
-  return [
-    {
-      label: '定位',
-      local: draft.description || '本地草稿暂无描述',
-      community: community.description || '社区 Skill 暂无描述',
-    },
-    {
-      label: '来源',
-      local: draft.source_agents || '来自本地工作流聚类',
-      community: `${community.repo}，${formatStars(community.stars)} stars`,
-    },
-    {
-      label: '结构',
-      local: draftSections.value.length > 0 ? draftSections.value.join(' / ') : '未检测到 Markdown 标题结构',
-      community: 'GitHub 搜索 API 当前只返回仓库摘要，详细结构需要打开仓库查看',
-    },
-    {
-      label: '示例任务',
-      local: parseSampleTasks(draft.sample_tasks).join('；') || '暂无示例任务',
-      community: '可从社区仓库 README 或 SKILL.md 中人工核对',
-    },
-  ]
-})
+const selectedDraft = computed(() => drafts.value.find((d) => d.id === selectedDraftId.value) || null)
 
 onMounted(loadDrafts)
 
@@ -63,275 +24,352 @@ async function loadDrafts() {
   try {
     const res = await fetchWorkflows()
     const items = Array.isArray(res.data) ? res.data : ((res.data as any)?.items || [])
-    drafts.value = items.filter((workflow: Workflow) => workflow.can_generate_skill)
+    drafts.value = items.filter((w: Workflow) => w.can_generate_skill)
     selectedDraftId.value = drafts.value[0]?.id ?? null
-    if (selectedDraftId.value) await searchSimilarSkills()
   } finally {
     loadingDrafts.value = false
   }
 }
 
-async function searchSimilarSkills() {
+async function searchSkills() {
   if (!selectedDraft.value) return
   searching.value = true
-  suggestion.value = ''
+  communitySkills.value = []
+  selectedCommunityId.value = null
+  communitySkill.value = null
+  compareResult.value = null
   try {
-    const keyword = searchKeywords.value || selectedDraft.value.name
-    const res = await searchCommunitySkills(keyword, 1, 8)
+    const keyword = [selectedDraft.value.name, selectedDraft.value.description]
+      .filter(Boolean)
+      .join(' ')
+      .split(/\s+/)
+      .slice(0, 6)
+      .join(' ')
+    const res = await searchCommunitySkills(keyword || selectedDraft.value.name, 1, 8)
     if (res.success && res.data) {
       communitySkills.value = res.data.items
       selectedCommunityId.value = communitySkills.value[0]?.id ?? null
-      if (communitySkills.value.length === 0) {
-        ElMessage.info('没有找到相似社区 Skill。请检查网络连接，或换一个草稿重试。')
-      }
+      if (communitySkills.value[0]) await loadCommunityDetail(communitySkills.value[0].id)
     } else {
-      ElMessage.error(res.error || '社区 Skill 搜索失败')
+      ElMessage.warning('未找到相似社区 Skill')
     }
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? `社区 Skill 搜索失败：${error.message}` : '社区 Skill 搜索失败，请检查网络连接')
+  } catch {
+    ElMessage.error('社区搜索失败')
   } finally {
     searching.value = false
   }
 }
 
-function onDraftChange() {
-  communitySkills.value = []
-  selectedCommunityId.value = null
-  suggestion.value = ''
-  searchSimilarSkills()
+async function onCommunityChange(id: number) {
+  await loadCommunityDetail(id)
+  compareResult.value = null
 }
 
-function generateSuggestion() {
-  const draft = selectedDraft.value
-  const community = selectedCommunitySkill.value
-  if (!draft || !community) return
-
-  const tips = [
-    `参考 ${community.name} 的定位，把草稿开头改成更明确的适用场景和非适用场景。`,
-    '补充输入条件、前置假设和验收标准，避免 Skill 只描述流程而缺少判断边界。',
-    '打开社区仓库核对 README/SKILL.md，把可复用结构吸收到本地草稿中。',
-    '保留本地草稿里来自真实工作流的步骤，社区内容只作为结构和表达参考。',
-  ]
-
-  if (draftSections.value.length === 0) {
-    tips.unshift('本地草稿缺少清晰标题结构，建议增加 Purpose、When to use、Steps、Examples、Validation 等章节。')
-  }
-
-  suggestion.value = tips.join('\n')
-}
-
-function parseSampleTasks(raw: unknown) {
-  if (!raw) return []
-  if (Array.isArray(raw)) return raw.map(String)
+async function loadCommunityDetail(id: number) {
+  loadingCommunity.value = true
+  communitySkill.value = null
   try {
-    const parsed = JSON.parse(String(raw))
-    return Array.isArray(parsed) ? parsed.map(String) : []
+    const res = await fetchCommunitySkillDetail(id)
+    if (res.success && res.data) {
+      communitySkill.value = res.data
+    }
   } catch {
-    return []
+    ElMessage.error('获取社区 Skill 详情失败')
+  } finally {
+    loadingCommunity.value = false
   }
 }
 
-function splitSections(markdown: string) {
-  return markdown
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('#'))
-    .map((line) => line.replace(/^#+\s*/, ''))
+async function runCompare() {
+  const draft = selectedDraft.value
+  const community = communitySkill.value
+  if (!draft?.draft_body || !community?.skill_md_content) {
+    ElMessage.warning('请确保两端都有内容')
+    return
+  }
+  comparing.value = true
+  compareResult.value = null
+  try {
+    const res = await compareCommunitySkill({
+      draft_body: draft.draft_body,
+      draft_name: draft.name,
+      community_name: community.name,
+      community_content: community.skill_md_content,
+    })
+    if (res.success && res.data) {
+      compareResult.value = res.data
+    } else {
+      ElMessage.error(res.error || '对比分析失败')
+    }
+  } catch {
+    ElMessage.error('对比分析请求失败')
+  } finally {
+    comparing.value = false
+  }
+}
+
+async function adoptSuggestions() {
+  const draft = selectedDraft.value
+  if (!draft || !compareResult.value?.suggestions.length) return
+
+  const prefix = `\n\n## 社区参考改进 (来自社区对比)\n\n${compareResult.value.suggestions.map((s) => `- [ ] ${s}`).join('\n')}\n`
+  try {
+    const res = await updateWorkflowDraft(draft.id, {
+      draft_body: (draft.draft_body || '') + prefix,
+    })
+    if (res.success) {
+      // Update local draft cache
+      const found = drafts.value.find((d) => d.id === draft.id)
+      if (found) {
+        found.draft_body = (draft.draft_body || '') + prefix
+      }
+      ElMessage.success('建议已追加到草稿末尾，请在工作台人工审核')
+    } else {
+      ElMessage.error(res.error || '更新失败')
+    }
+  } catch {
+    ElMessage.error('更新草稿失败')
+  }
+}
+
+function verdictTag(verdict: string) {
+  const map: Record<string, { type: string; text: string }> = {
+    local_better: { type: 'success', text: '本地更优' },
+    community_better: { type: 'warning', text: '社区更优' },
+    complementary: { type: 'primary', text: '互补' },
+    neutral: { type: 'info', text: '持平' },
+  }
+  return map[verdict] || { type: 'info', text: verdict }
 }
 
 function formatStars(stars: number) {
-  if (stars >= 1000) return `${(stars / 1000).toFixed(1)}k`
-  return String(stars)
+  return stars >= 1000 ? `${(stars / 1000).toFixed(1)}k` : String(stars)
 }
 </script>
 
 <template>
   <section class="community-compare" v-loading="loadingDrafts">
-    <div class="compare-toolbar">
+    <div class="toolbar">
       <el-select
         v-model="selectedDraftId"
         placeholder="选择本地 Skill 草稿"
         filterable
-        style="min-width: 320px"
-        @change="onDraftChange"
+        style="min-width: 300px"
+        @change="searchSkills"
       >
-        <el-option
-          v-for="draft in drafts"
-          :key="draft.id"
-          :label="draft.name"
-          :value="draft.id"
-        />
+        <el-option v-for="draft in drafts" :key="draft.id" :label="`${draft.name} (评分 ${draft.skill_score})`" :value="draft.id" />
       </el-select>
-      <el-button type="primary" :loading="searching" :disabled="!selectedDraft" @click="searchSimilarSkills">
-        搜索真实社区 Skill
-      </el-button>
-      <span class="hint">基于草稿名称、描述和来源调用 GitHub Search API，不使用模拟数据。</span>
+      <span v-if="communitySkills.length" class="hint">匹配 {{ communitySkills.length }} 个社区 Skill</span>
     </div>
 
-    <el-empty v-if="!loadingDrafts && drafts.length === 0" description="暂无本地 Skill 草稿。请先运行进化管道生成真实草稿。" />
+    <el-empty v-if="!loadingDrafts && drafts.length === 0" description="暂无本地草稿。请先运行进化管道。" />
 
-    <div v-else class="compare-layout">
-      <section class="panel">
-        <div class="head">
-          <div>
-            <h2>本地草稿</h2>
-            <p>{{ selectedDraft?.description || '选择一个草稿开始对比' }}</p>
+    <template v-else>
+      <!-- Community Skill Picker -->
+      <div v-if="communitySkills.length > 1" class="community-selector">
+        <el-radio-group v-model="selectedCommunityId" @change="onCommunityChange" size="small">
+          <el-radio-button v-for="s in communitySkills" :key="s.id" :value="s.id">
+            {{ s.name }} · {{ formatStars(s.stars) }} ★
+          </el-radio-button>
+        </el-radio-group>
+      </div>
+
+      <!-- Content Panels -->
+      <div class="compare-layout">
+        <section class="panel">
+          <div class="head">
+            <h3>本地草稿</h3>
+            <span v-if="selectedDraft" class="chip green">评分 {{ selectedDraft.skill_score }}</span>
           </div>
-          <span v-if="selectedDraft" class="chip green">评分 {{ selectedDraft.skill_score }}</span>
-        </div>
-        <div class="body">
-          <pre class="codebox">{{ selectedDraft?.draft_body || '暂无草稿内容' }}</pre>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="head">
-          <div>
-            <h2>社区参考</h2>
-            <p>选择一个真实 GitHub 搜索结果进行基础差异对比。</p>
+          <div class="body">
+            <pre class="codebox">{{ selectedDraft?.draft_body || '暂无内容' }}</pre>
           </div>
-        </div>
-        <div class="body">
-          <el-select
-            v-model="selectedCommunityId"
-            placeholder="选择社区 Skill"
-            filterable
-            style="width: 100%"
-          >
-            <el-option
-              v-for="skill in communitySkills"
-              :key="skill.id"
-              :label="`${skill.name} · ${formatStars(skill.stars)} stars`"
-              :value="skill.id"
-            />
-          </el-select>
+        </section>
 
-          <article v-if="selectedCommunitySkill" class="community-card">
-            <h3>{{ selectedCommunitySkill.name }}</h3>
-            <p>{{ selectedCommunitySkill.description || '暂无描述' }}</p>
-            <div class="card-meta">
-              <span>{{ selectedCommunitySkill.repo }}</span>
-              <span>{{ formatStars(selectedCommunitySkill.stars) }} stars</span>
+        <section class="panel" v-loading="loadingCommunity">
+          <div class="head">
+            <h3>社区参考</h3>
+            <template v-if="communitySkill">
+              <span class="chip blue">{{ formatStars(communitySkill.stars) }} ★</span>
+              <a :href="communitySkill.repo_url" target="_blank" rel="noreferrer" style="font-size: 12px;">查看仓库</a>
+            </template>
+          </div>
+          <div class="body">
+            <pre v-if="communitySkill?.skill_md_content" class="codebox">{{ communitySkill.skill_md_content }}</pre>
+            <div v-else-if="communitySkill" class="empty-hint">
+              <p>{{ communitySkill.description || '暂无描述' }}</p>
+              <p class="muted">{{ communitySkill.repo }}</p>
+              <p class="muted">该社区 Skill 暂无 SKILL.md 内容缓存，请点击"查看仓库"获取原始内容。</p>
             </div>
-            <a :href="selectedCommunitySkill.repo_url" target="_blank" rel="noreferrer">
-              <el-button size="small">查看仓库</el-button>
-            </a>
-          </article>
+            <el-empty v-else description="选择社区 Skill 后显示内容" :image-size="60" />
+          </div>
+        </section>
+      </div>
 
-          <el-empty v-if="!searching && communitySkills.length === 0" description="暂无真实社区搜索结果" />
+      <!-- Compare Action -->
+      <div v-if="selectedDraft && communitySkill" class="action-bar">
+        <el-button type="primary" :loading="comparing" :disabled="!communitySkill.skill_md_content" @click="runCompare">
+          {{ compareResult ? '重新对比' : '对比分析' }}
+        </el-button>
+        <span class="hint">调用大模型进行结构化差异分析</span>
+      </div>
+
+      <!-- Results -->
+      <section v-if="compareResult" class="results">
+        <div v-if="compareResult.summary" class="summary-banner">
+          <strong>{{ compareResult.source === 'llm' ? 'AI 分析' : '结构分析' }}：</strong>{{ compareResult.summary }}
+        </div>
+
+        <table v-if="compareResult.dimensions.length" class="compare-table">
+          <thead>
+            <tr>
+              <th style="width: 120px">维度</th>
+              <th>本地草稿</th>
+              <th>社区 Skill</th>
+              <th style="width: 100px">判定</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="dim in compareResult.dimensions" :key="dim.label">
+              <td><b>{{ dim.label }}</b></td>
+              <td>{{ dim.local }}</td>
+              <td>{{ dim.community }}</td>
+              <td>
+                <el-tag :type="verdictTag(dim.verdict).type as any" size="small">
+                  {{ verdictTag(dim.verdict).text }}
+                </el-tag>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div v-if="compareResult.suggestions.length" class="suggestions-card">
+          <h4>改进建议</h4>
+          <ul>
+            <li v-for="(s, i) in compareResult.suggestions" :key="i">{{ s }}</li>
+          </ul>
+          <el-button type="success" size="small" @click="adoptSuggestions" style="margin-top: 10px;">
+            采纳建议，追加到本地草稿
+          </el-button>
         </div>
       </section>
-    </div>
-
-    <section v-if="comparisonRows.length > 0" class="panel compare-table">
-      <div class="head">
-        <div>
-          <h2>差异对比</h2>
-          <p>先做基础结构对比，详细内容需要打开社区仓库人工核对。</p>
-        </div>
-        <el-button @click="generateSuggestion">生成改进建议</el-button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>维度</th>
-            <th>本地草稿</th>
-            <th>社区 Skill</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in comparisonRows" :key="row.label">
-            <td><b>{{ row.label }}</b></td>
-            <td>{{ row.local }}</td>
-            <td>{{ row.community }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section v-if="suggestion" class="panel">
-      <div class="head">
-        <div>
-          <h2>改进建议</h2>
-          <p>用于人工审核，不会自动修改本地草稿。</p>
-        </div>
-      </div>
-      <div class="body">
-        <pre class="suggestion">{{ suggestion }}</pre>
-      </div>
-    </section>
+    </template>
   </section>
 </template>
 
 <style scoped>
 .community-compare {
   display: grid;
-  gap: 18px;
+  gap: 16px;
 }
 
-.compare-toolbar {
+.toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
 }
 
-.hint {
-  color: var(--muted);
-  font-size: 13px;
+.hint { color: var(--muted); font-size: 13px; }
+
+.community-selector {
+  padding: 8px 0;
+  overflow-x: auto;
 }
 
 .compare-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, .8fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
 }
 
-.codebox {
-  max-height: 520px;
-}
-
-.community-card {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 14px;
+.panel {
   background: #fff;
-}
-
-.community-card h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
-}
-
-.community-card p {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.card-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--muted);
-  font-size: 12px;
-  margin-bottom: 12px;
-}
-
-.compare-table {
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   overflow: hidden;
 }
 
-.suggestion {
-  margin: 0;
-  white-space: pre-wrap;
-  color: #334155;
-  font-family: inherit;
-  line-height: 1.65;
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
 }
 
-@media (max-width: 1080px) {
+.head h3 { margin: 0; font-size: 15px; }
+
+.codebox {
+  max-height: 560px;
+  overflow-y: auto;
+  padding: 14px;
+  margin: 0;
+  background: #f8f8f8;
+  font-size: 12px;
+  white-space: pre-wrap;
+  font-family: Consolas, monospace;
+  line-height: 1.55;
+}
+
+.empty-hint { padding: 30px 16px; text-align: center; }
+.empty-hint p { margin: 4px 0; }
+.empty-hint .muted { color: var(--muted); font-size: 13px; }
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.results {
+  display: grid;
+  gap: 14px;
+}
+
+.summary-banner {
+  padding: 12px 16px;
+  background: #eef2ff;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+.compare-table th, .compare-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.compare-table th {
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+.suggestions-card {
+  padding: 16px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+.suggestions-card h4 { margin: 0 0 10px; }
+.suggestions-card ul { margin: 0; padding-left: 20px; }
+.suggestions-card li { margin-bottom: 6px; font-size: 13px; line-height: 1.5; }
+
+@media (max-width: 960px) {
   .compare-layout {
     grid-template-columns: 1fr;
   }
