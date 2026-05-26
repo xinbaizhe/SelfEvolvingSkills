@@ -14,6 +14,8 @@ interface LogEntry {
 interface TopSkill {
   name: string
   usage_count: number
+  description?: string
+  category?: string
 }
 
 const summary = ref<SummaryStats | null>(null)

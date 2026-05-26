@@ -43,7 +43,7 @@ function getStatusType(status: string) {
       <div v-if="systemInfo">
         <el-row :gutter="20">
           <el-col :span="8"><strong>版本:</strong> {{ systemInfo.version }}</el-col>
-          <el-col :span="8"><strong>数据库大小:</strong> {{ (systemInfo.db_size_bytes / 1024).toFixed(1) }} KB</el-col>
+          <el-col :span="8"><strong>数据库大小:</strong> {{ ((systemInfo.db_size_bytes ?? 0) / 1024).toFixed(1) }} KB</el-col>
           <el-col :span="8"><strong>Python:</strong> {{ systemInfo.python?.split('\\n')[0] || '-' }}</el-col>
         </el-row>
       </div>
