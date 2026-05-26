@@ -2,6 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteWorkflowDraft, fetchWorkflows, updateWorkflowDraft, type SkillReviewFeedback, type Workflow } from '../api/workflows'
+import { getErrorMessage } from '../utils/error'
+import type { PaginatedResult } from '../api/skills'
 
 const drafts = ref<Workflow[]>([])
 const loading = ref(false)
@@ -55,7 +57,7 @@ async function load() {
   loading.value = true
   try {
     const res = await fetchWorkflows()
-    const items = Array.isArray(res.data) ? res.data : ((res.data as any)?.items || [])
+    const items = Array.isArray(res.data) ? res.data : ((res.data as unknown as PaginatedResult<Workflow>)?.items || [])
     drafts.value = items.filter((workflow: Workflow) => workflow.draft_body)
     const currentId = selectedDraft.value?.id
     selectedDraft.value = drafts.value.find((draft) => draft.id === currentId) || drafts.value[0] || null
@@ -125,8 +127,8 @@ async function saveDraft() {
     const index = drafts.value.findIndex((draft) => draft.id === res.data!.id)
     if (index >= 0) drafts.value[index] = res.data
     ElMessage.success('草稿已保存')
-  } catch (error: any) {
-    ElMessage.error(error?.message || '保存失败')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '保存失败'))
   } finally {
     saving.value = false
   }
@@ -147,8 +149,8 @@ async function removeDraft() {
     drafts.value = drafts.value.filter((draft) => draft.id !== id)
     selectedDraft.value = drafts.value[0] || null
     ElMessage.success('草稿已删除')
-  } catch (error: any) {
-    if (error !== 'cancel') ElMessage.error(error?.message || '删除失败')
+  } catch (e: unknown) {
+    if (e !== 'cancel') ElMessage.error(getErrorMessage(e, '删除失败'))
   } finally {
     deleting.value = false
   }

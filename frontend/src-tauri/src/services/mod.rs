@@ -1,4 +1,10 @@
-pub(crate) mod community_service;
-pub(crate) mod evolution_service;
+pub(crate) mod admin_service;
+pub(crate) mod agents_crud;
+pub(crate) mod community;
+pub(crate) mod evolution;
+pub(crate) mod import_export;
+pub(crate) mod scan;
+pub(crate) mod skills_crud;
 pub(crate) mod system_service;
-pub(crate) mod workflow_service;
+pub(crate) mod workflow_crud;
+pub(crate) mod workflow;

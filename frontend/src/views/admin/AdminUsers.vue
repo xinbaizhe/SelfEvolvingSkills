@@ -2,12 +2,13 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAdminStore } from '../../stores/useAdminStore'
+import type { AdminUser } from '../../types/admin'
 
 const store = useAdminStore()
 const dialogVisible = ref(false)
 const newUsername = ref('')
 const newPassword = ref('')
-const editingUser = ref<any>(null)
+const editingUser = ref<AdminUser | null>(null)
 
 onMounted(() => store.loadUsers())
 
@@ -20,7 +21,7 @@ function openCreate() {
 
 async function saveUser() {
   if (editingUser.value) {
-    const data: Record<string, any> = {}
+    const data: Record<string, unknown> = {}
     if (newPassword.value) data.password = newPassword.value
     await store.editUser(editingUser.value.id, data)
   } else {
@@ -34,12 +35,12 @@ async function saveUser() {
   dialogVisible.value = false
 }
 
-async function toggleActive(user: any) {
+async function toggleActive(user: AdminUser) {
   await store.editUser(user.id, { is_active: !user.is_active })
   ElMessage.success(user.is_active ? '已停用' : '已激活')
 }
 
-async function removeUser(user: any) {
+async function removeUser(user: AdminUser) {
   await store.removeUser(user.id)
   ElMessage.success('已删除')
 }

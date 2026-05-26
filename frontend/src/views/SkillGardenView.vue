@@ -10,6 +10,7 @@ import {
   type Workflow,
 } from '../api/workflows'
 import { emitSkillsChanged } from '../composables/useSkillEvents'
+import type { PaginatedResult } from '../api/skills'
 
 const gardenItems = ref<Workflow[]>([])
 const installTargets = ref<SkillInstallTarget[]>([])
@@ -48,7 +49,7 @@ async function load() {
       fetchWorkflows(),
       fetchSkillInstallTargets(),
     ])
-    const items = Array.isArray(workflowRes.data) ? workflowRes.data : ((workflowRes.data as any)?.items || [])
+    const items = Array.isArray(workflowRes.data) ? workflowRes.data : ((workflowRes.data as unknown as PaginatedResult<Workflow>)?.items || [])
     gardenItems.value = items.filter((workflow: Workflow) => workflow.status === 'installed' || workflow.can_generate_skill)
     installTargets.value = targetRes.success && targetRes.data ? targetRes.data : []
 

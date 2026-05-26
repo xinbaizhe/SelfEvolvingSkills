@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { evolveSkill, fetchSkills, fetchSkillDetail, importSkills, updateSkill, deleteSkill, type SkillItem, type SkillDetail } from '../api/skills'
+import { evolveSkill, fetchSkills, fetchSkillDetail, importSkills, deleteSkill, type SkillItem, type SkillDetail } from '../api/skills'
+import { getErrorMessage } from '../utils/error'
 import { exportSkills } from '../api/export'
 import { onSkillsChanged } from '../composables/useSkillEvents'
+import SkillDetailDialog from '../components/skill/SkillDetailDialog.vue'
+import SkillEditDialog from '../components/skill/SkillEditDialog.vue'
 
 const router = useRouter()
 const skills = ref<SkillItem[]>([])
@@ -25,9 +28,8 @@ const detailLoading = ref(false)
 const currentDetail = ref<SkillDetail | null>(null)
 
 const editVisible = ref(false)
-const editSaving = ref(false)
-const editForm = reactive({ name: '', description: '', category: '' })
-const editOriginalName = ref('')
+const editSkill = ref<SkillItem | null>(null)
+const editDialogRef = ref<InstanceType<typeof SkillEditDialog> | null>(null)
 
 const sources = [
   { id: 'hermes', name: 'Hermes', color: '#6d5bd0', icon: 'H' },
@@ -64,8 +66,8 @@ async function loadSkills(agentSource?: string) {
     const res = await fetchSkills(params)
     skills.value = res.data?.items || []
     total.value = res.data?.total || 0
-  } catch (error: any) {
-    ElMessage.error(error?.message || '加载 Skills 失败')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '加载 Skills 失败'))
   } finally {
     loading.value = false
   }
@@ -105,44 +107,25 @@ async function showDetail(name: string, sourceType?: string) {
   try {
     const res = await fetchSkillDetail(name, sourceType)
     if (res.success) currentDetail.value = res.data
-  } catch (error: any) {
-    ElMessage.error(error?.message || '加载 Skill 详情失败')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '加载 Skill 详情失败'))
   } finally {
     detailLoading.value = false
   }
 }
 
-// ---- Edit ----
 function openEdit(skill: SkillItem, event: MouseEvent) {
   event.stopPropagation()
-  editOriginalName.value = skill.name
-  editForm.name = skill.name
-  editForm.description = skill.description || ''
-  editForm.category = skill.category || ''
+  editSkill.value = skill
   editVisible.value = true
+  editDialogRef.value?.open(skill)
 }
 
-async function saveEdit() {
-  editSaving.value = true
-  try {
-    const res = await updateSkill(editOriginalName.value, {
-      name: editForm.name || undefined,
-      description: editForm.description || null,
-      category: editForm.category || null,
-    })
-    if (!res.success) throw new Error(res.error || '更新失败')
-    ElMessage.success('Skill 已更新')
-    editVisible.value = false
-    if (selectedSource.value) await loadSkills(selectedSource.value)
-    await loadSourceCounts()
-  } catch (error: any) {
-    ElMessage.error(error?.message || '更新失败')
-  } finally {
-    editSaving.value = false
-  }
+async function onEditSaved() {
+  if (selectedSource.value) await loadSkills(selectedSource.value)
+  await loadSourceCounts()
 }
 
-// ---- Delete ----
 async function confirmDelete(skill: SkillItem, event: MouseEvent) {
   event.stopPropagation()
   try {
@@ -161,14 +144,13 @@ async function confirmDelete(skill: SkillItem, event: MouseEvent) {
       await loadSkills(selectedSource.value)
     }
     await loadSourceCounts()
-  } catch (error: any) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error?.message || '删除失败')
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(getErrorMessage(e, '删除失败'))
     }
   }
 }
 
-// ---- Evolve ----
 async function evolveExistingSkill(skill: SkillItem, event: MouseEvent) {
   event.stopPropagation()
   evolving.value.add(skill.id)
@@ -177,8 +159,8 @@ async function evolveExistingSkill(skill: SkillItem, event: MouseEvent) {
     if (!res.success) throw new Error(res.error || '创建进化草稿失败')
     ElMessage.success('已创建手动进化草稿')
     router.push('/workbench?tab=drafts')
-  } catch (error: any) {
-    ElMessage.error(error?.message || '创建进化草稿失败')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '创建进化草稿失败'))
   } finally {
     evolving.value.delete(skill.id)
   }
@@ -201,8 +183,8 @@ async function exportCurrentSkills(format: 'json' | 'csv') {
     const data = await exportSkills(format, selectedSource.value)
     downloadBlob(data.content, data.filename, data.content_type)
     ElMessage.success(`${selectedSourceName.value} Skills 导出成功`)
-  } catch (error: any) {
-    ElMessage.error(error?.message || '导出失败，请检查本地数据')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '导出失败，请检查本地数据'))
   } finally {
     exporting.value = false
   }
@@ -231,8 +213,8 @@ async function onImportFile(event: Event) {
     ElMessage.success(`已导入 ${res.data.count} 个 Skill 到 ${res.data.agent_name}${skipped ? `，跳过 ${skipped} 个文件` : ''}`)
     await loadSkills(selectedSource.value)
     await loadSourceCounts()
-  } catch (error: any) {
-    ElMessage.error(error?.message || '导入失败，请确认文件为 SKILL.md、skills.json 或 .zip')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '导入失败，请确认文件为 SKILL.md、skills.json 或 .zip'))
   } finally {
     importing.value = false
   }
@@ -248,11 +230,6 @@ function fileToBase64(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(file)
   })
-}
-
-function formatSize(bytes: number) {
-  if (bytes < 1024) return bytes + ' B'
-  return (bytes / 1024).toFixed(1) + ' KB'
 }
 
 function onSearch() {
@@ -371,46 +348,8 @@ onUnmounted(() => {
       </template>
     </template>
 
-    <!-- Detail Dialog -->
-    <el-dialog v-model="detailVisible" :title="currentDetail?.name" width="800px" top="5vh">
-      <div v-if="detailLoading" class="empty-state">加载中...</div>
-      <div v-else-if="currentDetail">
-        <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="名称">{{ currentDetail.name }}</el-descriptions-item>
-          <el-descriptions-item label="分类">{{ currentDetail.category }}</el-descriptions-item>
-          <el-descriptions-item label="来源">{{ currentDetail.source_type }}</el-descriptions-item>
-          <el-descriptions-item label="原始来源">{{ currentDetail.origin || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="插件">{{ currentDetail.plugin_name || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="使用次数">{{ currentDetail.usage_count }}</el-descriptions-item>
-          <el-descriptions-item label="文件大小">{{ formatSize(currentDetail.file_size) }}</el-descriptions-item>
-          <el-descriptions-item label="行数">{{ currentDetail.line_count }}</el-descriptions-item>
-          <el-descriptions-item label="文件路径" :span="2">{{ currentDetail.file_path }}</el-descriptions-item>
-        </el-descriptions>
-        <div class="detail-section">
-          <h4>Markdown 内容预览</h4>
-          <div class="code-preview">{{ currentDetail.body_text || '无内容' }}</div>
-        </div>
-      </div>
-    </el-dialog>
-
-    <!-- Edit Dialog -->
-    <el-dialog v-model="editVisible" title="编辑 Skill" width="520px" top="10vh" @closed="editOriginalName = ''">
-      <el-form label-position="top">
-        <el-form-item label="名称">
-          <el-input v-model="editForm.name" placeholder="Skill 名称" />
-        </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="editForm.description" type="textarea" :rows="3" placeholder="简要描述" />
-        </el-form-item>
-        <el-form-item label="分类">
-          <el-input v-model="editForm.category" placeholder="如 frontend、backend、devops" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
-      </template>
-    </el-dialog>
+    <SkillDetailDialog v-model:visible="detailVisible" :loading="detailLoading" :detail="currentDetail" />
+    <SkillEditDialog ref="editDialogRef" v-model:visible="editVisible" :skill="editSkill" @saved="onEditSaved" />
   </section>
 </template>
 
@@ -482,34 +421,56 @@ onUnmounted(() => {
 .skill-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
 }
 .source-card {
   position: relative;
   cursor: pointer;
-  transition: all 0.2s;
-  border: 2px solid transparent;
-  background: #fff;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  min-height: 152px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff, #fbfdff);
+  border-radius: 10px;
+  padding: 20px 20px 18px;
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+.source-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, #14b8a6, #0891b2);
 }
 .source-card:hover {
-  border-color: var(--blue);
+  border-color: rgba(13, 148, 136, 0.32);
   transform: translateY(-2px);
-  box-shadow: 0 10px 28px rgba(20,115,230,.12);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.1);
 }
 .source-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
   color: #fff;
   display: grid;
   place-items: center;
   font-weight: 700;
   font-size: 15px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
+}
+.source-card h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
+}
+.source-card p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .item-desc {
   color: #909399;
@@ -521,17 +482,6 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 .tag-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.detail-section { margin-top: 16px; }
-.code-preview {
-  max-height: 400px;
-  overflow-y: auto;
-  background: #f8f8f8;
-  padding: 12px;
-  border-radius: 4px;
-  font-size: 13px;
-  white-space: pre-wrap;
-  font-family: Consolas, monospace;
-}
 .pagination-row {
   display: flex;
   justify-content: center;
@@ -539,20 +489,12 @@ onUnmounted(() => {
 }
 
 @media (max-width: 960px) {
-  .result-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .cards {
-    grid-template-columns: repeat(2, 1fr);
-  }
+  .result-grid { grid-template-columns: repeat(2, 1fr); }
+  .cards { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 640px) {
-  .result-grid {
-    grid-template-columns: 1fr;
-  }
-  .cards {
-    grid-template-columns: 1fr;
-  }
+  .result-grid { grid-template-columns: 1fr; }
+  .cards { grid-template-columns: 1fr; }
 }
 </style>

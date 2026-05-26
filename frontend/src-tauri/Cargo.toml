@@ -1,13 +1,13 @@
 [package]
 name = "self-evolving-skills"
-version = "1.0.6"
+version = "1.0.7"
 description = "Self Evolving Skills Tauri desktop app"
 authors = ["SelfEvolvingSkills"]
 edition = "2021"
 
 [package.metadata]
 name = "self-evolving-skills"
-version = "1.0.6"
+version = "1.0.7"
 
 [lib]
 name = "self_evolving_skills_lib"
@@ -21,6 +21,7 @@ anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
+log = "0.4"
 notify = "7"
 rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
 serde = { version = "1", features = ["derive"] }
@@ -38,3 +39,6 @@ sysinfo = "0.32"
 walkdir = "2"
 yaml-rust2 = "0.9"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"

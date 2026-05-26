@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { searchCommunitySkills, type CommunitySkill } from '../api/community'
+import { searchCommunitySkills, type CommunitySkill, type PaginatedResult } from '../api/community'
+import { getErrorMessage } from '../utils/error'
 
 const query = ref('')
 const skills = ref<CommunitySkill[]>([])
@@ -19,15 +20,15 @@ async function search(showErrors = true) {
   try {
     const res = await searchCommunitySkills(query.value || 'AI coding agent skills', page.value, perPage)
     if (res.success) {
-      skills.value = (res.data as any).items ?? []
-      total.value = (res.data as any).total ?? 0
+      skills.value = (res.data as PaginatedResult<CommunitySkill>).items ?? []
+      total.value = (res.data as PaginatedResult<CommunitySkill>).total ?? 0
       lastUpdatedAt.value = formatDateTime(new Date())
     } else if (showErrors) {
-      ElMessage.error((res as any).error || '社区 Skills 推荐失败')
+      ElMessage.error(res.error || '社区 Skills 推荐失败')
     }
-  } catch (error: any) {
+  } catch (e: unknown) {
     if (showErrors) {
-      ElMessage.error(error.message ? `社区 Skills 推荐失败：${error.message}` : '社区 Skills 推荐失败，请检查网络或大模型配置')
+      ElMessage.error(getErrorMessage(e, '社区 Skills 推荐失败，请检查网络或大模型配置'))
     }
   } finally {
     loading.value = false

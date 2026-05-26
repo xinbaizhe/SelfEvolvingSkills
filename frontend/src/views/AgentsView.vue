@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAgents, fetchAgentDetail, updateAgent, deleteAgent, evolveAgent, type Agent, type AgentDetail } from '../api/agents'
+import { getErrorMessage } from '../utils/error'
 
 const router = useRouter()
 const agents = ref<Agent[]>([])
@@ -133,8 +134,8 @@ async function saveEdit() {
     editVisible.value = false
     if (selectedSource.value) await loadAgents(selectedSource.value)
     await loadSourceCounts()
-  } catch (error: any) {
-    ElMessage.error(error?.message || '更新失败')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '更新失败'))
   } finally {
     editSaving.value = false
   }
@@ -154,9 +155,9 @@ async function confirmDelete(agent: Agent, event: MouseEvent) {
     ElMessage.success(`已删除 ${res.data?.name || agent.name}`)
     if (selectedSource.value) await loadAgents(selectedSource.value)
     await loadSourceCounts()
-  } catch (error: any) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(error?.message || '删除失败')
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(getErrorMessage(e, '删除失败'))
     }
   }
 }
@@ -170,8 +171,8 @@ async function evolveExistingAgent(agent: Agent, event: MouseEvent) {
     if (!res.success) throw new Error(res.error || '创建进化草稿失败')
     ElMessage.success('已创建 Agent 进化草稿')
     router.push('/workbench?tab=drafts')
-  } catch (error: any) {
-    ElMessage.error(error?.message || '创建进化草稿失败')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '创建进化草稿失败'))
   } finally {
     evolving.value.delete(agent.id)
   }
@@ -369,33 +370,55 @@ onMounted(loadSourceCounts)
 .source-card {
   position: relative;
   cursor: pointer;
-  transition: all 0.2s;
-  border: 2px solid transparent;
-  background: #fff;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  min-height: 152px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff, #fbfdff);
+  border-radius: 10px;
+  padding: 20px 20px 18px;
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+.source-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, #14b8a6, #0891b2);
 }
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
 }
 .source-card:hover {
-  border-color: var(--blue);
+  border-color: rgba(13, 148, 136, 0.32);
   transform: translateY(-2px);
-  box-shadow: 0 10px 28px rgba(20,115,230,.12);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.1);
 }
 .source-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
   color: #fff;
   display: grid;
   place-items: center;
   font-weight: 700;
   font-size: 15px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
+}
+.source-card h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
+}
+.source-card p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .agent-title {
   display: flex;

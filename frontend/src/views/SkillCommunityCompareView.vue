@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { searchCommunitySkills, fetchCommunitySkillDetail, compareCommunitySkill, type CommunitySkill, type CompareResult } from '../api/community'
 import { fetchWorkflows, updateWorkflowDraft, type Workflow } from '../api/workflows'
+import type { PaginatedResult } from '../api/skills'
 
 const drafts = ref<Workflow[]>([])
 const selectedDraftId = ref<number | null>(null)
@@ -16,6 +17,11 @@ const comparing = ref(false)
 const compareResult = ref<CompareResult | null>(null)
 
 const selectedDraft = computed(() => drafts.value.find((d) => d.id === selectedDraftId.value) || null)
+const communityContentAvailable = computed(() => {
+  const s = communitySkill.value
+  if (!s) return false
+  return !!(s.skill_md_content || s.readme_excerpt || s.description)
+})
 
 onMounted(loadDrafts)
 
@@ -23,7 +29,7 @@ async function loadDrafts() {
   loadingDrafts.value = true
   try {
     const res = await fetchWorkflows()
-    const items = Array.isArray(res.data) ? res.data : ((res.data as any)?.items || [])
+    const items = Array.isArray(res.data) ? res.data : ((res.data as unknown as PaginatedResult<Workflow>)?.items || [])
     drafts.value = items.filter((w: Workflow) => w.can_generate_skill)
     selectedDraftId.value = drafts.value[0]?.id ?? null
   } finally {
@@ -83,7 +89,11 @@ async function loadCommunityDetail(id: number) {
 async function runCompare() {
   const draft = selectedDraft.value
   const community = communitySkill.value
-  if (!draft?.draft_body || !community?.skill_md_content) {
+  const communityContent = community?.skill_md_content
+    || community?.readme_excerpt
+    || community?.description
+    || ''
+  if (!draft?.draft_body || !community || !communityContent) {
     ElMessage.warning('请确保两端都有内容')
     return
   }
@@ -94,7 +104,7 @@ async function runCompare() {
       draft_body: draft.draft_body,
       draft_name: draft.name,
       community_name: community.name,
-      community_content: community.skill_md_content,
+      community_content: communityContent,
     })
     if (res.success && res.data) {
       compareResult.value = res.data
@@ -199,7 +209,7 @@ function formatStars(stars: number) {
             <div v-else-if="communitySkill" class="empty-hint">
               <p>{{ communitySkill.description || '暂无描述' }}</p>
               <p class="muted">{{ communitySkill.repo }}</p>
-              <p class="muted">该社区 Skill 暂无 SKILL.md 内容缓存，请点击"查看仓库"获取原始内容。</p>
+              <p class="muted">该社区 Skill 暂无 SKILL.md 内容缓存，但可以用描述和 README 摘要进行对比分析。</p>
             </div>
             <el-empty v-else description="选择社区 Skill 后显示内容" :image-size="60" />
           </div>
@@ -208,7 +218,7 @@ function formatStars(stars: number) {
 
       <!-- Compare Action -->
       <div v-if="selectedDraft && communitySkill" class="action-bar">
-        <el-button type="primary" :loading="comparing" :disabled="!communitySkill.skill_md_content" @click="runCompare">
+        <el-button type="primary" :loading="comparing" :disabled="!communityContentAvailable" @click="runCompare">
           {{ compareResult ? '重新对比' : '对比分析' }}
         </el-button>
         <span class="hint">调用大模型进行结构化差异分析</span>

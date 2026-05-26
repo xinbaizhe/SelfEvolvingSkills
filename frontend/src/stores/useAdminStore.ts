@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { login as apiLogin, fetchUsers, createUser, updateUser, deleteUser } from '../api/admin'
+import type { AdminUser } from '../types/admin'
 
 export const useAdminStore = defineStore('admin', () => {
   const authenticated = ref(false)
   const username = ref('')
-  const users = ref<any[]>([])
+  const users = ref<AdminUser[]>([])
 
   async function login(username_: string, password: string) {
     const res = await apiLogin(username_, password)
@@ -24,7 +25,7 @@ export const useAdminStore = defineStore('admin', () => {
   async function loadUsers() {
     const res = await fetchUsers()
     if (res.success && res.data) {
-      users.value = res.data as any[]
+      users.value = res.data as AdminUser[]
     }
   }
 
@@ -34,7 +35,7 @@ export const useAdminStore = defineStore('admin', () => {
     return res
   }
 
-  async function editUser(id: number, data: Record<string, any>) {
+  async function editUser(id: number, data: Record<string, unknown>) {
     const res = await updateUser(id, data)
     if (res.success) await loadUsers()
     return res

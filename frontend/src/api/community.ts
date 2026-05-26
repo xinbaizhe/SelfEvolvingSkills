@@ -19,6 +19,7 @@ export interface CommunitySkill {
   license?: string | null
   pushed_at?: string | null
   matched_file?: string | null
+  readme_excerpt?: string | null
   recommendation_reason?: string | null
 }
 

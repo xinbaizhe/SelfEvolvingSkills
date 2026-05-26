@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { fetchSummary, fetchTopSkills, type SummaryStats } from '../api/stats'
 import { fetchSources, type SourceConfig } from '../api/scan'
 import { fetchWorkflows, type Workflow } from '../api/workflows'
+import type { PaginatedResult } from '../api/skills'
 
 interface LogEntry {
   time: string
@@ -10,10 +11,15 @@ interface LogEntry {
   body: string
 }
 
+interface TopSkill {
+  name: string
+  usage_count: number
+}
+
 const summary = ref<SummaryStats | null>(null)
 const sources = ref<SourceConfig[]>([])
 const workflows = ref<Workflow[]>([])
-const topSkills = ref<any[]>([])
+const topSkills = ref<TopSkill[]>([])
 const logs = ref<LogEntry[]>([])
 const loading = ref(false)
 const loadError = ref('')
@@ -50,9 +56,9 @@ async function load() {
     if (summaryRes.success) summary.value = summaryRes.data
     if (sourceRes.success && sourceRes.data) sources.value = sourceRes.data
     if (workflowRes.success && workflowRes.data) {
-      workflows.value = Array.isArray(workflowRes.data) ? workflowRes.data : ((workflowRes.data as any)?.items || [])
+      workflows.value = Array.isArray(workflowRes.data) ? workflowRes.data : ((workflowRes.data as PaginatedResult<Workflow>)?.items || [])
     }
-    if (skillsRes.success && skillsRes.data) topSkills.value = skillsRes.data
+    if (skillsRes.success && skillsRes.data) topSkills.value = skillsRes.data as TopSkill[]
 
     addLog('刷新完成', `发现 ${availableAgentCount.value} 个本地 Agent，${candidateWorkflows.value.length} 个可生成 Skill 的工作流。`)
   } catch (error) {

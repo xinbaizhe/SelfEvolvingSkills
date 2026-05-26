@@ -1,11 +1,21 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { fetchSummary, fetchTopSkills, fetchSkillsByCategory, fetchSessions } from '../api/stats'
+import { fetchSummary, fetchTopSkills, fetchSkillsByCategory, type SummaryStats } from '../api/stats'
+
+interface TopSkill {
+  name: string
+  usage_count: number
+}
+
+interface CategoryCount {
+  category: string
+  count: number
+}
 
 export const useStatsStore = defineStore('stats', () => {
-  const summary = ref<any>(null)
-  const topSkills = ref<any[]>([])
-  const categoryData = ref<any[]>([])
+  const summary = ref<SummaryStats | null>(null)
+  const topSkills = ref<TopSkill[]>([])
+  const categoryData = ref<CategoryCount[]>([])
   const loading = ref(false)
 
   async function loadSummary() {
@@ -21,14 +31,14 @@ export const useStatsStore = defineStore('stats', () => {
   async function loadTopSkills(limit = 20) {
     const res = await fetchTopSkills(limit)
     if (res.success && res.data) {
-      topSkills.value = res.data as any[]
+      topSkills.value = res.data as TopSkill[]
     }
   }
 
   async function loadCategoryData() {
     const res = await fetchSkillsByCategory()
     if (res.success && res.data) {
-      categoryData.value = res.data as any[]
+      categoryData.value = res.data as CategoryCount[]
     }
   }
 

@@ -4,11 +4,22 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { check } from '@tauri-apps/plugin-updater'
 import { useRouter } from 'vue-router'
 import { useScanStore } from '../../stores/useScanStore'
-import { fetchLlmConfig, fetchSystemInfo, testLlmConnection } from '../../api/admin'
-import { searchCommunitySkills } from '../../api/community'
+import { fetchLlmConfig, fetchSystemInfo } from '../../api/admin'
 import { detectSources, fetchSources, type SourceConfig } from '../../api/scan'
-import { fetchSessionDetail, fetchSessions, fetchSummary, type SummaryStats } from '../../api/stats'
-import { getDatabaseInfo, getSystemMonitor, clearLogs, initializeDatabase, type DatabaseInfo, type SystemMonitor } from '../../api/system'
+import { fetchSummary, type SummaryStats } from '../../api/stats'
+import {
+  getDatabaseInfo,
+  getSystemMonitor,
+  clearLogs,
+  initializeDatabase,
+  type DatabaseInfo,
+  type SystemMonitor,
+} from '../../api/system'
+import { formatBytes, formatUptime } from '../../utils/format'
+import AdminDiskCleanupPanel from './AdminDiskCleanupPanel.vue'
+import AdminSessionsPanel from './AdminSessionsPanel.vue'
+import AdminMaintenanceSection from './AdminMaintenanceSection.vue'
+import AdminServicePanel from './AdminServicePanel.vue'
 
 interface SystemInfo {
   runtime: string
@@ -36,20 +47,15 @@ const monitor = ref<SystemMonitor | null>(null)
 const dbInfo = ref<DatabaseInfo | null>(null)
 const sources = ref<SourceConfig[]>([])
 const llmConfig = ref<LlmConfig | null>(null)
-const llmTesting = ref(false)
-const githubTesting = ref(false)
 const updateChecking = ref(false)
 const detecting = ref(false)
-const sessions = ref<any[]>([])
-const sessionsTotal = ref(0)
-const sessionsPage = ref(1)
-const sessionsLoading = ref(false)
-const sessionsDrawerVisible = ref(false)
-const sessionDetailVisible = ref(false)
-const currentSession = ref<any>(null)
-const sessionDetailLoading = ref(false)
 const clearing = ref(false)
 const initializing = ref(false)
+const diskUsagePanelVisible = ref(false)
+const diskUsageScanRequest = ref(0)
+const diskUsageDetailsRequest = ref(0)
+const sessionsPanelVisible = ref(false)
+const sessionsOpenRequest = ref(0)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const tableNameLabels: Record<string, string> = {
@@ -187,41 +193,19 @@ async function runDetectSources() {
   }
 }
 
-async function testLlmService() {
-  await refreshLlmConfig()
-  if (!llmConfig.value?.base_url || !llmConfig.value?.model) {
-    ElMessage.warning('请先配置 LLM Base URL 和模型')
-    openResourceConfig()
-    return
-  }
-  if (!llmConfig.value.has_api_key && !llmConfig.value.api_key_configured) {
-    ElMessage.warning('请先配置 LLM API Key')
-    openResourceConfig()
-    return
-  }
-  llmTesting.value = true
-  try {
-    const res = await testLlmConnection({
-      llm_enabled: !!llmConfig.value.enabled,
-      llm_provider: llmConfig.value.provider || 'custom',
-      llm_base_url: llmConfig.value.base_url,
-      llm_model: llmConfig.value.model,
-      llm_api_key: '',
-    })
-    if (res.success) {
-      ElMessage.success(res.data?.message || 'LLM 连接正常')
-    } else {
-      ElMessage.error(res.error || 'LLM 连接失败')
-    }
-  } finally {
-    llmTesting.value = false
-  }
-}
-
 function openResourceConfig() {
   router.push({ name: 'resourcesConfig', query: { tab: 'model' } }).catch(() => {
     window.location.hash = '#/resources?tab=model'
   })
+}
+
+function openDiskUsagePanel() {
+  diskUsageDetailsRequest.value += 1
+}
+
+function startDiskUsageScan() {
+  diskUsagePanelVisible.value = true
+  diskUsageScanRequest.value += 1
 }
 
 function handleHealthCardClick(key: string) {
@@ -231,21 +215,8 @@ function handleHealthCardClick(key: string) {
       ElMessage.warning('会话为空，请先执行扫描')
       return
     }
-    router.push('/conversations')
-  }
-}
-
-async function testGithubService() {
-  githubTesting.value = true
-  try {
-    const res = await searchCommunitySkills('skill', 1, 1)
-    if (res.success) {
-      ElMessage.success('GitHub 社区检索可访问')
-    } else {
-      ElMessage.error(res.error || 'GitHub 社区检索失败')
-    }
-  } finally {
-    githubTesting.value = false
+    sessionsPanelVisible.value = true
+    sessionsOpenRequest.value += 1
   }
 }
 
@@ -268,8 +239,8 @@ async function checkForAppUpdate() {
       await update.downloadAndInstall()
       ElMessage.success('更新已安装，重启应用后生效')
     }
-  } catch (error: any) {
-    const msg = error?.message || String(error)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
     if (msg.includes('signature') || msg.includes('verify')) {
       ElMessage.error('签名验证失败，请确认更新签名私钥与 App 内置公钥匹配')
     } else if (msg.includes('network') || msg.includes('timeout') || msg.includes('fetch')) {
@@ -284,68 +255,12 @@ async function checkForAppUpdate() {
   }
 }
 
-async function openSessionsDrawer() {
-  sessionsDrawerVisible.value = true
-  sessionsPage.value = 1
-  await loadSessions()
-}
-
-async function loadSessions() {
-  sessionsLoading.value = true
-  try {
-    const res = await fetchSessions({ page: sessionsPage.value, size: 20 })
-    if (res.success && res.data) {
-      sessions.value = (res.data as any).items ?? []
-      sessionsTotal.value = (res.data as any).total ?? 0
-    } else {
-      ElMessage.error('会话列表加载失败')
-    }
-  } finally {
-    sessionsLoading.value = false
-  }
-}
-
-async function showSessionDetail(sessionId: string) {
-  sessionDetailVisible.value = true
-  sessionDetailLoading.value = true
-  currentSession.value = null
-  try {
-    const res = await fetchSessionDetail(sessionId)
-    if (res.success) {
-      currentSession.value = res.data
-    } else {
-      ElMessage.error('会话详情加载失败')
-    }
-  } finally {
-    sessionDetailLoading.value = false
-  }
-}
-
 function cpuPercent() {
   return Number.parseFloat(monitor.value?.cpu_usage_percent ?? '0')
 }
 
 function memoryPercent() {
   return Number.parseFloat(monitor.value?.memory.usage_percent ?? '0')
-}
-
-function formatBytes(bytes: number | null | undefined) {
-  const value = Number(bytes ?? 0)
-  if (!value) return '-'
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / 1024 / 1024).toFixed(2)} MB`
-}
-
-function formatUptime(seconds: number | null | undefined) {
-  const total = Number(seconds ?? 0)
-  if (!total) return '-'
-  const days = Math.floor(total / 86400)
-  const hours = Math.floor((total % 86400) / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  if (days > 0) return `${days} 天 ${hours} 小时`
-  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`
-  return `${minutes} 分钟`
 }
 
 function getStatusType(status: string) {
@@ -364,15 +279,6 @@ function getStatusLabel(status: string) {
     cancelled: '已取消',
   }
   return labels[status] || status
-}
-
-function getScanTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    full: '全量扫描',
-    incremental: '增量扫描',
-    manual: '手动扫描',
-  }
-  return labels[type] || type
 }
 
 async function handleClearLogs() {
@@ -461,12 +367,22 @@ async function handleInitializeDatabase() {
           </div>
         </el-col>
         <el-col :xs="24" :sm="12" :lg="6">
-          <div class="metric-card">
+          <div
+            class="metric-card metric-card--clickable"
+            role="button"
+            tabindex="0"
+            @click="openDiskUsagePanel"
+            @keydown.enter="openDiskUsagePanel"
+          >
             <div class="metric-label">磁盘</div>
             <div class="metric-value">{{ monitor?.disks[0]?.usage_pct ?? '--' }}%</div>
             <el-progress v-if="monitor?.disks[0]" :percentage="monitor.disks[0].usage_pct" :stroke-width="6" :show-text="false" />
             <div class="metric-sub" v-if="monitor?.disks[0]">{{ monitor.disks[0].available_gb }} GB 可用 / {{ monitor.disks[0].total_gb }} GB</div>
             <div class="metric-sub" v-else>未读取到磁盘信息</div>
+            <div class="metric-action">点击查看空间明细</div>
+            <el-button class="metric-inline-button" size="small" type="primary" text @click.stop="startDiskUsageScan">
+              分析磁盘
+            </el-button>
           </div>
         </el-col>
         <el-col :xs="24" :sm="12" :lg="6">
@@ -528,35 +444,7 @@ async function handleInitializeDatabase() {
       </el-table>
     </section>
 
-    <section class="section">
-      <div class="section-head">
-        <h3>服务连通性</h3>
-        <span>检测社区检索和大模型优化能力</span>
-      </div>
-      <el-row :gutter="16">
-        <el-col :xs="24" :md="12">
-          <div class="service-card">
-            <div>
-              <h4>GitHub 社区检索</h4>
-              <p>用于搜索社区 Skill 参考，网络失败时本地扫描和聚类仍可运行。</p>
-            </div>
-            <el-button :loading="githubTesting" @click="testGithubService">测试 GitHub</el-button>
-          </div>
-        </el-col>
-        <el-col :xs="24" :md="12">
-          <div class="service-card">
-            <div>
-              <h4>LLM 模型服务</h4>
-              <p>{{ llmConfig?.enabled ? '已启用' : '未启用' }} · {{ llmConfig?.provider || '未配置' }} · {{ llmConfig?.model || '未选择模型' }}</p>
-            </div>
-            <div class="service-actions">
-              <el-button :loading="llmTesting" @click="testLlmService">测试 LLM</el-button>
-              <el-button link type="primary" @click="openResourceConfig">配置</el-button>
-            </div>
-          </div>
-        </el-col>
-      </el-row>
-    </section>
+    <AdminServicePanel :llm-config="llmConfig" @config="openResourceConfig" />
 
     <section class="section">
       <div class="section-head">
@@ -569,120 +457,28 @@ async function handleInitializeDatabase() {
           检查更新
         </el-button>
       </div>
-      <div class="maintenance-grid">
-        <div class="maintenance-item">
-          <h4>扫描本机 Agent 数据</h4>
-          <p>扫描 Skills、Agents、会话和记忆数据，并更新最近扫描记录。</p>
-          <el-button type="primary" :loading="scanStore.scanning" @click="runScan">{{ scanStore.scanning ? '扫描中...' : '开始扫描' }}</el-button>
-        </div>
-        <div class="maintenance-item">
-          <h4>清理日志与历史</h4>
-          <p>保留业务数据，只清理扫描历史、进化记录、聚类和使用记录。</p>
-          <el-button type="warning" :loading="clearing" @click="handleClearLogs">清理日志与历史</el-button>
-        </div>
-        <div class="maintenance-item maintenance-item--danger">
-          <h4>初始化数据库</h4>
-          <p>清空 Skills、Agents、会话、社区缓存和历史记录，仅保留基础配置。</p>
-          <el-button type="danger" :loading="initializing" @click="handleInitializeDatabase">初始化数据库</el-button>
-        </div>
-      </div>
-
-      <el-card class="history-card" shadow="never">
-        <template #header>最近扫描历史</template>
-        <el-table :data="scanStore.history" stripe max-height="360" empty-text="暂无扫描记录">
-          <el-table-column prop="id" label="ID" width="60" />
-          <el-table-column prop="scan_type" label="类型" width="100">
-            <template #default="{ row }">{{ getScanTypeLabel(row.scan_type) }}</template>
-          </el-table-column>
-          <el-table-column prop="status" label="状态" width="110">
-            <template #default="{ row }">
-              <el-tag :type="getStatusType(row.status) as any">{{ getStatusLabel(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="skills_found" label="Skills" width="90" />
-          <el-table-column prop="agents_found" label="Agents" width="90" />
-          <el-table-column prop="sessions_found" label="会话" width="90" />
-          <el-table-column prop="conversations_analyzed" label="分析数" width="90" />
-          <el-table-column prop="memories_found" label="记忆" width="80" />
-          <el-table-column prop="started_at" label="开始时间" width="170" />
-          <el-table-column prop="completed_at" label="完成时间" width="170" />
-          <el-table-column prop="errors" label="错误" min-width="200">
-            <template #default="{ row }">
-              <span v-if="row.errors" class="error-text">{{ row.errors }}</span>
-              <span v-else class="ok-text">无</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-card>
-
-      <el-card class="history-card" shadow="never" v-if="dbInfo">
-        <template #header>
-          <div class="db-card-header">
-            <span>数据库表统计</span>
-            <span class="db-card-sub">共 {{ dbTables.length }} 张表 · {{ dbTotalRows.toLocaleString() }} 条记录</span>
-          </div>
-        </template>
-        <div class="db-path">{{ dbInfo.db_path }}</div>
-        <el-table :data="dbTables" stripe size="small" class="db-table">
-          <el-table-column prop="label" label="表名" min-width="160" />
-          <el-table-column prop="name" label="英文表名" min-width="220">
-            <template #default="{ row }">
-              <code class="db-table-code">{{ row.name }}</code>
-            </template>
-          </el-table-column>
-          <el-table-column prop="count" label="记录数" width="140" sortable align="right">
-            <template #default="{ row }">
-              <span class="db-table-count">{{ row.count.toLocaleString() }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-card>
+      <AdminMaintenanceSection
+        :scan-store="scanStore"
+        :clearing="clearing"
+        :initializing="initializing"
+        :update-checking="updateChecking"
+        :db-info="dbInfo"
+        :db-tables="dbTables"
+        :db-total-rows="dbTotalRows"
+        @scan="runScan"
+        @clear-logs="handleClearLogs"
+        @init-db="handleInitializeDatabase"
+        @check-update="checkForAppUpdate"
+      />
     </section>
 
-    <el-drawer v-model="sessionsDrawerVisible" title="会话详情" size="72%">
-      <el-table :data="sessions" v-loading="sessionsLoading" stripe height="calc(100vh - 190px)" empty-text="暂无会话数据，请先执行扫描">
-        <el-table-column prop="agent_source" label="Agent" width="120" />
-        <el-table-column prop="project_name" label="项目" width="180" show-overflow-tooltip />
-        <el-table-column prop="first_prompt" label="首条请求" min-width="260" show-overflow-tooltip />
-        <el-table-column prop="message_count" label="消息数" width="90" />
-        <el-table-column prop="jsonl_size" label="文件大小" width="100">
-          <template #default="{ row }">{{ formatBytes(row.jsonl_size) }}</template>
-        </el-table-column>
-        <el-table-column prop="started_at" label="开始时间" width="170" />
-        <el-table-column label="操作" width="90" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="showSessionDetail(row.session_id)">查看</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="drawer-pagination">
-        <el-pagination v-model:current-page="sessionsPage" :total="sessionsTotal" :page-size="20" layout="total, prev, pager, next" @current-change="loadSessions" />
-      </div>
-    </el-drawer>
-
-    <el-dialog v-model="sessionDetailVisible" title="会话记录" width="760px" append-to-body destroy-on-close>
-      <div v-loading="sessionDetailLoading">
-        <el-descriptions v-if="currentSession" :column="1" border size="small">
-          <el-descriptions-item label="会话 ID">{{ currentSession.session_id }}</el-descriptions-item>
-          <el-descriptions-item label="Agent">{{ currentSession.agent_source || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="项目">{{ currentSession.project_name || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="工作目录">{{ currentSession.cwd || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="入口">{{ currentSession.entrypoint || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="版本">{{ currentSession.version || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="类型">{{ currentSession.kind || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="开始时间">{{ currentSession.started_at || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="消息数">{{ currentSession.message_count ?? 0 }}</el-descriptions-item>
-          <el-descriptions-item label="JSONL 文件">{{ currentSession.jsonl_path || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="文件大小">{{ formatBytes(currentSession.jsonl_size) }}</el-descriptions-item>
-          <el-descriptions-item label="首条用户请求">
-            <pre class="session-text">{{ currentSession.first_prompt || '未提取到首条用户请求，重新扫描后可补充。' }}</pre>
-          </el-descriptions-item>
-          <el-descriptions-item label="压缩摘要">
-            <pre class="session-text">{{ currentSession.compressed_summary || '暂无压缩摘要，重新扫描后可补充。' }}</pre>
-          </el-descriptions-item>
-        </el-descriptions>
-      </div>
-    </el-dialog>
+    <AdminSessionsPanel v-model="sessionsPanelVisible" :open-request="sessionsOpenRequest" />
+    <AdminDiskCleanupPanel
+      v-model="diskUsagePanelVisible"
+      :scan-request="diskUsageScanRequest"
+      :details-request="diskUsageDetailsRequest"
+      @cleaned="refreshMonitor"
+    />
   </div>
 </template>
 
@@ -805,9 +601,7 @@ async function handleInitializeDatabase() {
 }
 
 .metric-card,
-.health-card,
-.service-card,
-.maintenance-item {
+.health-card {
   position: relative;
   min-height: 100%;
   background: linear-gradient(180deg, #ffffff, #fbfdff);
@@ -820,9 +614,7 @@ async function handleInitializeDatabase() {
 }
 
 .metric-card::before,
-.health-card::before,
-.service-card::before,
-.maintenance-item::before {
+.health-card::before {
   content: "";
   position: absolute;
   left: 0;
@@ -833,9 +625,7 @@ async function handleInitializeDatabase() {
 }
 
 .metric-card:hover,
-.health-card:hover,
-.service-card:hover,
-.maintenance-item:hover {
+.health-card:hover {
   transform: translateY(-2px);
   border-color: rgba(13, 148, 136, 0.24);
   box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
@@ -895,6 +685,28 @@ async function handleInitializeDatabase() {
   background: linear-gradient(90deg, #14b8a6, #0891b2);
 }
 
+.metric-card--clickable {
+  cursor: pointer;
+}
+
+.metric-card--clickable:focus-visible,
+.health-card--clickable:focus-visible {
+  outline: 2px solid #0d9488;
+  outline-offset: 3px;
+}
+
+.metric-action {
+  margin-top: 8px;
+  color: #0d9488;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.metric-inline-button {
+  margin-top: 8px;
+  padding: 0;
+}
+
 .health-card {
   min-height: 94px;
 }
@@ -919,11 +731,6 @@ async function handleInitializeDatabase() {
   margin-top: 12px;
 }
 
-.health-action {
-  margin-top: 8px;
-  padding: 0;
-}
-
 .source-table {
   margin-top: 16px;
   border: 1px solid #e6ebf2;
@@ -941,167 +748,15 @@ async function handleInitializeDatabase() {
   background: #f5fbfb;
 }
 
-.service-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  min-height: 122px;
-}
-
-.service-card h4,
-.maintenance-item h4 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.service-card p,
-.maintenance-item p {
-  margin: 8px 0 0;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.service-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.maintenance-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.maintenance-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 14px;
-  min-height: 158px;
-}
-
-.maintenance-item--danger {
-  border-color: #fecaca;
-  background: linear-gradient(180deg, #fff, #fffafa);
-}
-
-.maintenance-item--danger::before {
-  background: linear-gradient(180deg, #ef4444, #f97316);
-}
-
-.history-card {
-  margin-top: 16px;
-  border: 1px solid #e6ebf2;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.history-card :deep(.el-card__header) {
-  padding: 14px 16px;
-  color: #0f172a;
-  font-weight: 800;
-  background: #f8fafc;
-}
-
-.history-card :deep(.el-card__body) {
-  padding: 0;
-}
-
-.db-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.db-card-sub {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.db-path {
-  margin: 0;
-  padding: 10px 16px;
-  color: #64748b;
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  background: #fbfdff;
-  border-bottom: 1px solid #eef2f7;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.db-table :deep(.el-table__header-wrapper th) {
-  background: #f8fafc;
-  color: #475569;
-  font-weight: 700;
-}
-
-.db-table-code {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 12px;
-  color: #475569;
-  background: #f1f5f9;
-  padding: 2px 6px;
-  border-radius: 3px;
-}
-
-.db-table-count {
-  color: #0f766e;
-  font-weight: 800;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-
-.error-text {
-  color: #c24141;
-  font-size: 12px;
-}
-
-.ok-text {
-  color: #0f766e;
-  font-weight: 600;
-}
-
-.drawer-pagination {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 14px;
-}
-
-.session-text {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 @media (max-width: 900px) {
   .admin-page {
     padding: 18px;
   }
 
   .admin-head,
-  .section-head,
-  .service-card {
+  .section-head {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .maintenance-grid,
-  .db-tables {
-    grid-template-columns: 1fr;
   }
 }
 </style>

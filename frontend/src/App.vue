@@ -16,9 +16,7 @@ function toggleSidebar() {
 }
 
 async function checkUpdate() {
-  // 开发模式下跳过更新检查，避免本地调试触发签名校验。
   if (import.meta.env.DEV) {
-    console.log('[Updater] Dev mode, skipping update check')
     return
   }
   try {

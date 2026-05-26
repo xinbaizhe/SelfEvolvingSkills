@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { fetchWorkflows, type Workflow } from '../api/workflows'
+import type { PaginatedResult } from '../api/skills'
 
 const workflows = ref<Workflow[]>([])
 const loading = ref(false)
@@ -39,7 +40,7 @@ async function load() {
   loading.value = true
   try {
     const res = await fetchWorkflows()
-    workflows.value = Array.isArray(res.data) ? res.data : ((res.data as any)?.items || [])
+    workflows.value = Array.isArray(res.data) ? res.data : ((res.data as unknown as PaginatedResult<Workflow>)?.items || [])
   } finally {
     loading.value = false
   }

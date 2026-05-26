@@ -3,10 +3,31 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchSessions, fetchSessionDetail } from '../api/stats'
+import { getErrorMessage } from '../utils/error'
+import type { PaginatedResult } from '../api/skills'
+
+interface SessionItem {
+  session_id: string
+  agent_source: string
+  project_name?: string
+  first_prompt?: string
+  message_count: number
+  jsonl_size?: number
+  started_at?: string
+}
+
+interface SessionDetail extends SessionItem {
+  cwd?: string
+  entrypoint?: string
+  version?: string
+  kind?: string
+  jsonl_path?: string
+  compressed_summary?: string
+}
 
 const router = useRouter()
 
-const sessions = ref<any[]>([])
+const sessions = ref<SessionItem[]>([])
 const total = ref(0)
 const loading = ref(false)
 const currentPage = ref(1)
@@ -14,7 +35,7 @@ const pageSize = ref(20)
 
 const detailVisible = ref(false)
 const detailLoading = ref(false)
-const currentSession = ref<any>(null)
+const currentSession = ref<SessionDetail | null>(null)
 
 onMounted(() => loadSessions())
 
@@ -23,13 +44,13 @@ async function loadSessions() {
   try {
     const res = await fetchSessions({ page: currentPage.value, size: pageSize.value })
     if (res.success && res.data) {
-      sessions.value = (res.data as any).items ?? []
-      total.value = (res.data as any).total ?? 0
+      sessions.value = (res.data as PaginatedResult<SessionItem>).items ?? []
+      total.value = (res.data as PaginatedResult<SessionItem>).total ?? 0
     } else {
       ElMessage.error('会话列表加载失败')
     }
-  } catch (error: any) {
-    ElMessage.error(error?.message || '加载失败')
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '加载失败'))
   } finally {
     loading.value = false
   }
@@ -42,7 +63,7 @@ async function showDetail(sessionId: string) {
   try {
     const res = await fetchSessionDetail(sessionId)
     if (res.success) {
-      currentSession.value = res.data
+      currentSession.value = res.data as SessionDetail
     } else {
       ElMessage.error('会话详情加载失败')
     }

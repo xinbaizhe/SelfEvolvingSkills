@@ -2,8 +2,10 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { ElMessage } from 'element-plus'
-import { getEvolutionStatus, resetEvolution, startEvolution, type EvolutionJob, type EvolutionPhase, type EvolutionStep } from '../../api/evolution'
+import { getEvolutionStatus, resetEvolution, startEvolution, type EvolutionJob, type EvolutionStep } from '../../api/evolution'
 import { fetchSources, type SourceConfig } from '../../api/scan'
+import EvolutionProgressRing from './EvolutionProgressRing.vue'
+import EvolutionStepsBar from './EvolutionStepsBar.vue'
 
 const emit = defineEmits<{
   (e: 'completed'): void
@@ -35,11 +37,6 @@ const availableSources = computed(() => sources.value.filter((source) => source.
 const currentPhase = computed(() => {
   if (!job.value?.current_phase) return null
   return job.value.current_phase
-})
-
-const currentStepIndex = computed(() => {
-  if (!currentPhase.value) return -1
-  return steps.findIndex((step) => step.phase === currentPhase.value)
 })
 
 const phaseStatuses = computed(() => {
@@ -82,26 +79,7 @@ const statusText = computed(() => {
   return '待启动'
 })
 
-const circumference = 2 * Math.PI * 54
-const dashOffset = computed(() => circumference - (progressPercent.value / 100) * circumference)
-
 const phaseOrder = ['discover', 'reference_retrieval', 'cluster', 'draft_generate', 'optimize', 'qa_review', 'diff_recommend']
-
-function phaseCompleted(phase: string): boolean {
-  if (!job.value?.phases) return false
-  const status = phaseStatuses.value.get(phase)
-  return status === 'completed'
-}
-
-function phaseActive(phase: string): boolean {
-  return currentPhase.value === phase && isRunning.value
-}
-
-function phaseFailed(phase: string): boolean {
-  if (!job.value?.phases) return false
-  const status = phaseStatuses.value.get(phase)
-  return status === 'failed'
-}
 
 async function loadSources() {
   const res = await fetchSources()
@@ -125,7 +103,6 @@ async function loadStatus() {
         staleDetected.value = true
         ElMessage.warning(`检测到 ${data.auto_failed} 个阶段超时（>10分钟），已自动标记为失败。`)
       }
-      // Check for stuck state: running but current_phase is null or no progress
       if (data.running && !data.current_phase) {
         staleDetected.value = true
       }
@@ -190,7 +167,6 @@ function startListening() {
   listen<{ run_id: number; phase: string; progress: number; message: string }>('evolution-progress', (event) => {
     if (!job.value || job.value.run_id !== event.payload.run_id) return
 
-    // When the "completed" terminal event arrives, mark everything done
     if (event.payload.phase === 'completed') {
       const finalPhases = job.value.phases.map((p) => ({
         ...p,
@@ -322,53 +298,19 @@ onUnmounted(stopListening)
       </p>
     </div>
 
-    <div class="progress-ring-container">
-      <svg class="progress-ring" viewBox="0 0 120 120">
-        <circle class="ring-bg" cx="60" cy="60" r="54" fill="none" stroke="var(--el-border-color-lighter)" stroke-width="8" />
-        <circle
-          class="ring-fill"
-          cx="60"
-          cy="60"
-          r="54"
-          fill="none"
-          stroke="var(--el-color-primary)"
-          stroke-width="8"
-          stroke-linecap="round"
-          :stroke-dasharray="circumference"
-          :stroke-dashoffset="dashOffset"
-          transform="rotate(-90 60 60)"
-        />
-        <text x="60" y="56" text-anchor="middle" class="ring-text-large">{{ progressPercent }}%</text>
-        <text x="60" y="74" text-anchor="middle" class="ring-text-small">{{ statusText }}</text>
-      </svg>
-    </div>
+    <EvolutionProgressRing :percent="progressPercent" :status-text="statusText" />
 
     <div v-if="currentMessage" class="current-message">
       <span v-if="isRunning" class="spinner" />
       <span>{{ currentMessage }}</span>
     </div>
 
-    <div class="steps-bar">
-      <div
-        v-for="(step, index) in steps"
-        :key="step.phase"
-        class="step-item"
-        :class="{
-          active: phaseActive(step.phase),
-          completed: phaseCompleted(step.phase),
-          failed: phaseFailed(step.phase),
-        }"
-      >
-        <div class="step-dot">
-          <span v-if="phaseCompleted(step.phase)" class="check">&#10003;</span>
-          <span v-else-if="phaseFailed(step.phase)" class="cross">&#10007;</span>
-          <span v-else-if="phaseActive(step.phase)" class="pulse" />
-          <span v-else class="num">{{ index + 1 }}</span>
-        </div>
-        <div class="step-label">{{ step.label }}</div>
-        <div class="step-range">{{ step.start }}% - {{ step.end }}%</div>
-      </div>
-    </div>
+    <EvolutionStepsBar
+      :steps="steps"
+      :phase-statuses="phaseStatuses"
+      :current-phase="currentPhase"
+      :is-running="isRunning"
+    />
 
     <div v-if="job?.last_completed && !isRunning" class="last-completed">
       上次完成时间：{{ job.last_completed.completed_at || '未知' }}
@@ -425,18 +367,6 @@ onUnmounted(stopListening)
   margin-top: 8px;
 }
 
-.progress-ring-container {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 16px;
-}
-
-.progress-ring { width: 140px; height: 140px; }
-.ring-bg { opacity: 0.15; }
-.ring-fill { transition: stroke-dashoffset 0.6s ease; }
-.ring-text-large { font-size: 22px; font-weight: 700; fill: var(--el-text-color-primary); }
-.ring-text-small { font-size: 11px; fill: var(--el-text-color-secondary); }
-
 .current-message {
   text-align: center;
   padding: 10px 16px;
@@ -449,105 +379,6 @@ onUnmounted(stopListening)
   align-items: center;
   justify-content: center;
   gap: 8px;
-}
-
-.steps-bar {
-  display: flex;
-  justify-content: space-between;
-  gap: 4px;
-}
-
-.step-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  position: relative;
-}
-
-.step-item::after {
-  content: '';
-  position: absolute;
-  top: 14px;
-  left: 60%;
-  right: -40%;
-  height: 2px;
-  background: var(--el-border-color-lighter);
-  z-index: 0;
-}
-
-.step-item:last-child::after { display: none; }
-.step-item.completed::after { background: var(--el-color-primary); }
-
-.step-dot {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  z-index: 1;
-  border: 2px solid var(--el-border-color);
-  background: var(--el-bg-color);
-  color: var(--el-text-color-secondary);
-  transition: all 0.3s;
-}
-
-.step-item.active .step-dot {
-  border-color: var(--el-color-primary);
-  color: var(--el-color-primary);
-  box-shadow: 0 0 0 4px var(--el-color-primary-light-8);
-}
-
-.step-item.completed .step-dot {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary);
-  color: #fff;
-}
-
-.step-item.failed .step-dot {
-  border-color: var(--el-color-danger);
-  background: var(--el-color-danger);
-  color: #fff;
-}
-
-.step-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  white-space: nowrap;
-}
-
-.step-item.active .step-label,
-.step-item.completed .step-label {
-  color: var(--el-color-primary);
-  font-weight: 600;
-}
-
-.step-item.failed .step-label {
-  color: var(--el-color-danger);
-}
-
-.step-range {
-  font-size: 10px;
-  color: var(--el-text-color-placeholder);
-}
-
-.check { font-size: 14px; color: #fff; }
-.cross { font-size: 14px; color: #fff; font-weight: 700; }
-.pulse {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--el-color-primary);
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.7); }
 }
 
 .spinner {

@@ -328,6 +328,7 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+
         "#,
     )?;
     let _ = conn.execute(
@@ -404,18 +405,12 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
         "ALTER TABLE skills ADD COLUMN iteration_num INTEGER DEFAULT 1",
         [],
     );
-    let _ = conn.execute(
-        "ALTER TABLE skills ADD COLUMN last_evaluated_at TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE skills ADD COLUMN last_evaluated_at TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE skills ADD COLUMN effectiveness_score REAL DEFAULT 0",
         [],
     );
-    let _ = conn.execute(
-        "ALTER TABLE sessions ADD COLUMN matched_skill TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN matched_skill TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE workflow_clusters ADD COLUMN evolves_skill TEXT",
         [],
@@ -438,6 +433,16 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
         [now_string()],
     )?;
     migrate_evolution_jobs(&conn)?;
+    cleanup_disk_scan_cache(&conn)?;
+    Ok(())
+}
+
+fn cleanup_disk_scan_cache(conn: &Connection) -> Result<()> {
+    let _ = conn.execute_batch(
+        "DROP TABLE IF EXISTS disk_scan_entries;
+         DROP TABLE IF EXISTS disk_scan_jobs;
+         VACUUM;",
+    );
     Ok(())
 }
 

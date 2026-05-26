@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchLlmConfig, fetchScanPaths, fetchSystemInfo, testLlmConnection, updateLlmConfig } from '../../api/admin'
+import type { LlmConfigData, ScanPathEntry, ScanPathSource, SystemInfo } from '../../types/admin'
 
 interface ProviderPreset {
   key: string
@@ -26,8 +27,8 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
 
 const selectedProvider = ref('openai')
 const showApiKey = ref(false)
-const systemInfo = ref<any>(null)
-const scanPaths = ref<any[]>([])
+const systemInfo = ref<SystemInfo | null>(null)
+const scanPaths = ref<ScanPathSource[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
@@ -115,15 +116,15 @@ async function load() {
       fetchLlmConfig(),
       fetchScanPaths(),
     ])
-    if (sysRes.success) systemInfo.value = sysRes.data
-    if (pathsRes.success) scanPaths.value = (pathsRes.data as any[]) || []
-    if (llmRes.success) applyLlmConfig(llmRes.data)
+    if (sysRes.success) systemInfo.value = sysRes.data as SystemInfo
+    if (pathsRes.success) scanPaths.value = (pathsRes.data as ScanPathSource[]) || []
+    if (llmRes.success) applyLlmConfig(llmRes.data as LlmConfigData)
   } finally {
     loading.value = false
   }
 }
 
-function applyLlmConfig(data: any) {
+function applyLlmConfig(data: LlmConfigData) {
   form.llm_enabled = !!data?.enabled
   const provider = data?.provider || 'openai'
   selectedProvider.value = PROVIDER_PRESETS.some((p) => p.key === provider) ? provider : 'custom'
@@ -170,7 +171,7 @@ async function save() {
     if (res.success) {
       applyLlmConfig(res.data || { ...payload, enabled: payload.llm_enabled, provider: payload.llm_provider, base_url: payload.llm_base_url, model: payload.llm_model, api_format: payload.llm_api_format, has_api_key: true })
       const sysRes = await fetchSystemInfo()
-      if (sysRes.success) systemInfo.value = sysRes.data
+      if (sysRes.success) systemInfo.value = sysRes.data as SystemInfo
       ElMessage.success('大模型配置已保存')
     }
   } finally {
@@ -193,20 +194,20 @@ async function testConnection() {
       lastTestError.value = res.error || '连接测试失败'
       ElMessage.error(res.error || '连接测试失败')
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     lastTestOk.value = false
-    lastTestError.value = e?.message || '连接测试异常'
-    ElMessage.error(e?.message || '连接测试异常')
+    lastTestError.value = e instanceof Error ? e.message : '连接测试异常'
+    ElMessage.error(e instanceof Error ? e.message : '连接测试异常')
   } finally {
     testing.value = false
   }
 }
 
-function getSourcePaths(source: any): any[] {
+function getSourcePaths(source: ScanPathSource): ScanPathEntry[] {
   if (!source.paths) return []
   return Object.entries(source.paths)
-    .filter(([, value]) => value)
-    .map(([type, path]) => ({ type, path }))
+    .filter(([, value]) => value !== null)
+    .map(([type, path]) => ({ type, path: path as string }))
 }
 </script>
 

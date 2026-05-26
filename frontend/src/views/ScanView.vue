@@ -4,13 +4,19 @@ import { ElMessage } from 'element-plus'
 import { useScanStore } from '../stores/useScanStore'
 import { fetchSystemInfo } from '../api/admin'
 
+interface SystemInfo {
+  version?: string
+  db_size_bytes?: number
+  python?: string
+}
+
 const scanStore = useScanStore()
-const systemInfo = ref<any>(null)
+const systemInfo = ref<SystemInfo | null>(null)
 const currentPage = ref(1)
 
 onMounted(() => {
   scanStore.loadHistory({ size: 20 })
-  fetchSystemInfo().then((res: any) => { if (res.success) systemInfo.value = res.data })
+  fetchSystemInfo().then((res) => { if (res.success) systemInfo.value = res.data as SystemInfo })
 })
 
 async function runScan() {
