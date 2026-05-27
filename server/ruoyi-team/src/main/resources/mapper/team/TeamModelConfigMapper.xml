@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.TeamModelConfigMapper">
+
+    <resultMap type="com.ruoyi.team.domain.TeamModelConfig" id="TeamModelConfigResult">
+        <id     property="id"         column="id"          />
+        <result property="name"       column="name"        />
+        <result property="provider"   column="provider"    />
+        <result property="baseUrl"    column="base_url"    />
+        <result property="model"      column="model"       />
+        <result property="apiKeyHash" column="api_key_hash"/>
+        <result property="deptId"     column="dept_id"     />
+        <result property="createdBy"  column="created_by"  />
+        <result property="isActive"   column="is_active"   />
+        <result property="createdAt"  column="created_at"  />
+    </resultMap>
+
+    <sql id="selectTeamModelConfigVo">
+        select id, name, provider, base_url, model, api_key_hash,
+               dept_id, created_by, is_active, created_at
+        from team_model_configs
+    </sql>
+
+    <select id="selectTeamModelConfigList" parameterType="com.ruoyi.team.domain.TeamModelConfig" resultMap="TeamModelConfigResult">
+        <include refid="selectTeamModelConfigVo"/>
+        <where>
+            <if test="name != null and name != ''">
+                AND name like concat('%', #{name}, '%')
+            </if>
+            <if test="provider != null and provider != ''">
+                AND provider = #{provider}
+            </if>
+            <if test="deptId != null">
+                AND dept_id = #{deptId}
+            </if>
+            <if test="isActive != null">
+                AND is_active = #{isActive}
+            </if>
+        </where>
+    </select>
+
+    <select id="selectTeamModelConfigById" parameterType="Long" resultMap="TeamModelConfigResult">
+        <include refid="selectTeamModelConfigVo"/>
+        where id = #{id}
+    </select>
+
+    <insert id="insertTeamModelConfig" parameterType="com.ruoyi.team.domain.TeamModelConfig" useGeneratedKeys="true" keyProperty="id">
+        insert into team_model_configs (
+            <if test="name != null and name != ''">name,</if>
+            <if test="provider != null and provider != ''">provider,</if>
+            <if test="baseUrl != null">base_url,</if>
+            <if test="model != null and model != ''">model,</if>
+            <if test="apiKeyHash != null">api_key_hash,</if>
+            <if test="deptId != null">dept_id,</if>
+            <if test="createdBy != null">created_by,</if>
+            <if test="isActive != null">is_active,</if>
+            created_at
+        ) values (
+            <if test="name != null and name != ''">#{name},</if>
+            <if test="provider != null and provider != ''">#{provider},</if>
+            <if test="baseUrl != null">#{baseUrl},</if>
+            <if test="model != null and model != ''">#{model},</if>
+            <if test="apiKeyHash != null">#{apiKeyHash},</if>
+            <if test="deptId != null">#{deptId},</if>
+            <if test="createdBy != null">#{createdBy},</if>
+            <if test="isActive != null">#{isActive},</if>
+            sysdate()
+        )
+    </insert>
+
+    <update id="updateTeamModelConfig" parameterType="com.ruoyi.team.domain.TeamModelConfig">
+        update team_model_configs
+        <set>
+            <if test="name != null and name != ''">name = #{name},</if>
+            <if test="provider != null and provider != ''">provider = #{provider},</if>
+            <if test="baseUrl != null">base_url = #{baseUrl},</if>
+            <if test="model != null and model != ''">model = #{model},</if>
+            <if test="apiKeyHash != null">api_key_hash = #{apiKeyHash},</if>
+            <if test="deptId != null">dept_id = #{deptId},</if>
+            <if test="isActive != null">is_active = #{isActive},</if>
+        </set>
+        where id = #{id}
+    </update>
+
+    <delete id="deleteTeamModelConfigById" parameterType="Long">
+        delete from team_model_configs where id = #{id}
+    </delete>
+
+    <delete id="deleteTeamModelConfigByIds" parameterType="Long">
+        delete from team_model_configs where id in
+        <foreach item="id" collection="array" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
+</mapper>

@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.TeamSkillMapper">
+
+    <resultMap type="com.ruoyi.team.domain.TeamSkill" id="TeamSkillResult">
+        <id     property="id"               column="id"              />
+        <result property="name"             column="name"            />
+        <result property="description"      column="description"     />
+        <result property="category"         column="category"        />
+        <result property="sourceType"       column="source_type"     />
+        <result property="originAgent"      column="origin_agent"    />
+        <result property="bodyMd"           column="body_md"         />
+        <result property="authorId"         column="author_id"       />
+        <result property="deptId"           column="dept_id"         />
+        <result property="compatibleModels" column="compatible_models"/>
+        <result property="compatibleAgents" column="compatible_agents"/>
+        <result property="usageCount"       column="usage_count"     />
+        <result property="avgScore"         column="avg_score"       />
+        <result property="status"           column="status"          />
+        <result property="version"          column="version"         />
+        <result property="createdAt"        column="created_at"      />
+        <result property="updatedAt"        column="updated_at"      />
+    </resultMap>
+
+    <sql id="selectTeamSkillVo">
+        select id, name, description, category, source_type, origin_agent, body_md,
+               author_id, dept_id, compatible_models, compatible_agents,
+               usage_count, avg_score, status, version, created_at, updated_at
+        from team_skills
+    </sql>
+
+    <select id="selectTeamSkillList" parameterType="com.ruoyi.team.domain.TeamSkill" resultMap="TeamSkillResult">
+        <include refid="selectTeamSkillVo"/>
+        <where>
+            <if test="name != null and name != ''">
+                AND name like concat('%', #{name}, '%')
+            </if>
+            <if test="category != null and category != ''">
+                AND category = #{category}
+            </if>
+            <if test="sourceType != null and sourceType != ''">
+                AND source_type = #{sourceType}
+            </if>
+            <if test="status != null and status != ''">
+                AND status = #{status}
+            </if>
+            <if test="deptId != null">
+                AND dept_id = #{deptId}
+            </if>
+            <if test="authorId != null">
+                AND author_id = #{authorId}
+            </if>
+            <if test="params.roleId != null and params.roleId != ''">
+                AND author_id IN (
+                    SELECT ur.user_id FROM sys_user_role ur WHERE ur.role_id = #{params.roleId}
+                )
+            </if>
+            <if test="params.postId != null and params.postId != ''">
+                AND author_id IN (
+                    SELECT up.user_id FROM sys_user_post up WHERE up.post_id = #{params.postId}
+                )
+            </if>
+        </where>
+        order by usage_count desc, avg_score desc
+    </select>
+
+    <select id="selectTeamSkillById" parameterType="Long" resultMap="TeamSkillResult">
+        <include refid="selectTeamSkillVo"/>
+        where id = #{id}
+    </select>
+
+    <insert id="insertTeamSkill" parameterType="com.ruoyi.team.domain.TeamSkill" useGeneratedKeys="true" keyProperty="id">
+        insert into team_skills (
+            <if test="name != null and name != ''">name,</if>
+            <if test="description != null">description,</if>
+            <if test="category != null">category,</if>
+            <if test="sourceType != null">source_type,</if>
+            <if test="originAgent != null">origin_agent,</if>
+            <if test="bodyMd != null">body_md,</if>
+            <if test="authorId != null">author_id,</if>
+            <if test="deptId != null">dept_id,</if>
+            <if test="compatibleModels != null">compatible_models,</if>
+            <if test="compatibleAgents != null">compatible_agents,</if>
+            <if test="usageCount != null">usage_count,</if>
+            <if test="avgScore != null">avg_score,</if>
+            <if test="status != null">status,</if>
+            <if test="version != null">version,</if>
+            created_at, updated_at
+        ) values (
+            <if test="name != null and name != ''">#{name},</if>
+            <if test="description != null">#{description},</if>
+            <if test="category != null">#{category},</if>
+            <if test="sourceType != null">#{sourceType},</if>
+            <if test="originAgent != null">#{originAgent},</if>
+            <if test="bodyMd != null">#{bodyMd},</if>
+            <if test="authorId != null">#{authorId},</if>
+            <if test="deptId != null">#{deptId},</if>
+            <if test="compatibleModels != null">#{compatibleModels},</if>
+            <if test="compatibleAgents != null">#{compatibleAgents},</if>
+            <if test="usageCount != null">#{usageCount},</if>
+            <if test="avgScore != null">#{avgScore},</if>
+            <if test="status != null">#{status},</if>
+            <if test="version != null">#{version},</if>
+            sysdate(), sysdate()
+        )
+    </insert>
+
+    <update id="updateTeamSkill" parameterType="com.ruoyi.team.domain.TeamSkill">
+        update team_skills
+        <set>
+            <if test="name != null and name != ''">name = #{name},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="category != null">category = #{category},</if>
+            <if test="sourceType != null">source_type = #{sourceType},</if>
+            <if test="originAgent != null">origin_agent = #{originAgent},</if>
+            <if test="bodyMd != null">body_md = #{bodyMd},</if>
+            <if test="compatibleModels != null">compatible_models = #{compatibleModels},</if>
+            <if test="compatibleAgents != null">compatible_agents = #{compatibleAgents},</if>
+            <if test="usageCount != null">usage_count = #{usageCount},</if>
+            <if test="avgScore != null">avg_score = #{avgScore},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="version != null">version = #{version},</if>
+            updated_at = sysdate()
+        </set>
+        where id = #{id}
+    </update>
+
+    <delete id="deleteTeamSkillById" parameterType="Long">
+        delete from team_skills where id = #{id}
+    </delete>
+
+    <delete id="deleteTeamSkillByIds" parameterType="Long">
+        delete from team_skills where id in
+        <foreach item="id" collection="array" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
+</mapper>

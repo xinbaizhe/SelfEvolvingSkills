@@ -13,6 +13,7 @@ const menuItems = [
   { path: '/agents', title: 'Agent 列表', match: ['/agents'] },
   { path: '/resources', title: '资源与配置', match: ['/resources', '/sources', '/admin/config'] },
   { path: '/community', title: '社区 Skills', match: ['/community'] },
+  { path: '/team', title: '团队 Skills', match: ['/team'] },
 ]
 
 const activePath = computed(() => route.path)

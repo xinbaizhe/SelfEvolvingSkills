@@ -1,0 +1,6 @@
+Application Version: ${ruoyi.version}
+Spring Boot Version: ${spring-boot.version}
+=========================================
+  Self Evolving Skills - Admin Server
+  Local-first workflow assistant
+=========================================

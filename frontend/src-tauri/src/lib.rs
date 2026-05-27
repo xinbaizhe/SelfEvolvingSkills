@@ -24,6 +24,7 @@ pub(crate) use agent_sources::{agent_sources, source_default_paths};
 pub(crate) use router::{community_skill_raw_url, fetch_community_skill_markdown};
 pub(crate) use services::admin_service::{get_config, get_config_bool};
 use services::scan::{enabled_source_paths, sync_source_configs};
+use services::team_service::{call_server_logout, TeamState};
 
 type AppResult<T> = std::result::Result<T, String>;
 
@@ -45,7 +46,7 @@ pub(crate) struct AppState {
     pub(crate) db_path: PathBuf,
     pub(crate) scan_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) disk_usage_lock: Arc<tokio::sync::Mutex<()>>,
-    pub(crate) disk_usage_cache: Arc<Mutex<Option<services::system_service::DiskUsageCache>>>,
+    pub(crate) disk_usage_cache: Arc<Mutex<Option<services::system::DiskUsageCache>>>,
     pub(crate) watchers: Arc<Mutex<Vec<notify::RecommendedWatcher>>>,
 }
 
@@ -196,13 +197,38 @@ pub fn run() {
                 disk_usage_cache: Arc::new(Mutex::new(None)),
                 watchers: Arc::new(Mutex::new(Vec::new())),
             });
+            app.manage(TeamState::new());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let team_state = window.state::<TeamState>();
+                // Best-effort server logout on window close
+                tauri::async_runtime::block_on(async {
+                    call_server_logout(&team_state).await;
+                    let _ = team_state.delete_tokens();
+                });
+            }
         })
         .invoke_handler(tauri::generate_handler![
             health,
             api_request,
             select_directory,
             start_watchers,
+            services::team_service::login_team,
+            services::team_service::logout_team,
+            services::team_service::get_team_session,
+            services::team_service::team_api_get,
+            services::team_service::team_api_post,
+            services::team_service::team_api_put,
+            services::team_service::team_api_delete,
+            services::team_service::check_team_connection,
+            services::team_service::cache_team_skills,
+            services::team_service::get_cached_team_skills,
+            services::team_service::get_team_cache_summary,
+            services::team_service::get_pending_operations,
+            services::team_service::flush_pending_operations,
+            services::team_service::queue_team_operation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

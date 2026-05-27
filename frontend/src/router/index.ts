@@ -17,6 +17,7 @@ const router = createRouter({
     { path: '/scan', redirect: '/admin' },
     { path: '/export', redirect: '/skills' },
     { path: '/community', name: 'community', component: () => import('../views/CommunitySkillsView.vue') },
+    { path: '/team', name: 'team', component: () => import('../views/TeamSkillsView.vue') },
     { path: '/admin/login', name: 'adminLogin', component: () => import('../views/admin/AdminLogin.vue') },
     { path: '/admin', name: 'adminDashboard', component: () => import('../views/admin/AdminDashboard.vue') },
     { path: '/admin/users', name: 'adminUsers', component: () => import('../views/admin/AdminUsers.vue') },

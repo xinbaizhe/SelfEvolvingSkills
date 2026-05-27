@@ -329,6 +329,39 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS team_skills_cache (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            category TEXT,
+            source_type TEXT,
+            origin_agent TEXT,
+            body_md TEXT,
+            author_id INTEGER,
+            dept_id INTEGER,
+            compatible_models TEXT,
+            compatible_agents TEXT,
+            usage_count INTEGER DEFAULT 0,
+            avg_score REAL DEFAULT 0,
+            status TEXT DEFAULT 'published',
+            version INTEGER DEFAULT 1,
+            server_created_at TEXT,
+            server_updated_at TEXT,
+            cached_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS pending_operations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            op_type TEXT NOT NULL,
+            path TEXT NOT NULL,
+            method TEXT NOT NULL,
+            body TEXT,
+            status TEXT DEFAULT 'pending',
+            error_message TEXT,
+            retry_count INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         "#,
     )?;
     let _ = conn.execute(

@@ -4,12 +4,18 @@ import { useRoute } from 'vue-router'
 import { check } from '@tauri-apps/plugin-updater'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AppSidebar from './components/layout/AppSidebar.vue'
+import TeamSidebar from './components/team/TeamSidebar.vue'
+import LoginDialog from './components/team/LoginDialog.vue'
+import { useTeamStore } from './stores/useTeamStore'
 
 const route = useRoute()
 const sidebarCollapsed = ref(false)
 const appStartedAt = Date.now()
 const runtime = ref('0s')
 let runtimeTimer: ReturnType<typeof setInterval> | null = null
+
+const teamStore = useTeamStore()
+const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
 
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
@@ -48,6 +54,8 @@ async function checkUpdate() {
 
 onMounted(() => {
   checkUpdate()
+  const teamStore = useTeamStore()
+  teamStore.tryRestoreSession()
   runtimeTimer = setInterval(() => {
     const diff = Math.floor((Date.now() - appStartedAt) / 1000)
     const h = Math.floor(diff / 3600)
@@ -84,6 +92,7 @@ onUnmounted(() => {
         </button>
       </div>
       <AppSidebar :collapsed="sidebarCollapsed" />
+      <TeamSidebar :collapsed="sidebarCollapsed" />
       <section v-show="!sidebarCollapsed" class="privacy-notice">
         <h3>本地隐私模式</h3>
         <p>扫描、索引和分析均在本机完成。导出敏感内容前会显式确认，默认减少路径和正文暴露。</p>
@@ -93,7 +102,7 @@ onUnmounted(() => {
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
           GitHub
         </a>
-        <span v-show="!sidebarCollapsed" class="version">v1.0.6</span>
+        <span v-show="!sidebarCollapsed" class="version">v2.0.0</span>
       </section>
     </aside>
     <main>
@@ -103,6 +112,8 @@ onUnmounted(() => {
           <p>运行时长 {{ runtime }} · 从重复工作流中沉淀可复用 Skills</p>
         </div>
         <div class="actions">
+          <button v-if="!teamStore.isAuthenticated" class="btn team-btn" @click="loginDialog?.open()">登录团队版</button>
+          <router-link v-if="teamStore.isAuthenticated" to="/team" class="btn ghost">{{ teamStore.username }}</router-link>
           <router-link to="/admin" class="btn ghost">扫描本机</router-link>
           <router-link to="/workbench" class="btn primary">生成 Skill</router-link>
         </div>
@@ -113,6 +124,8 @@ onUnmounted(() => {
         </Transition>
       </router-view>
     </main>
+
+    <LoginDialog ref="loginDialog" />
   </div>
 </template>
 
@@ -329,6 +342,8 @@ main { min-width: 0; }
 .primary:hover { box-shadow: 0 8px 24px rgba(13,148,136,.35); transform: translateY(-1px); }
 .ghost { border: 1px solid var(--line); background: #fff; color: var(--ink); }
 .ghost:hover { border-color: var(--blue); color: var(--blue); }
+.team-btn { border: 1px solid #2dd4bf; background: rgba(45,212,191,.08); color: #0f766e; }
+.team-btn:hover { background: rgba(45,212,191,.16); border-color: #14b8a6; color: #0f766e; }
 
 .chip {
   display: inline-flex;

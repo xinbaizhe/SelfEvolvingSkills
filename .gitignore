@@ -10,6 +10,24 @@ frontend/dist/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
 
+# Java server
+server/target/
+server/ruoyi-admin/target/
+server/ruoyi-commin/target/
+server/ruoyi-framework/target/
+server/ruoyi-generator/target/
+server/ruoyi-quartz/target/
+server/ruoyi-system/target/
+server/ruoyi-team/target/
+server/logs/
+*.class
+*.jar
+*.war
+
+# Admin UI
+admin-ui/node_modules/
+admin-ui/dist/
+
 # Node
 node_modules/
 .pnpm-store/
@@ -30,3 +48,9 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# IntelliJ IDEA
+*.iml
+
+# Root lock file (no root package.json)
+package-lock.json

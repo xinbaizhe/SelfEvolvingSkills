@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.TeamEvolutionMapper">
+
+    <resultMap type="com.ruoyi.team.domain.TeamEvolution" id="TeamEvolutionResult">
+        <id     property="id"              column="id"              />
+        <result property="skillId"         column="skill_id"        />
+        <result property="proposerId"      column="proposer_id"     />
+        <result property="previousVersion" column="previous_version"/>
+        <result property="proposedChange"  column="proposed_change" />
+        <result property="reason"          column="reason"          />
+        <result property="status"          column="status"          />
+        <result property="reviewerId"      column="reviewer_id"     />
+        <result property="reviewComment"   column="review_comment"  />
+        <result property="reviewedAt"      column="reviewed_at"     />
+        <result property="createdAt"       column="created_at"      />
+    </resultMap>
+
+    <sql id="selectTeamEvolutionVo">
+        select id, skill_id, proposer_id, previous_version, proposed_change,
+               reason, status, reviewer_id, review_comment, reviewed_at, created_at
+        from team_evolutions
+    </sql>
+
+    <select id="selectTeamEvolutionList" parameterType="com.ruoyi.team.domain.TeamEvolution" resultMap="TeamEvolutionResult">
+        <include refid="selectTeamEvolutionVo"/>
+        <where>
+            <if test="skillId != null">
+                AND skill_id = #{skillId}
+            </if>
+            <if test="status != null and status != ''">
+                AND status = #{status}
+            </if>
+            <if test="proposerId != null">
+                AND proposer_id = #{proposerId}
+            </if>
+            <if test="reviewerId != null">
+                AND reviewer_id = #{reviewerId}
+            </if>
+        </where>
+        order by created_at desc
+    </select>
+
+    <select id="selectTeamEvolutionById" parameterType="Long" resultMap="TeamEvolutionResult">
+        <include refid="selectTeamEvolutionVo"/>
+        where id = #{id}
+    </select>
+
+    <select id="selectTeamEvolutionBySkillId" parameterType="Long" resultMap="TeamEvolutionResult">
+        <include refid="selectTeamEvolutionVo"/>
+        where skill_id = #{skillId}
+        order by created_at desc
+    </select>
+
+    <update id="approveTeamEvolution" parameterType="com.ruoyi.team.domain.TeamEvolution">
+        update team_evolutions
+        set status = #{status},
+            reviewer_id = #{reviewerId},
+            review_comment = #{reviewComment},
+            reviewed_at = sysdate()
+        where id = #{id}
+    </update>
+
+    <insert id="insertTeamEvolution" parameterType="com.ruoyi.team.domain.TeamEvolution" useGeneratedKeys="true" keyProperty="id">
+        insert into team_evolutions (
+            <if test="skillId != null">skill_id,</if>
+            <if test="proposerId != null">proposer_id,</if>
+            <if test="previousVersion != null">previous_version,</if>
+            <if test="proposedChange != null">proposed_change,</if>
+            <if test="reason != null">reason,</if>
+            <if test="status != null">status,</if>
+            <if test="reviewerId != null">reviewer_id,</if>
+            <if test="reviewComment != null">review_comment,</if>
+            <if test="reviewedAt != null">reviewed_at,</if>
+            created_at
+        ) values (
+            <if test="skillId != null">#{skillId},</if>
+            <if test="proposerId != null">#{proposerId},</if>
+            <if test="previousVersion != null">#{previousVersion},</if>
+            <if test="proposedChange != null">#{proposedChange},</if>
+            <if test="reason != null">#{reason},</if>
+            <if test="status != null">#{status},</if>
+            <if test="reviewerId != null">#{reviewerId},</if>
+            <if test="reviewComment != null">#{reviewComment},</if>
+            <if test="reviewedAt != null">#{reviewedAt},</if>
+            sysdate()
+        )
+    </insert>
+
+    <update id="updateTeamEvolution" parameterType="com.ruoyi.team.domain.TeamEvolution">
+        update team_evolutions
+        <set>
+            <if test="status != null and status != ''">status = #{status},</if>
+            <if test="reviewerId != null">reviewer_id = #{reviewerId},</if>
+            <if test="reviewComment != null">review_comment = #{reviewComment},</if>
+            <if test="reviewedAt != null">reviewed_at = #{reviewedAt},</if>
+        </set>
+        where id = #{id}
+    </update>
+
+    <delete id="deleteTeamEvolutionById" parameterType="Long">
+        delete from team_evolutions where id = #{id}
+    </delete>
+
+</mapper>

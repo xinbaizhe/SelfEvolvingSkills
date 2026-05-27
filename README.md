@@ -10,9 +10,181 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-ffc131?style=flat-square&logo=tauri)](https://tauri.app)
 [![Vue](https://img.shields.io/badge/Vue-3.5-4fc08d?style=flat-square&logo=vue.js)](https://vuejs.org)
 [![Rust](https://img.shields.io/badge/Rust-edition2021-dea584?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![Spring Boot](https://img.shields.io/badge/Spring_Boot-4.0-6db33f?style=flat-square&logo=springboot)](https://spring.io)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE.txt)
 
 </div>
+
+---
+
+## 项目概览
+
+Self Evolving Skills 包含三个子系统：
+
+| 子系统 | 目录 | 技术栈 | 用途 |
+|:---|:---|:---|:---|
+| **桌面应用** | `frontend/` | Tauri 2 + Vue 3 + Rust | 个人版本地桌面应用 |
+| **团队后台** | `server/` | Spring Boot 4 + MyBatis + MySQL | 团队版 API 服务 |
+| **管理界面** | `admin-ui/` | Vue 3 + Element Plus + Vite | 团队版 Web 管理后台 |
+
+---
+
+## 系统架构
+
+```
+┌──────────────────────────────────────────────────┐
+│                   个人版（本地）                     │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────┐  │
+│  │ Vue 3 前端│  │ Rust 后端 │  │ SQLite (WAL)   │  │
+│  │ Element+ │  │  Tauri 2  │  │ 本地文件系统     │  │
+│  └──────────┘  └──────────┘  └────────────────┘  │
+│       桌面应用 (Tauri 2) → npm run tauri:dev       │
+└──────────────────────────────────────────────────┘
+                        ↕ API
+┌──────────────────────────────────────────────────┐
+│                  团队版（网络）                      │
+│  ┌──────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │ Admin UI │  │ Spring Boot  │  │ MySQL/Redis │  │
+│  │ Vue 3    │  │ RuoYi 框架    │  │             │  │
+│  └──────────┘  └──────────────┘  └────────────┘  │
+│   npm run dev    mvn spring-boot:run               │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
+## 环境要求
+
+### 个人版（桌面应用）
+
+| 工具 | 版本要求 | 说明 |
+|:---|:---|:---|
+| Node.js | ≥18 | 前端构建 + Tauri CLI |
+| Rust | latest stable | 后端编译 |
+| Windows | Windows 10+ | 需安装 [Microsoft Visual C++ Build Tools](https://visualstudio.microsoft.com/zh-hans/visual-cpp-build-tools/) |
+| macOS | macOS 11+ | 需安装 Xcode Command Line Tools |
+| Linux | Ubuntu 20.04+ | 需安装 `libwebkit2gtk-4.1-dev` 等系统依赖 |
+
+### 团队版（Java 后台 + Web 管理界面）
+
+| 工具 | 版本要求 | 说明 |
+|:---|:---|:---|
+| JDK | 17 | Java 运行环境 |
+| Maven | 3.8+ | 项目构建 |
+| MySQL | 8.0+ | 数据库 |
+| Redis | 6.0+ | 缓存 |
+| Node.js | ≥18 | Admin UI 前端 |
+
+---
+
+## 个人版（桌面应用）启动
+
+### 1. 安装前端依赖
+
+```bash
+cd frontend
+npm install
+```
+
+### 2. 启动开发服务器
+
+```bash
+npm run tauri:dev
+```
+
+首次运行会自动编译 Rust 后端（约 2-5 分钟），后续热更新秒级生效。
+
+### 3. 生产构建
+
+```bash
+npm run tauri:build
+```
+
+| 平台 | 产物 |
+|:---|---|
+| Windows | `.exe` (NSIS 安装包) / `.msi` |
+| macOS | `.dmg` |
+| Linux | `.deb` / `.AppImage` |
+
+> 原生打包需在对应平台执行。推送到 GitHub 后，CI 自动在三平台并行构建，支持自动更新。
+
+---
+
+## 团队版启动
+
+团队版由 **Java 后台**（server/）和 **Web 管理界面**（admin-ui/）两部分组成，需分别启动。
+
+### 第一步：初始化数据库
+
+1. 创建 MySQL 数据库：
+```sql
+CREATE DATABASE ry_self_evolving DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+```
+
+2. 按顺序执行 SQL 脚本：
+```bash
+mysql -u root -p ry_self_evolving < server/sql/ry_20260417.sql    # RuoYi 基础表
+mysql -u root -p ry_self_evolving < server/sql/quartz.sql          # 定时任务表
+mysql -u root -p ry_self_evolving < server/sql/team_tables.sql     # 团队版 Skills 表
+```
+
+### 第二步：配置后台
+
+编辑 `server/ruoyi-admin/src/main/resources/application.yml`：
+
+```yaml
+spring:
+  datasource:
+    druid:
+      master:
+        url: jdbc:mysql://localhost:3306/ry_self_evolving?useUnicode=true&characterEncoding=utf8
+        username: root
+        password: your_password          # ← 修改为你的数据库密码
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:                          # ← 如果 Redis 有密码，在此填写
+```
+
+其他可配置项：
+- `server.port`：后台服务端口（默认 8080）
+- `token.secret`：JWT 签名密钥（生产环境请修改）
+- `ruoyi.profile`：文件上传路径（Windows 示例 `D:/ruoyi/uploadPath`，Linux 示例 `/home/ruoyi/uploadPath`）
+
+### 第三步：启动后台服务
+
+```bash
+cd server
+
+# 开发模式（热部署）
+mvn spring-boot:run
+
+# 或先打包再运行
+mvn clean package -DskipTests
+java -jar ruoyi-admin/target/ruoyi-admin.jar
+```
+
+启动成功后访问：
+- API 文档：http://localhost:8080/swagger-ui.html
+- 默认管理员：admin / admin123
+
+### 第四步：启动管理界面
+
+```bash
+cd admin-ui
+npm install
+npm run dev
+```
+
+管理界面运行在 `http://localhost:80`，已配置反向代理将 `/dev-api` 转发到后台 `http://localhost:8080`。
+
+若后台端口不是 8080，编辑 `admin-ui/vite.config.js` 中的 proxy target。
+
+环境变量配置文件：
+- `admin-ui/.env.development` — 开发环境
+- `admin-ui/.env.production` — 生产环境
+- `admin-ui/.env.staging` — 预发布环境
 
 ---
 
@@ -65,6 +237,21 @@ Self Evolving Skills 是一款**本地优先**的桌面应用。它会扫描你�
 | MiniMax | MiniMax-M2.7 | OpenAI + Anthropic |
 
 > 未配置大模型时，进化管道自动使用本地回退逻辑，不发起网络请求。
+
+## 团队版 Skills 管理
+
+团队版提供 Web 管理后台，支持多部门协同管理 Skills：
+
+| 功能 | 说明 |
+|:---|:---|
+| **Skills 管理** | 按部门/岗位/角色筛选 Skills，支持 CRUD 和搜索 |
+| **部门组织** | 树形部门结构，各部门独立管理 Skills |
+| **角色与岗位** | 关联系统角色（`sys_role`）和岗位（`sys_post`）进行筛选 |
+| **模型配置** | 按部门配置 LLM 模型，用于进化管道 |
+| **进化记录** | 追踪每次进化管道的执行状态和结果 |
+| **认证登录** | 基于 Spring Security + JWT 的用户认证 |
+
+管理界面入口：[admin-ui/](admin-ui/)，启动后访问 `http://localhost:80`，默认账号 `admin / admin123`。
 
 ## 核心流程：7 步进化管道
 
@@ -124,6 +311,18 @@ Self Evolving Skills 是一款**本地优先**的桌面应用。它会扫描你�
 | 自动更新 | `tauri-plugin-updater` + GitHub Releases |
 | CI/CD | GitHub Actions (Win / Mac / Linux 并行构建) |
 
+### 团队版技术栈
+
+| 层 | 技术 |
+|:---|:---|
+| 后台框架 | **Spring Boot 4** (RuoYi-Vue 3.9.2) |
+| 持久层 | MyBatis + Druid 连接池 |
+| 缓存 | Redis + Spring Cache |
+| 接口文档 | Springdoc (Swagger 3) |
+| 前端 | Vue 3 + Element Plus + Vite + Pinia |
+| 数据库 | MySQL 8.0 |
+| 团队模块 | `server/ruoyi-team/` — Skills 管理、模型配置、进化记录 |
+
 ## 快速开始
 
 ```bash
@@ -132,20 +331,6 @@ cd SelfEvolvingSkills/frontend
 npm install
 npm run tauri:dev
 ```
-
-## 打包
-
-```bash
-npm run tauri:build
-```
-
-| 平台 | 产物 |
-|:---|---|
-| Windows | `.exe` (NSIS 安装包) / `.msi` |
-| macOS | `.dmg` |
-| Linux | `.deb` / `.AppImage` |
-
-> 原生打包需在对应平台执行。推送到 GitHub 后，CI 自动在三平台并行构建，支持自动更新。
 
 ## API 速查
 
@@ -175,6 +360,15 @@ npm run tauri:build
 | | `GET /admin/config/llm` | 获取大模型配置 |
 | | `PUT /admin/config/llm` | 保存大模型配置 |
 | | `POST /admin/config/llm/test` | 测试大模型连接 |
+| 团队 | `POST /api/team/login` | 团队版登录 |
+| | `GET /api/team/profile` | 当前用户信息和可用模型 |
+| | `GET /api/team/deptTree` | 部门树形结构 |
+| | `GET /api/team/roles` | 岗位（角色）列表 |
+| | `GET /api/team/posts` | 职务列表 |
+| | `GET /api/team/skills/list` | 团队 Skills 列表（支持部门/岗位/角色筛选） |
+| | `POST /api/team/skills` | 新增团队 Skill |
+| | `PUT /api/team/skills` | 编辑团队 Skill |
+| | `DELETE /api/team/skills/:ids` | 删除团队 Skill |
 
 ## 同类对比
 
@@ -223,7 +417,7 @@ npm run tauri:build
 | Phase 1 | 个人版基础功能 + 7步进化管道 | ✅ |
 | Phase 2 | 多Agent A/B变体 + 效果追踪 | ✅ |
 | Phase 3 | 反馈修正循环 + 评分阈值优化 | ✅ |
-| Phase 4 | 团队版 Java后台 + Web管理 | 📋 |
+| Phase 4 | 团队版 Java后台 + Web管理 | ✅ |
 | Phase 5 | 协同进化 + Skills市场 | 📋 |
 | Phase 6 | 定时自动进化 + 通知推送 | 📋 |
 

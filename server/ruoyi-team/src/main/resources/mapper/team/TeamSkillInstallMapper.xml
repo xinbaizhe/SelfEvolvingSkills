@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.TeamSkillInstallMapper">
+
+    <resultMap type="com.ruoyi.team.domain.TeamSkillInstall" id="TeamSkillInstallResult">
+        <id     property="id"          column="id"          />
+        <result property="skillId"     column="skill_id"    />
+        <result property="userId"      column="user_id"     />
+        <result property="agentId"     column="agent_id"    />
+        <result property="modelId"     column="model_id"    />
+        <result property="installedAt" column="installed_at"/>
+    </resultMap>
+
+    <sql id="selectTeamSkillInstallVo">
+        select id, skill_id, user_id, agent_id, model_id, installed_at
+        from team_skill_installs
+    </sql>
+
+    <select id="selectTeamSkillInstallList" parameterType="com.ruoyi.team.domain.TeamSkillInstall" resultMap="TeamSkillInstallResult">
+        <include refid="selectTeamSkillInstallVo"/>
+        <where>
+            <if test="skillId != null">
+                AND skill_id = #{skillId}
+            </if>
+            <if test="userId != null">
+                AND user_id = #{userId}
+            </if>
+            <if test="agentId != null and agentId != ''">
+                AND agent_id = #{agentId}
+            </if>
+            <if test="modelId != null">
+                AND model_id = #{modelId}
+            </if>
+        </where>
+    </select>
+
+    <select id="selectTeamSkillInstallById" parameterType="Long" resultMap="TeamSkillInstallResult">
+        <include refid="selectTeamSkillInstallVo"/>
+        where id = #{id}
+    </select>
+
+    <select id="checkInstallUnique" parameterType="com.ruoyi.team.domain.TeamSkillInstall" resultMap="TeamSkillInstallResult">
+        <include refid="selectTeamSkillInstallVo"/>
+        where skill_id = #{skillId} and user_id = #{userId}
+        <if test="agentId != null and agentId != ''">
+            and agent_id = #{agentId}
+        </if>
+        <if test="modelId != null">
+            and model_id = #{modelId}
+        </if>
+        limit 1
+    </select>
+
+    <insert id="insertTeamSkillInstall" parameterType="com.ruoyi.team.domain.TeamSkillInstall" useGeneratedKeys="true" keyProperty="id">
+        insert into team_skill_installs (
+            <if test="skillId != null">skill_id,</if>
+            <if test="userId != null">user_id,</if>
+            <if test="agentId != null">agent_id,</if>
+            <if test="modelId != null">model_id,</if>
+            installed_at
+        ) values (
+            <if test="skillId != null">#{skillId},</if>
+            <if test="userId != null">#{userId},</if>
+            <if test="agentId != null">#{agentId},</if>
+            <if test="modelId != null">#{modelId},</if>
+            sysdate()
+        )
+    </insert>
+
+    <delete id="deleteTeamSkillInstallById" parameterType="Long">
+        delete from team_skill_installs where id = #{id}
+    </delete>
+
+    <delete id="deleteTeamSkillInstallBySkillId" parameterType="Long">
+        delete from team_skill_installs where skill_id = #{skillId}
+    </delete>
+
+</mapper>
