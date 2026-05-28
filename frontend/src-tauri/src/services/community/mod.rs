@@ -136,9 +136,10 @@ pub(super) async fn fetch_github_skill_candidates(
         .map_err(|err| anyhow!("GitHub network request failed: {}", err))?;
 
     let status = response.status();
-    let text = response.text().await.unwrap_or_else(|e| {
-        format!("[Failed to read response body: {e}]")
-    });
+    let text = response
+        .text()
+        .await
+        .unwrap_or_else(|e| format!("[Failed to read response body: {e}]"));
     if !status.is_success() {
         let message = serde_json::from_str::<Value>(&text)
             .ok()
@@ -201,8 +202,7 @@ pub(super) fn github_candidates_to_recommendations(
             if relevance < 0.08 {
                 return None;
             }
-            let quality =
-                utils::metadata_quality_score(name, &description, repo_full_name);
+            let quality = utils::metadata_quality_score(name, &description, repo_full_name);
             let weighted = utils::weighted_score(
                 stars,
                 relevance,
@@ -210,9 +210,8 @@ pub(super) fn github_candidates_to_recommendations(
                 license.as_deref(),
                 pushed_at.as_deref(),
             );
-            let reason = utils::github_metadata_reason(
-                query, name, &description, repo_full_name, stars,
-            );
+            let reason =
+                utils::github_metadata_reason(query, name, &description, repo_full_name, stars);
             Some(CommunityRecommendation {
                 name: name.to_string(),
                 repo_full_name: repo_full_name.to_string(),
@@ -353,8 +352,7 @@ pub(super) async fn fetch_and_cache_skill_contents(db_path: &std::path::Path) {
     };
 
     for (id, repo_full_name, file_url) in ids {
-        let Some(raw_url) =
-            crate::community_skill_raw_url(&repo_full_name, file_url.as_deref())
+        let Some(raw_url) = crate::community_skill_raw_url(&repo_full_name, file_url.as_deref())
         else {
             continue;
         };

@@ -8,5 +8,5 @@ pub(crate) mod skills_crud;
 pub(crate) mod system;
 pub(crate) mod team_cache;
 pub(crate) mod team_service;
-pub(crate) mod workflow_crud;
 pub(crate) mod workflow;
+pub(crate) mod workflow_crud;

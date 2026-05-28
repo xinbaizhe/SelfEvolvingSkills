@@ -189,10 +189,7 @@ fn get_last_completed(conn: &Connection) -> Option<Value> {
     .ok()
 }
 
-pub(crate) fn list_evolution_history(
-    conn: &Connection,
-    query: &crate::PageQuery,
-) -> Result<Value> {
+pub(crate) fn list_evolution_history(conn: &Connection, query: &crate::PageQuery) -> Result<Value> {
     let page = query.page.unwrap_or(1).max(1);
     let size = query.size.unwrap_or(20).clamp(1, 100);
 

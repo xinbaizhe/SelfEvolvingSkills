@@ -3,6 +3,7 @@ package com.ruoyi.web.controller.team;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,6 +19,7 @@ import com.ruoyi.team.service.ITeamEvolutionService;
 
 @RestController
 @RequestMapping("/api/team/evolutions")
+@PreAuthorize("isAuthenticated()")
 public class TeamEvolutionController extends BaseController {
 
     @Autowired

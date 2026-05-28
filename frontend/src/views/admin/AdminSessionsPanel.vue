@@ -76,6 +76,20 @@ async function showSessionDetail(sessionId: string) {
   }
 }
 
+function formatDateTime(raw: string | null | undefined) {
+  if (!raw) return '-'
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) return raw
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  const second = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`
+}
+
 defineExpose({ open })
 </script>
 
@@ -89,7 +103,9 @@ defineExpose({ open })
       <el-table-column prop="jsonl_size" label="文件大小" width="100">
         <template #default="{ row }">{{ formatBytes(row.jsonl_size) }}</template>
       </el-table-column>
-      <el-table-column prop="started_at" label="开始时间" width="170" />
+      <el-table-column label="开始时间" width="170">
+        <template #default="{ row }">{{ formatDateTime(row.started_at) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="showSessionDetail(row.session_id)">查看</el-button>
@@ -111,7 +127,7 @@ defineExpose({ open })
         <el-descriptions-item label="入口">{{ currentSession.entrypoint || '-' }}</el-descriptions-item>
         <el-descriptions-item label="版本">{{ currentSession.version || '-' }}</el-descriptions-item>
         <el-descriptions-item label="类型">{{ currentSession.kind || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="开始时间">{{ currentSession.started_at || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="开始时间">{{ formatDateTime(currentSession.started_at) }}</el-descriptions-item>
         <el-descriptions-item label="消息数">{{ currentSession.message_count ?? 0 }}</el-descriptions-item>
         <el-descriptions-item label="JSONL 文件">{{ currentSession.jsonl_path || '-' }}</el-descriptions-item>
         <el-descriptions-item label="文件大小">{{ formatBytes(currentSession.jsonl_size) }}</el-descriptions-item>

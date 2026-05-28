@@ -142,14 +142,8 @@ pub(crate) async fn login_team(
     }
 
     let payload = &data["data"];
-    let access_token = payload["token"]
-        .as_str()
-        .ok_or("token 缺失")?
-        .to_string();
-    let refresh_token = payload["refresh_token"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let access_token = payload["token"].as_str().ok_or("token 缺失")?.to_string();
+    let refresh_token = payload["refresh_token"].as_str().unwrap_or("").to_string();
     let username_str = payload["username"]
         .as_str()
         .unwrap_or(&username)
@@ -181,9 +175,7 @@ pub(crate) async fn login_team(
 }
 
 #[tauri::command]
-pub(crate) async fn logout_team(
-    state: tauri::State<'_, TeamState>,
-) -> Result<(), String> {
+pub(crate) async fn logout_team(state: tauri::State<'_, TeamState>) -> Result<(), String> {
     // Call server logout endpoint (best effort — ignore errors if server unreachable)
     call_server_logout(&state).await;
     state.delete_tokens()?;
@@ -443,8 +435,7 @@ pub(crate) async fn flush_pending_operations(
     app_state: tauri::State<'_, AppState>,
     team_state: tauri::State<'_, TeamState>,
 ) -> Result<Value, String> {
-    let ops_data =
-        super::team_cache::get_pending_operations(&app_state.db_path)?;
+    let ops_data = super::team_cache::get_pending_operations(&app_state.db_path)?;
     let ops = ops_data["ops"].as_array().cloned().unwrap_or_default();
 
     if ops.is_empty() {
@@ -466,14 +457,15 @@ pub(crate) async fn flush_pending_operations(
 
         match api_call_with_retry(&team_state, method, path, body.as_ref()).await {
             Ok(_) => {
-                super::team_cache::update_operation_status(
-                    &app_state.db_path, id, "synced", None,
-                )?;
+                super::team_cache::update_operation_status(&app_state.db_path, id, "synced", None)?;
                 synced += 1;
             }
             Err(e) => {
                 super::team_cache::update_operation_status(
-                    &app_state.db_path, id, "failed", Some(&e),
+                    &app_state.db_path,
+                    id,
+                    "failed",
+                    Some(&e),
                 )?;
                 failed += 1;
             }
@@ -495,7 +487,11 @@ pub(crate) fn queue_team_operation(
     body: Option<Value>,
 ) -> Result<Value, String> {
     let id = super::team_cache::queue_operation(
-        &app_state.db_path, &op_type, &path, &method, body.as_ref(),
+        &app_state.db_path,
+        &op_type,
+        &path,
+        &method,
+        body.as_ref(),
     )?;
     Ok(serde_json::json!({ "id": id }))
 }

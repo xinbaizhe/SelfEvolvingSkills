@@ -169,6 +169,12 @@ export const dynamicRoutes = [
         component: () => import('@/views/team/skill/index'),
         name: 'TeamSkill',
         meta: { title: '团队技能', icon: 'skill' }
+      },
+      {
+        path: 'model',
+        component: () => import('@/views/team/model/index'),
+        name: 'TeamModel',
+        meta: { title: '团队模型', icon: 'server' }
       }
     ]
   }

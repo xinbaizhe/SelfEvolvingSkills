@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 use walkdir::WalkDir;
 
 use super::utils::{is_reparse_point, should_count_file};
@@ -178,7 +175,9 @@ pub(crate) fn clean_download_installers(path: &Path) -> anyhow::Result<()> {
 
 pub(crate) fn delete_file_best_effort(path: &Path) -> DeleteSummary {
     let mut summary = DeleteSummary::default();
-    let size = fs::metadata(path).map(|metadata| metadata.len()).unwrap_or(0);
+    let size = fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
     match fs::remove_file(path) {
         Ok(()) => {
             summary.deleted_count = 1;
@@ -247,6 +246,8 @@ fn directory_is_empty(path: &Path) -> bool {
 fn record_delete_failure(summary: &mut DeleteSummary, path: &Path) {
     summary.failed_count = summary.failed_count.saturating_add(1);
     if summary.failed_paths.len() < 5 {
-        summary.failed_paths.push(path.to_string_lossy().to_string());
+        summary
+            .failed_paths
+            .push(path.to_string_lossy().to_string());
     }
 }

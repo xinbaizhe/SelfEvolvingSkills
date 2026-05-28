@@ -4,17 +4,14 @@ use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
+use crate::services;
 use crate::{
     count_table, count_where, now_string, open_conn, path_to_string, sanitize_file_name, PageQuery,
 };
-use crate::services;
 
 // ---- Community skill helpers ----
 
-pub(crate) async fn install_community_skill(
-    db_path: &Path,
-    body: Option<Value>,
-) -> Result<Value> {
+pub(crate) async fn install_community_skill(db_path: &Path, body: Option<Value>) -> Result<Value> {
     let body = body.unwrap_or(Value::Null);
     let skill_id = body
         .get("id")
@@ -157,26 +154,23 @@ pub(crate) fn list_sessions(conn: &Connection, query: &PageQuery) -> Result<Valu
          ORDER BY started_at DESC LIMIT ?2 OFFSET ?3",
     )?;
     let items = stmt
-        .query_map(
-            params![query.project, size, (page - 1) * size],
-            |row| {
-                Ok(json!({
-                    "id": row.get::<_, i64>(0)?,
-                    "session_id": row.get::<_, String>(1)?,
-                    "project_name": row.get::<_, Option<String>>(2)?,
-                    "entrypoint": row.get::<_, Option<String>>(3)?,
-                    "version": row.get::<_, Option<String>>(4)?,
-                    "started_at": row.get::<_, Option<String>>(5)?,
-                    "message_count": row.get::<_, i64>(6)?,
-                    "cwd": row.get::<_, Option<String>>(7)?,
-                    "agent_source": row.get::<_, Option<String>>(8)?,
-                    "first_prompt": row.get::<_, Option<String>>(9)?,
-                    "compressed_summary": row.get::<_, Option<String>>(10)?,
-                    "jsonl_path": row.get::<_, Option<String>>(11)?,
-                    "jsonl_size": row.get::<_, i64>(12)?,
-                }))
-            },
-        )?
+        .query_map(params![query.project, size, (page - 1) * size], |row| {
+            Ok(json!({
+                "id": row.get::<_, i64>(0)?,
+                "session_id": row.get::<_, String>(1)?,
+                "project_name": row.get::<_, Option<String>>(2)?,
+                "entrypoint": row.get::<_, Option<String>>(3)?,
+                "version": row.get::<_, Option<String>>(4)?,
+                "started_at": row.get::<_, Option<String>>(5)?,
+                "message_count": row.get::<_, i64>(6)?,
+                "cwd": row.get::<_, Option<String>>(7)?,
+                "agent_source": row.get::<_, Option<String>>(8)?,
+                "first_prompt": row.get::<_, Option<String>>(9)?,
+                "compressed_summary": row.get::<_, Option<String>>(10)?,
+                "jsonl_path": row.get::<_, Option<String>>(11)?,
+                "jsonl_size": row.get::<_, i64>(12)?,
+            }))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(json!({ "items": items, "total": total, "page": page, "size": size }))
 }

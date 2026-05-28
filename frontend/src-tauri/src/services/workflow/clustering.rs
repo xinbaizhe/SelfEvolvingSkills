@@ -63,9 +63,7 @@ pub(super) fn build_iteration_cluster(
     Some(cluster)
 }
 
-pub(super) fn cluster_by_project_and_similarity(
-    sessions: &[SessionRow],
-) -> Vec<WorkflowCluster> {
+pub(super) fn cluster_by_project_and_similarity(sessions: &[SessionRow]) -> Vec<WorkflowCluster> {
     let mut project_groups: HashMap<String, Vec<&SessionRow>> = HashMap::new();
     for session in sessions {
         let key = session.project_name.as_deref().unwrap_or("unknown");

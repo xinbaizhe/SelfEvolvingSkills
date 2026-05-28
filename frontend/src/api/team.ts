@@ -17,7 +17,7 @@ export interface TeamSkill {
   originAgent: string
   bodyMd: string
   authorId: number
-  deptId: number
+  deptId: number | null
   compatibleModels: string
   compatibleAgents: string
   usageCount: number
@@ -34,7 +34,14 @@ export interface TeamModelConfig {
   provider: string
   baseUrl: string
   model: string
-  deptId: number
+  deptId: number | null
+  deptName?: string
+  createdBy?: number
+  createdByName?: string
+  recipientId?: number
+  recipientName?: string
+  sourceType?: 'department' | 'personal'
+  apiKeyHash?: string
   isActive: number
   createdAt: string
 }
@@ -154,7 +161,7 @@ export async function fetchTeamSkillDetail(id: number) {
 
 export async function shareSkillToTeam(skill: {
   name: string; description: string; category: string;
-  bodyMd: string; originAgent?: string;
+  bodyMd: string; sourceType?: string; originAgent?: string;
   compatibleModels?: string; compatibleAgents?: string
 }) {
   const res = await teamApiPost<RuoyiResponse<TeamSkill>>('/team/skills', skill)
@@ -174,33 +181,68 @@ export async function fetchTeamProfile() {
   return res.data
 }
 
-export async function fetchAvailableModels() {
-  const res = await teamApiGet<RuoyiResponse<TeamModelConfig[]>>('/team/models/available')
+export async function fetchAvailableModels(name?: string) {
+  const query = name?.trim() ? '?' + new URLSearchParams({ name: name.trim() }).toString() : ''
+  const res = await teamApiGet<RuoyiResponse<TeamModelConfig[]>>(`/team/models/available${query}`)
   if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
   return res.data
 }
 
-export async function fetchModelConfigs(params?: Record<string, string>) {
-  const query = params ? '?' + new URLSearchParams(params).toString() : ''
-  const res = await teamApiGet<RuoyiPageResponse<TeamModelConfig>>(`/team/models/list${query}`)
-  return { items: res.rows ?? [], total: res.total ?? 0 }
-}
-
-export async function createModelConfig(config: Partial<TeamModelConfig>) {
-  const res = await teamApiPost<RuoyiResponse<TeamModelConfig>>('/team/models', config)
-  if (res.code !== 200) throw new Error(res.msg || '创建失败')
+export async function sharePersonalModel(model: {
+  name: string
+  provider: string
+  baseUrl: string
+  model: string
+  apiKeyHash: string
+  recipientId: number
+}) {
+  const res = await teamApiPost<RuoyiResponse<TeamModelConfig>>('/team/models/personal', {
+    ...model,
+    isActive: 1,
+  })
+  if (res.code !== 200) throw new Error(res.msg || 'share failed')
   return res.data
 }
 
-export async function updateModelConfig(config: Partial<TeamModelConfig>) {
-  const res = await teamApiPut<RuoyiResponse<TeamModelConfig>>('/team/models', config)
-  if (res.code !== 200) throw new Error(res.msg || '更新失败')
+export async function fetchMyPersonalModels() {
+  const res = await teamApiGet<RuoyiResponse<TeamModelConfig[]>>('/team/models/personal/my')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
   return res.data
 }
 
-export async function deleteModelConfigs(ids: number[]) {
-  const res = await teamApiDelete<RuoyiResponse<null>>(`/team/models/${ids.join(',')}`)
-  if (res.code !== 200) throw new Error(res.msg || '删除失败')
+export async function destroyPersonalModel(id: number) {
+  const res = await teamApiDelete<RuoyiResponse<null>>(`/team/models/personal/${id}`)
+  if (res.code !== 200) throw new Error(res.msg || '销毁失败')
+}
+
+export interface TeamUserItem {
+  userId: number
+  userName: string
+  nickName?: string
+  deptId?: number
+  deptName?: string
+}
+
+export async function searchTeamUsers(username: string) {
+  const query = '?' + new URLSearchParams({ username: username.trim() }).toString()
+  const res = await teamApiGet<RuoyiResponse<TeamUserItem[]>>(`/team/models/users/search${query}`)
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || 'query failed')
+  return res.data
+}
+
+export interface ClaudeCodeConfigResult {
+  path: string
+  model: string
+  base_url: string
+}
+
+export function configureClaudeCodeModel(model: {
+  provider: string
+  baseUrl: string
+  apiKey: string
+  model: string
+}) {
+  return invoke<ClaudeCodeConfigResult>('configure_claude_code_model', model)
 }
 
 export interface TeamEvolution {

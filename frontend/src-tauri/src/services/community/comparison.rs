@@ -31,8 +31,7 @@ pub(crate) fn compare_with_community(
     let mut comparisons = 0;
 
     for cluster in clusters.iter().filter(|cluster| cluster.can_generate_skill) {
-        let Ok(workflow_id) =
-            crate::services::workflow::workflow_id_for_cluster(conn, cluster)
+        let Ok(workflow_id) = crate::services::workflow::workflow_id_for_cluster(conn, cluster)
         else {
             continue;
         };
@@ -227,8 +226,7 @@ Return JSON only:
     )
     .await?;
 
-    let parsed: LlmRecommendationResponse =
-        serde_json::from_str(&extract_json_object(&content)?)?;
+    let parsed: LlmRecommendationResponse = serde_json::from_str(&extract_json_object(&content)?)?;
     let mut recommendations = parsed
         .skills
         .into_iter()
@@ -411,11 +409,7 @@ async fn call_llm_with_retry(
 
         if !status.is_success() {
             let preview: String = text.chars().take(500).collect();
-            last_error = format!(
-                "大模型 API 请求失败：HTTP {} {}",
-                status.as_u16(),
-                preview
-            );
+            last_error = format!("大模型 API 请求失败：HTTP {} {}", status.as_u16(), preview);
             continue;
         }
 

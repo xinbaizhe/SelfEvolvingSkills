@@ -12,38 +12,88 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="model"      column="model"       />
         <result property="apiKeyHash" column="api_key_hash"/>
         <result property="deptId"     column="dept_id"     />
+        <result property="deptName"   column="dept_name"   />
         <result property="createdBy"  column="created_by"  />
+        <result property="createdByName" column="created_by_name" />
+        <result property="recipientId" column="recipient_id" />
+        <result property="recipientName" column="recipient_name" />
         <result property="isActive"   column="is_active"   />
         <result property="createdAt"  column="created_at"  />
     </resultMap>
 
     <sql id="selectTeamModelConfigVo">
-        select id, name, provider, base_url, model, api_key_hash,
-               dept_id, created_by, is_active, created_at
-        from team_model_configs
+        select c.id, c.name, c.provider, c.base_url, c.model, c.api_key_hash,
+               c.dept_id, d.dept_name, c.created_by, u.user_name as created_by_name,
+               c.recipient_id, ru.user_name as recipient_name, c.is_active, c.created_at
+        from team_model_configs c
+        left join sys_dept d on d.dept_id = c.dept_id
+        left join sys_user u on u.user_id = c.created_by
+        left join sys_user ru on ru.user_id = c.recipient_id
     </sql>
 
     <select id="selectTeamModelConfigList" parameterType="com.ruoyi.team.domain.TeamModelConfig" resultMap="TeamModelConfigResult">
         <include refid="selectTeamModelConfigVo"/>
         <where>
+            c.dept_id is not null
             <if test="name != null and name != ''">
-                AND name like concat('%', #{name}, '%')
+                AND c.name like concat('%', #{name}, '%')
             </if>
             <if test="provider != null and provider != ''">
-                AND provider = #{provider}
+                AND c.provider = #{provider}
             </if>
-            <if test="deptId != null">
-                AND dept_id = #{deptId}
+            <if test="deptId != null and includeChildren == true">
+                AND (
+                    c.dept_id = #{deptId}
+                    OR c.dept_id in (
+                        select child.dept_id
+                        from sys_dept child
+                        where child.del_flag = '0'
+                          and find_in_set(#{deptId}, child.ancestors)
+                    )
+                )
+            </if>
+            <if test="deptId != null and includeChildren != true">
+                AND c.dept_id = #{deptId}
             </if>
             <if test="isActive != null">
-                AND is_active = #{isActive}
+                AND c.is_active = #{isActive}
+            </if>
+            ${params.dataScope}
+        </where>
+        order by c.dept_id, c.created_at desc
+    </select>
+
+    <select id="selectAvailableModelConfigs" resultMap="TeamModelConfigResult">
+        <include refid="selectTeamModelConfigVo"/>
+        <where>
+            c.is_active = 1
+            AND (
+                c.dept_id = #{deptId}
+                OR c.dept_id in (
+                    select child.dept_id
+                    from sys_dept child
+                    where child.del_flag = '0'
+                      and find_in_set(#{deptId}, child.ancestors)
+                )
+                OR (c.dept_id IS NULL AND (c.recipient_id = #{userId} OR (#{userId} IS NULL AND c.recipient_id IS NULL)))
+            )
+            <if test="name != null and name != ''">
+                AND c.name like concat('%', #{name}, '%')
             </if>
         </where>
+        order by case when c.dept_id = #{deptId} then 0 when c.dept_id is null then 2 else 1 end, c.created_at desc
+    </select>
+
+    <select id="selectMyPersonalModelConfigs" resultMap="TeamModelConfigResult">
+        <include refid="selectTeamModelConfigVo"/>
+        where c.dept_id is null
+          and c.created_by = #{createdBy}
+        order by c.created_at desc
     </select>
 
     <select id="selectTeamModelConfigById" parameterType="Long" resultMap="TeamModelConfigResult">
         <include refid="selectTeamModelConfigVo"/>
-        where id = #{id}
+        where c.id = #{id}
     </select>
 
     <insert id="insertTeamModelConfig" parameterType="com.ruoyi.team.domain.TeamModelConfig" useGeneratedKeys="true" keyProperty="id">
@@ -55,6 +105,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="apiKeyHash != null">api_key_hash,</if>
             <if test="deptId != null">dept_id,</if>
             <if test="createdBy != null">created_by,</if>
+            <if test="recipientId != null">recipient_id,</if>
             <if test="isActive != null">is_active,</if>
             created_at
         ) values (
@@ -65,6 +116,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="apiKeyHash != null">#{apiKeyHash},</if>
             <if test="deptId != null">#{deptId},</if>
             <if test="createdBy != null">#{createdBy},</if>
+            <if test="recipientId != null">#{recipientId},</if>
             <if test="isActive != null">#{isActive},</if>
             sysdate()
         )
@@ -79,6 +131,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="model != null and model != ''">model = #{model},</if>
             <if test="apiKeyHash != null">api_key_hash = #{apiKeyHash},</if>
             <if test="deptId != null">dept_id = #{deptId},</if>
+            <if test="recipientId != null">recipient_id = #{recipientId},</if>
             <if test="isActive != null">is_active = #{isActive},</if>
         </set>
         where id = #{id}
@@ -93,6 +146,13 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <foreach item="id" collection="array" open="(" separator="," close=")">
             #{id}
         </foreach>
+    </delete>
+
+    <delete id="deletePersonalModelConfigById">
+        delete from team_model_configs
+        where id = #{id}
+          and created_by = #{createdBy}
+          and dept_id is null
     </delete>
 
 </mapper>

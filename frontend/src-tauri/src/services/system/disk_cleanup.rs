@@ -1,14 +1,8 @@
-use std::{
-    collections::HashSet,
-    env,
-    path::PathBuf,
-};
+use std::{collections::HashSet, env, path::PathBuf};
 
 use serde_json::{json, Value};
 
-use super::file_cleanup::{
-    clean_directory_contents, clean_download_installers, scan_path_size,
-};
+use super::file_cleanup::{clean_directory_contents, clean_download_installers, scan_path_size};
 
 struct CleanupCandidate {
     id: &'static str,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useTeamStore } from '../../stores/useTeamStore'
 import { fetchTeamSkills, fetchTeamSkillDetail, submitEvolution, type TeamSkill } from '../../api/team'
@@ -20,6 +20,10 @@ const form = reactive({
   reason: '',
 })
 
+const selectedVersionLabel = computed(() =>
+  form.currentVersion > 0 ? `${form.skillName} v${form.currentVersion}` : '未选择 Skill'
+)
+
 const emit = defineEmits<{
   (e: 'submitted'): void
 }>()
@@ -29,7 +33,7 @@ async function loadSkills() {
   try {
     const res = await fetchTeamSkills({ pageSize: '100' })
     skills.value = res.items
-  } catch { /* ignore */ }
+  } catch { /* 团队 Skill 加载失败时仍保留弹窗 */ }
   finally { loading.value = false }
 }
 
@@ -37,14 +41,31 @@ async function onSkillSelect(skillId: number) {
   if (!skillId) {
     currentBody.value = ''
     form.currentVersion = 0
+    form.skillName = ''
+    form.proposedChange = ''
     return
   }
+  loading.value = true
   try {
     const skill = await fetchTeamSkillDetail(skillId)
     currentBody.value = skill.bodyMd || ''
     form.currentVersion = skill.version || 1
     form.skillName = skill.name
-  } catch { /* ignore */ }
+    form.proposedChange = skill.bodyMd || ''
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '加载团队 Skill 详情失败'))
+  } finally {
+    loading.value = false
+  }
+}
+
+function resetForm(skillId?: number) {
+  form.skillId = skillId || 0
+  form.proposedChange = ''
+  form.reason = ''
+  form.currentVersion = 0
+  form.skillName = ''
+  currentBody.value = ''
 }
 
 function open(skillId?: number) {
@@ -52,20 +73,19 @@ function open(skillId?: number) {
     ElMessage.warning('请先登录团队版')
     return
   }
+  resetForm(skillId)
   visible.value = true
-  form.skillId = skillId || 0
-  form.proposedChange = ''
-  form.reason = ''
-  form.currentVersion = 0
-  form.skillName = ''
-  currentBody.value = ''
   loadSkills()
   if (skillId) onSkillSelect(skillId)
 }
 
 async function doSubmit() {
-  if (!form.skillId || !form.proposedChange) {
-    ElMessage.warning('请选择 Skill 并填写改进内容')
+  if (!form.skillId || !form.proposedChange.trim()) {
+    ElMessage.warning('请选择 Skill，并填写改进后的完整内容')
+    return
+  }
+  if (!form.reason.trim()) {
+    ElMessage.warning('请填写改进理由，方便团队审核')
     return
   }
   submitting.value = true
@@ -90,9 +110,9 @@ defineExpose({ open })
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="提交协同进化提案" width="640px" top="8vh">
+  <el-dialog v-model="visible" title="提交协同进化提案" width="760px" top="6vh">
     <el-form label-position="top" @submit.prevent="doSubmit">
-      <el-form-item label="选择 Skill">
+      <el-form-item label="选择团队 Skill">
         <el-select
           v-model="form.skillId"
           placeholder="选择要进化的团队 Skill..."
@@ -110,16 +130,20 @@ defineExpose({ open })
         </el-select>
       </el-form-item>
 
-      <el-form-item v-if="currentBody" label="当前版本内容 (v{{ form.currentVersion || '?' }})">
-        <div class="body-preview">{{ currentBody.slice(0, 500) }}{{ currentBody.length > 500 ? '...' : '' }}</div>
-      </el-form-item>
+      <div v-if="currentBody" class="version-panel">
+        <div class="version-header">
+          <span>当前版本：{{ selectedVersionLabel }}</span>
+          <el-button size="small" text type="primary" @click="form.proposedChange = currentBody">恢复为当前版本</el-button>
+        </div>
+        <div class="body-preview">{{ currentBody }}</div>
+      </div>
 
-      <el-form-item label="改进后内容 (Markdown)">
+      <el-form-item label="改进后的完整内容 (Markdown)">
         <el-input
           v-model="form.proposedChange"
           type="textarea"
-          :rows="8"
-          placeholder="粘贴改进后的完整 Skill 内容..."
+          :rows="10"
+          placeholder="选择 Skill 后会自动带入当前内容，请在此基础上修改。"
         />
       </el-form-item>
 
@@ -127,8 +151,8 @@ defineExpose({ open })
         <el-input
           v-model="form.reason"
           type="textarea"
-          :rows="2"
-          placeholder="简要说明为什么这样改、改进点是什么"
+          :rows="3"
+          placeholder="说明触发场景、改动点和预期收益。"
         />
       </el-form-item>
     </el-form>
@@ -141,13 +165,29 @@ defineExpose({ open })
 </template>
 
 <style scoped>
-.body-preview {
-  max-height: 200px;
-  overflow-y: auto;
+.version-panel {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.version-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   padding: 10px 12px;
-  background: #f5f7fa;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.body-preview {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 12px;
+  background: rgba(148, 163, 184, .08);
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;

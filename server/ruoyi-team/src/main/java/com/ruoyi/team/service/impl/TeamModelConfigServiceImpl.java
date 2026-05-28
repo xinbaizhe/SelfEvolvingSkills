@@ -1,9 +1,9 @@
 package com.ruoyi.team.service.impl;
 
 import java.util.List;
-import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import com.ruoyi.common.annotation.DataScope;
 import com.ruoyi.team.domain.TeamModelConfig;
 import com.ruoyi.team.mapper.TeamModelConfigMapper;
 import com.ruoyi.team.service.ITeamModelConfigService;
@@ -20,16 +20,24 @@ public class TeamModelConfigServiceImpl implements ITeamModelConfigService {
     }
 
     @Override
+    @DataScope(deptAlias = "c", deptField = "dept_id")
     public List<TeamModelConfig> selectTeamModelConfigList(TeamModelConfig config) {
         return modelConfigMapper.selectTeamModelConfigList(config);
     }
 
     @Override
     public List<TeamModelConfig> selectActiveModelConfigsByDeptId(Long deptId) {
-        TeamModelConfig query = new TeamModelConfig();
-        query.setDeptId(deptId);
-        query.setIsActive(1);
-        return modelConfigMapper.selectTeamModelConfigList(query);
+        return modelConfigMapper.selectAvailableModelConfigs(deptId, null, null);
+    }
+
+    @Override
+    public List<TeamModelConfig> selectAvailableModelConfigs(Long deptId, Long userId, String name) {
+        return modelConfigMapper.selectAvailableModelConfigs(deptId, userId, name);
+    }
+
+    @Override
+    public List<TeamModelConfig> selectMyPersonalModelConfigs(Long createdBy) {
+        return modelConfigMapper.selectMyPersonalModelConfigs(createdBy);
     }
 
     @Override
@@ -52,5 +60,10 @@ public class TeamModelConfigServiceImpl implements ITeamModelConfigService {
     @Override
     public int deleteTeamModelConfigByIds(Long[] ids) {
         return modelConfigMapper.deleteTeamModelConfigByIds(ids);
+    }
+
+    @Override
+    public int deletePersonalModelConfigById(Long id, Long createdBy) {
+        return modelConfigMapper.deletePersonalModelConfigById(id, createdBy);
     }
 }

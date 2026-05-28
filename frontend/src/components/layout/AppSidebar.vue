@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useTeamStore } from '../../stores/useTeamStore'
 
 defineProps<{ collapsed: boolean }>()
 
 const route = useRoute()
+const teamStore = useTeamStore()
 
-const menuItems = [
+const baseMenuItems = [
   { path: '/admin', title: '系统管理', match: ['/admin', '/admin/login', '/admin/users'] },
   { path: '/workbench', title: 'Skills 工作台', match: ['/workbench', '/workflows', '/drafts', '/garden'] },
   { path: '/skills', title: '已有 Skills', match: ['/skills'] },
@@ -14,7 +16,16 @@ const menuItems = [
   { path: '/resources', title: '资源与配置', match: ['/resources', '/sources', '/admin/config'] },
   { path: '/community', title: '社区 Skills', match: ['/community'] },
   { path: '/team', title: '团队 Skills', match: ['/team'] },
+  { path: '/vuln-scanner', title: '漏洞查询', match: ['/vuln-scanner'] },
 ]
+
+const menuItems = computed(() => {
+  if (!teamStore.isAuthenticated) return baseMenuItems
+  return [
+    ...baseMenuItems,
+    { path: '/team/models', title: '团队模型管理', match: ['/team/models'] },
+  ]
+})
 
 const activePath = computed(() => route.path)
 

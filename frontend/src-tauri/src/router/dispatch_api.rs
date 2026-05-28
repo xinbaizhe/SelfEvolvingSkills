@@ -1,8 +1,8 @@
 use anyhow::anyhow;
 use serde_json::json;
 
-use crate::{open_conn, parse_scope_payload, ApiResponse, SourceUpdate};
 use crate::services;
+use crate::{open_conn, parse_scope_payload, ApiResponse, SourceUpdate};
 
 pub(crate) async fn dispatch_api(
     state: &crate::AppState,
@@ -29,8 +29,7 @@ pub(crate) async fn dispatch_api(
             .unwrap_or(true);
         if api_key_empty {
             let conn = open_conn(&state.db_path)?;
-            if let Ok(Some(stored_key)) =
-                services::admin_service::get_config(&conn, "llm_api_key")
+            if let Ok(Some(stored_key)) = services::admin_service::get_config(&conn, "llm_api_key")
             {
                 if let Some(obj) = body.as_object_mut() {
                     obj.insert(
@@ -66,9 +65,7 @@ pub(crate) async fn dispatch_api(
             let app_handle = app.clone();
             return tokio::task::spawn_blocking(move || {
                 let (cache, value) =
-                    services::system::build_disk_usage_cache_with_progress(
-                        app_handle, scan_body,
-                    );
+                    services::system::build_disk_usage_cache_with_progress(app_handle, scan_body);
                 if let Ok(mut guard) = cache_ref.lock() {
                     *guard = Some(cache);
                 }
@@ -123,9 +120,7 @@ pub(crate) async fn dispatch_api(
         };
         let path = path.unwrap_or_else(|| cache.root_path.clone());
         return Ok(json!(ApiResponse::ok(
-            services::system::disk_usage_cached_view_paged(
-                cache, &path, &filter, page, size,
-            )
+            services::system::disk_usage_cached_view_paged(cache, &path, &filter, page, size,)
         )));
     }
 
@@ -176,11 +171,9 @@ pub(crate) async fn dispatch_api(
         let q_str = query.search.unwrap_or_default();
         let page = query.page.unwrap_or(1);
         let size = query.size.unwrap_or(20);
-        return services::community::search_community_skills(
-            &state.db_path, &q_str, page, size,
-        )
-        .await
-        .map(|value| json!(ApiResponse::ok(value)));
+        return services::community::search_community_skills(&state.db_path, &q_str, page, size)
+            .await
+            .map(|value| json!(ApiResponse::ok(value)));
     }
 
     if matches!(
@@ -207,10 +200,10 @@ pub(crate) async fn dispatch_api(
         ("GET", "/health") | ("GET", "health") => {
             Ok(json!(ApiResponse::ok(json!({ "status": "ok" }))))
         }
-        ("GET", "/scan/history") | ("GET", "scan/history") => super::helpers::list_scan_history(
-            &conn, &query,
-        )
-        .map(|value| json!(ApiResponse::ok(value))),
+        ("GET", "/scan/history") | ("GET", "scan/history") => {
+            super::helpers::list_scan_history(&conn, &query)
+                .map(|value| json!(ApiResponse::ok(value)))
+        }
         ("GET", "/scan/sources") | ("GET", "scan/sources") => {
             services::scan::sync_source_configs(&conn)?;
             services::scan::list_sources(&conn).map(|value| json!(ApiResponse::ok(value)))
@@ -228,9 +221,7 @@ pub(crate) async fn dispatch_api(
             services::scan::update_source(&conn, agent_id, payload)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
-        ("DELETE", p)
-            if p.starts_with("/scan/sources/") || p.starts_with("scan/sources/") =>
-        {
+        ("DELETE", p) if p.starts_with("/scan/sources/") || p.starts_with("scan/sources/") => {
             let agent_id = p
                 .trim_start_matches('/')
                 .trim_start_matches("scan/sources/");
@@ -239,13 +230,10 @@ pub(crate) async fn dispatch_api(
                 json!({ "agent_id": agent_id, "message": "Source reset" })
             )))
         }
-        ("GET", "/skills") | ("GET", "skills") => {
-            services::skills_crud::list_skills(&conn, &query)
-                .map(|value| json!(ApiResponse::ok(value)))
-        }
+        ("GET", "/skills") | ("GET", "skills") => services::skills_crud::list_skills(&conn, &query)
+            .map(|value| json!(ApiResponse::ok(value))),
         ("GET", "/skills/categories") | ("GET", "skills/categories") => {
-            services::skills_crud::list_categories(&conn)
-                .map(|value| json!(ApiResponse::ok(value)))
+            services::skills_crud::list_categories(&conn).map(|value| json!(ApiResponse::ok(value)))
         }
         ("POST", "/skills/import") | ("POST", "skills/import") => {
             services::import_export::import_skills(&conn, body)
@@ -264,8 +252,7 @@ pub(crate) async fn dispatch_api(
                 .map(|value| json!(ApiResponse::ok(value)))
         }
         ("PUT", p) if p.starts_with("/skills/") || p.starts_with("skills/") => {
-            let name =
-                crate::url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
+            let name = crate::url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
             services::skills_crud::update_skill(
                 &conn,
                 &name,
@@ -274,24 +261,19 @@ pub(crate) async fn dispatch_api(
             .map(|value| json!(ApiResponse::ok(value)))
         }
         ("DELETE", p) if p.starts_with("/skills/") || p.starts_with("skills/") => {
-            let name =
-                crate::url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
+            let name = crate::url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
             services::skills_crud::delete_skill(&conn, &name)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
         ("GET", p) if p.starts_with("/skills/") || p.starts_with("skills/") => {
-            let name =
-                crate::url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
+            let name = crate::url_decode(p.trim_start_matches('/').trim_start_matches("skills/"));
             services::skills_crud::get_skill(&conn, &name, query.source_type.as_deref())
                 .map(|value| json!(ApiResponse::ok(value)))
         }
-        ("GET", "/agents") | ("GET", "agents") => {
-            services::agents_crud::list_agents(&conn, &query)
-                .map(|value| json!(ApiResponse::ok(value)))
-        }
+        ("GET", "/agents") | ("GET", "agents") => services::agents_crud::list_agents(&conn, &query)
+            .map(|value| json!(ApiResponse::ok(value))),
         ("PUT", p) if p.starts_with("/agents/") || p.starts_with("agents/") => {
-            let name =
-                crate::url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
+            let name = crate::url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
             services::agents_crud::update_agent(
                 &conn,
                 &name,
@@ -300,8 +282,7 @@ pub(crate) async fn dispatch_api(
             .map(|value| json!(ApiResponse::ok(value)))
         }
         ("DELETE", p) if p.starts_with("/agents/") || p.starts_with("agents/") => {
-            let name =
-                crate::url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
+            let name = crate::url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
             services::agents_crud::delete_agent(&conn, &name)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
@@ -318,26 +299,23 @@ pub(crate) async fn dispatch_api(
                 .map(|value| json!(ApiResponse::ok(value)))
         }
         ("GET", p) if p.starts_with("/agents/") || p.starts_with("agents/") => {
-            let name =
-                crate::url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
+            let name = crate::url_decode(p.trim_start_matches('/').trim_start_matches("agents/"));
             services::agents_crud::get_agent(&conn, &name)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
-        ("GET", "/stats/summary") | ("GET", "stats/summary") => super::helpers::stats_summary(
-            &conn,
-        )
-        .map(|value| json!(ApiResponse::ok(value))),
+        ("GET", "/stats/summary") | ("GET", "stats/summary") => {
+            super::helpers::stats_summary(&conn).map(|value| json!(ApiResponse::ok(value)))
+        }
         ("GET", "/stats/skills/top") | ("GET", "stats/skills/top") => {
             super::helpers::top_skills(&conn, query.limit.unwrap_or(20))
                 .map(|value| json!(ApiResponse::ok(value)))
         }
-        ("GET", "/stats/skills/by-category")
-        | ("GET", "stats/skills/by-category") => super::helpers::skills_by_category(&conn)
-            .map(|value| json!(ApiResponse::ok(value))),
-        ("GET", "/sessions") | ("GET", "sessions") => super::helpers::list_sessions(
-            &conn, &query,
-        )
-        .map(|value| json!(ApiResponse::ok(value))),
+        ("GET", "/stats/skills/by-category") | ("GET", "stats/skills/by-category") => {
+            super::helpers::skills_by_category(&conn).map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("GET", "/sessions") | ("GET", "sessions") => {
+            super::helpers::list_sessions(&conn, &query).map(|value| json!(ApiResponse::ok(value)))
+        }
         ("GET", p) if p.starts_with("/sessions/") || p.starts_with("sessions/") => {
             let session_id =
                 crate::url_decode(p.trim_start_matches('/').trim_start_matches("sessions/"));
@@ -346,8 +324,7 @@ pub(crate) async fn dispatch_api(
         }
         ("GET", "/admin/system") | ("GET", "admin/system") => {
             services::scan::sync_source_configs(&conn)?;
-            services::admin_service::system_info(&conn)
-                .map(|value| json!(ApiResponse::ok(value)))
+            services::admin_service::system_info(&conn).map(|value| json!(ApiResponse::ok(value)))
         }
         ("GET", "/admin/config/scan-paths") | ("GET", "admin/config/scan-paths") => {
             services::scan::sync_source_configs(&conn)?;
@@ -368,24 +345,21 @@ pub(crate) async fn dispatch_api(
                 .map(|value| json!(ApiResponse::ok(value)))
         }
         ("GET", "/export/agents") | ("GET", "export/agents") => {
-            services::import_export::export_agents(&conn)
-                .map(|value| json!(ApiResponse::ok(value)))
+            services::import_export::export_agents(&conn).map(|value| json!(ApiResponse::ok(value)))
         }
         ("PUT", "/admin/config/llm") | ("PUT", "admin/config/llm") => {
             services::admin_service::save_llm_config(&conn, body)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
-        ("POST", "/admin/login") | ("POST", "admin/login") => {
-            Ok(json!(ApiResponse::ok(json!({
-                "token": "tauri-local",
-                "username": body
-                    .as_ref()
-                    .and_then(|v| v.get("username"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("local"),
-                "user": { "id": 1, "username": "local" }
-            }))))
-        }
+        ("POST", "/admin/login") | ("POST", "admin/login") => Ok(json!(ApiResponse::ok(json!({
+            "token": "tauri-local",
+            "username": body
+                .as_ref()
+                .and_then(|v| v.get("username"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("local"),
+            "user": { "id": 1, "username": "local" }
+        })))),
         ("GET", "/admin/users") | ("GET", "admin/users") => {
             services::admin_service::list_admin_users(&conn)
                 .map(|value| json!(ApiResponse::ok(value)))
@@ -402,9 +376,7 @@ pub(crate) async fn dispatch_api(
             services::admin_service::update_admin_user(&conn, id, body)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
-        ("DELETE", p)
-            if p.starts_with("/admin/users/") || p.starts_with("admin/users/") =>
-        {
+        ("DELETE", p) if p.starts_with("/admin/users/") || p.starts_with("admin/users/") => {
             let id = p
                 .trim_start_matches('/')
                 .trim_start_matches("admin/users/")
@@ -496,23 +468,21 @@ pub(crate) async fn dispatch_api(
         ("GET", "/system/database") | ("GET", "system/database") => Ok(json!(ApiResponse::ok(
             services::system::get_database_info(&state.db_path, &conn)
         ))),
-        ("GET", "/system/disk-cleanup/scan") | ("GET", "system/disk-cleanup/scan") => {
+        ("GET", "/system/disk-cleanup/scan") | ("GET", "system/disk-cleanup/scan") => Ok(json!(
+            ApiResponse::ok(services::system::scan_system_disk_cleanup())
+        )),
+        ("POST", "/system/disk-cleanup/clean") | ("POST", "system/disk-cleanup/clean") => {
             Ok(json!(ApiResponse::ok(
-                services::system::scan_system_disk_cleanup()
+                services::system::clean_system_disk_items(body)
             )))
         }
-        ("POST", "/system/disk-cleanup/clean")
-        | ("POST", "system/disk-cleanup/clean") => Ok(json!(ApiResponse::ok(
-            services::system::clean_system_disk_items(body)
-        ))),
         ("POST", "/system/clear-data") | ("POST", "system/clear-data") => Ok(json!(
             ApiResponse::ok(services::system::clear_all_data(&conn))
         )),
-        ("POST", "/system/clear-logs") | ("POST", "system/clear-logs") => Ok(json!(
-            ApiResponse::ok(services::system::clear_logs(&conn))
-        )),
-        ("POST", "/system/initialize-database")
-        | ("POST", "system/initialize-database") => {
+        ("POST", "/system/clear-logs") | ("POST", "system/clear-logs") => {
+            Ok(json!(ApiResponse::ok(services::system::clear_logs(&conn))))
+        }
+        ("POST", "/system/initialize-database") | ("POST", "system/initialize-database") => {
             let value = services::system::initialize_database(&conn);
             services::scan::sync_source_configs(&conn)?;
             Ok(json!(ApiResponse::ok(value)))

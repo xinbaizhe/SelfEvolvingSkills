@@ -20,7 +20,6 @@ import AdminDiskCleanupPanel from './AdminDiskCleanupPanel.vue'
 import AdminSessionsPanel from './AdminSessionsPanel.vue'
 import AdminMaintenanceSection from './AdminMaintenanceSection.vue'
 import AdminServicePanel from './AdminServicePanel.vue'
-import AdminModelConfigPanel from './AdminModelConfigPanel.vue'
 
 interface SystemInfo {
   runtime: string
@@ -446,13 +445,6 @@ async function handleInitializeDatabase() {
     </section>
 
     <AdminServicePanel :llm-config="llmConfig" @config="openResourceConfig" />
-
-    <section class="section">
-      <div class="section-head">
-        <h3>团队模型配置</h3>
-      </div>
-      <AdminModelConfigPanel />
-    </section>
 
     <section class="section">
       <div class="section-head">

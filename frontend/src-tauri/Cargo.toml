@@ -1,13 +1,13 @@
 [package]
 name = "self-evolving-skills"
-version = "2.0.0"
+version = "2.0.1"
 description = "Self Evolving Skills Tauri desktop app"
 authors = ["SelfEvolvingSkills"]
 edition = "2021"
 
 [package.metadata]
 name = "self-evolving-skills"
-version = "2.0.0"
+version = "2.0.1"
 
 [lib]
 name = "self_evolving_skills_lib"

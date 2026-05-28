@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.VulnScanJobMapper">
+
+    <resultMap type="com.ruoyi.team.domain.VulnScanJob" id="VulnScanJobResult">
+        <id     property="id"             column="id"              />
+        <result property="scanType"       column="scan_type"       />
+        <result property="target"         column="target"          />
+        <result property="status"         column="status"          />
+        <result property="totalFindings"  column="total_findings"  />
+        <result property="criticalCount"  column="critical_count"  />
+        <result property="highCount"      column="high_count"      />
+        <result property="mediumCount"    column="medium_count"    />
+        <result property="lowCount"       column="low_count"       />
+        <result property="userId"         column="user_id"         />
+        <result property="deptId"         column="dept_id"         />
+        <result property="createdAt"      column="created_at"      />
+    </resultMap>
+
+    <sql id="selectVulnScanJobVo">
+        select id, scan_type, target, status, total_findings,
+               critical_count, high_count, medium_count, low_count,
+               user_id, dept_id, created_at
+        from vuln_scan_jobs
+    </sql>
+
+    <select id="selectVulnScanJobList" parameterType="com.ruoyi.team.domain.VulnScanJob" resultMap="VulnScanJobResult">
+        <include refid="selectVulnScanJobVo"/>
+        <where>
+            <if test="scanType != null and scanType != ''">
+                AND scan_type = #{scanType}
+            </if>
+            <if test="status != null and status != ''">
+                AND status = #{status}
+            </if>
+            <if test="userId != null">
+                AND user_id = #{userId}
+            </if>
+            <if test="deptId != null">
+                AND dept_id = #{deptId}
+            </if>
+        </where>
+        order by created_at desc
+    </select>
+
+    <select id="selectVulnScanJobById" parameterType="Long" resultMap="VulnScanJobResult">
+        <include refid="selectVulnScanJobVo"/>
+        where id = #{id}
+    </select>
+
+    <insert id="insertVulnScanJob" parameterType="com.ruoyi.team.domain.VulnScanJob" useGeneratedKeys="true" keyProperty="id">
+        insert into vuln_scan_jobs (
+            scan_type, target, status,
+            total_findings, critical_count, high_count, medium_count, low_count,
+            user_id, dept_id, created_at
+        ) values (
+            #{scanType}, #{target}, #{status},
+            #{totalFindings}, #{criticalCount}, #{highCount}, #{mediumCount}, #{lowCount},
+            #{userId}, #{deptId}, sysdate()
+        )
+    </insert>
+
+    <update id="updateVulnScanJob" parameterType="com.ruoyi.team.domain.VulnScanJob">
+        update vuln_scan_jobs
+        <set>
+            <if test="status != null">status = #{status},</if>
+            <if test="totalFindings != null">total_findings = #{totalFindings},</if>
+            <if test="criticalCount != null">critical_count = #{criticalCount},</if>
+            <if test="highCount != null">high_count = #{highCount},</if>
+            <if test="mediumCount != null">medium_count = #{mediumCount},</if>
+            <if test="lowCount != null">low_count = #{lowCount},</if>
+        </set>
+        where id = #{id}
+    </update>
+
+    <delete id="deleteVulnScanJobById" parameterType="Long">
+        delete from vuln_scan_jobs where id = #{id}
+    </delete>
+
+</mapper>

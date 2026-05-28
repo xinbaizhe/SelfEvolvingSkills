@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.VulnFindingMapper">
+
+    <resultMap type="com.ruoyi.team.domain.VulnFinding" id="VulnFindingResult">
+        <id     property="id"          column="id"          />
+        <result property="severity"    column="severity"    />
+        <result property="type"        column="type"        />
+        <result property="location"    column="location"    />
+        <result property="description" column="description" />
+        <result property="suggestion"  column="suggestion"  />
+    </resultMap>
+
+    <select id="selectFindingsByJobId" parameterType="Long" resultMap="VulnFindingResult">
+        select id, severity, type, location, description, suggestion
+        from vuln_scan_findings
+        where job_id = #{jobId}
+        order by
+            case severity
+                when 'CRITICAL' then 1
+                when 'HIGH' then 2
+                when 'MEDIUM' then 3
+                when 'LOW' then 4
+                else 5
+            end,
+            id
+    </select>
+
+    <insert id="insertVulnFinding" parameterType="com.ruoyi.team.domain.VulnFinding" useGeneratedKeys="true" keyProperty="id">
+        insert into vuln_scan_findings (
+            job_id, severity, type, location, description, suggestion
+        ) values (
+            #{jobId}, #{severity}, #{type}, #{location}, #{description}, #{suggestion}
+        )
+    </insert>
+
+    <insert id="batchInsertVulnFindings" parameterType="list">
+        insert into vuln_scan_findings (job_id, severity, type, location, description, suggestion)
+        values
+        <foreach collection="list" item="item" separator=",">
+            (#{item.jobId}, #{item.severity}, #{item.type}, #{item.location}, #{item.description}, #{item.suggestion})
+        </foreach>
+    </insert>
+
+    <delete id="deleteFindingsByJobId" parameterType="Long">
+        delete from vuln_scan_findings where job_id = #{jobId}
+    </delete>
+
+</mapper>

@@ -53,6 +53,39 @@ CREATE TABLE team_evolutions (
     INDEX idx_team_evolutions_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='协同进化';
 
+-- 漏洞扫描任务
+DROP TABLE IF EXISTS vuln_scan_jobs;
+CREATE TABLE vuln_scan_jobs (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    scan_type       VARCHAR(20)  NOT NULL COMMENT '扫描类型: url/code',
+    target          VARCHAR(1000) NOT NULL COMMENT '扫描目标URL或目录',
+    status          VARCHAR(20)  DEFAULT 'running' COMMENT 'running/completed',
+    total_findings  INT DEFAULT 0,
+    critical_count  INT DEFAULT 0,
+    high_count      INT DEFAULT 0,
+    medium_count    INT DEFAULT 0,
+    low_count       INT DEFAULT 0,
+    user_id         BIGINT NOT NULL,
+    dept_id         BIGINT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_vuln_scan_user (user_id),
+    INDEX idx_vuln_scan_type (scan_type),
+    INDEX idx_vuln_scan_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='漏洞扫描任务';
+
+-- 漏洞发现明细
+DROP TABLE IF EXISTS vuln_scan_findings;
+CREATE TABLE vuln_scan_findings (
+    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    job_id      BIGINT NOT NULL,
+    severity    VARCHAR(20) NOT NULL COMMENT 'CRITICAL/HIGH/MEDIUM/LOW',
+    type        VARCHAR(100) NOT NULL,
+    location    VARCHAR(1000),
+    description TEXT,
+    suggestion  TEXT,
+    INDEX idx_vuln_findings_job (job_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='漏洞发现明细';
+
 -- 模型配置
 DROP TABLE IF EXISTS team_model_configs;
 CREATE TABLE team_model_configs (
@@ -64,6 +97,8 @@ CREATE TABLE team_model_configs (
     api_key_hash VARCHAR(500),
     dept_id     BIGINT,
     created_by  BIGINT,
+    recipient_id BIGINT COMMENT '个人转赠接收用户',
     is_active   TINYINT(1) DEFAULT 1,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_team_model_recipient (recipient_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='团队模型配置';

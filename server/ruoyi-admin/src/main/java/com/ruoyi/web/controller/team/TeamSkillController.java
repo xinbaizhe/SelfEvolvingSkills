@@ -9,6 +9,7 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.access.prepost.PreAuthorize;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -42,6 +43,7 @@ import com.ruoyi.team.service.ITeamSkillService;
 
 @RestController
 @RequestMapping("/api/team")
+@PreAuthorize("isAuthenticated()")
 public class TeamSkillController extends BaseController {
 
     @Autowired
@@ -66,15 +68,17 @@ public class TeamSkillController extends BaseController {
     private AuthenticationManager authenticationManager;
 
     @Anonymous
+    @PreAuthorize("permitAll()")
     @GetMapping("/ping")
     public AjaxResult ping() {
         Map<String, Object> result = new HashMap<>();
         result.put("status", "ok");
-        result.put("version", "2.0.0");
+        result.put("version", "2.0.1");
         return success(result);
     }
 
     @Anonymous
+    @PreAuthorize("permitAll()")
     @PostMapping("/login")
     public AjaxResult login(@RequestBody Map<String, String> body) {
         String username = body.get("username");
@@ -136,7 +140,11 @@ public class TeamSkillController extends BaseController {
     public AjaxResult profile() {
         LoginUser loginUser = SecurityUtils.getLoginUser();
         Long deptId = loginUser.getUser().getDeptId();
-        List<TeamModelConfig> models = modelConfigService.selectActiveModelConfigsByDeptId(deptId);
+        List<TeamModelConfig> models = modelConfigService.selectAvailableModelConfigs(
+            deptId,
+            loginUser.getUser().getUserId(),
+            null
+        );
 
         Map<String, Object> result = new HashMap<>();
         result.put("username", loginUser.getUser().getUserName());
@@ -174,6 +182,15 @@ public class TeamSkillController extends BaseController {
 
     @PostMapping("/skills")
     public AjaxResult add(@RequestBody TeamSkill skill) {
+        if (StringUtils.isEmpty(skill.getSourceType())) {
+            skill.setSourceType("skill");
+        }
+        if (StringUtils.isEmpty(skill.getStatus())) {
+            skill.setStatus("published");
+        }
+        if (skill.getVersion() == null) {
+            skill.setVersion(1);
+        }
         skill.setAuthorId(SecurityUtils.getUserId());
         skill.setDeptId(SecurityUtils.getLoginUser().getUser().getDeptId());
         return toAjax(teamSkillService.insertTeamSkill(skill));

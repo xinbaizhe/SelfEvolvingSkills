@@ -169,9 +169,10 @@ pub(crate) async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
     let response = req.send().await?;
 
     let status = response.status();
-    let text = response.text().await.unwrap_or_else(|e| {
-        format!("[Failed to read response body: {e}]")
-    });
+    let text = response
+        .text()
+        .await
+        .unwrap_or_else(|e| format!("[Failed to read response body: {e}]"));
     if status.is_success() {
         Ok(json!({ "message": "大模型连接测试成功" }))
     } else {

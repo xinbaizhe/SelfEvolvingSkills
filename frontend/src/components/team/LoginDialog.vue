@@ -4,7 +4,7 @@ import { useTeamStore } from '../../stores/useTeamStore'
 
 const store = useTeamStore()
 const visible = ref(false)
-const form = reactive({ serverUrl: 'http://localhost:8080', username: '', password: '' })
+const form = reactive({ serverUrl: '', username: '', password: '' })
 const loading = ref(false)
 const localError = ref('')
 
@@ -93,7 +93,7 @@ defineExpose({ open })
               <input
                 v-model="form.serverUrl"
                 type="text"
-                placeholder="http://192.168.1.100:8080"
+                placeholder="输入服务器地址"
                 autocomplete="url"
               />
             </div>

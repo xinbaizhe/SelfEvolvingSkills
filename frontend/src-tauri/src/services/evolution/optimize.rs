@@ -71,8 +71,7 @@ pub(super) async fn refine_clusters_with_llm(
     )
     .await?;
 
-    let parsed: LlmClusterResponse =
-        serde_json::from_str(&utils::extract_json_object(&content)?)?;
+    let parsed: LlmClusterResponse = serde_json::from_str(&utils::extract_json_object(&content)?)?;
     for decision in parsed.clusters {
         if let Some(cluster) = clusters
             .iter_mut()
@@ -250,9 +249,7 @@ pub(super) async fn optimize_drafts_with_llm(
 
         let fixed = match multi_agent_review_draft(db_path, cluster, &draft_body, None).await {
             Ok(f) => f,
-            Err(_) => {
-                draft_body.clone()
-            }
+            Err(_) => draft_body.clone(),
         };
 
         if fixed != draft_body {
@@ -409,7 +406,9 @@ pub(super) async fn qa_drafts_with_llm(
                 "qa_review",
                 &format!(
                     "反馈修正第 {}/{} 轮：{}...",
-                    retries, super::MAX_REVIEW_RETRIES, cluster.name
+                    retries,
+                    super::MAX_REVIEW_RETRIES,
+                    cluster.name
                 ),
             );
             let review_feedback_str = serde_json::to_string(&json!({
@@ -423,7 +422,10 @@ pub(super) async fn qa_drafts_with_llm(
             .unwrap_or_default();
 
             let improved = match multi_agent_review_draft(
-                db_path, cluster, &best_draft, Some(&review_feedback_str),
+                db_path,
+                cluster,
+                &best_draft,
+                Some(&review_feedback_str),
             )
             .await
             {
@@ -703,7 +705,10 @@ pub(super) fn generate_recommendations(
                     "community",
                     Some(*cid),
                     0.85,
-                    format!("社区 {} ({} stars) 与本地 Skill 同名，建议替换", repo, stars),
+                    format!(
+                        "社区 {} ({} stars) 与本地 Skill 同名，建议替换",
+                        repo, stars
+                    ),
                 ),
                 (Some((cid, repo, stars)), _) if *stars > 500 => (
                     "install",

@@ -25,6 +25,7 @@ pub(crate) use router::{community_skill_raw_url, fetch_community_skill_markdown}
 pub(crate) use services::admin_service::{get_config, get_config_bool};
 use services::scan::{enabled_source_paths, sync_source_configs};
 use services::team_service::{call_server_logout, TeamState};
+use tauri_plugin_opener::OpenerExt;
 
 type AppResult<T> = std::result::Result<T, String>;
 
@@ -212,6 +213,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             health,
+            open_external_url,
+            configure_claude_code_model,
             api_request,
             select_directory,
             start_watchers,
@@ -237,6 +240,117 @@ pub fn run() {
 #[tauri::command]
 fn health() -> ApiResponse<Value> {
     ApiResponse::ok(json!({ "status": "ok", "runtime": "tauri-rust" }))
+}
+
+#[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> AppResult<()> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err("only http and https URLs can be opened".to_string());
+    }
+    app.opener()
+        .open_url(trimmed, None::<&str>)
+        .map_err(|err| err.to_string())
+}
+
+#[derive(Debug, Serialize)]
+struct ClaudeCodeConfigResult {
+    path: String,
+    model: String,
+    base_url: String,
+}
+
+#[tauri::command]
+fn configure_claude_code_model(
+    app: AppHandle,
+    provider: String,
+    base_url: String,
+    api_key: String,
+    model: String,
+) -> AppResult<ClaudeCodeConfigResult> {
+    let provider = provider.trim();
+    let base_url = base_url.trim();
+    let api_key = api_key.trim();
+    let model = model.trim();
+
+    if base_url.is_empty() {
+        return Err("Base URL cannot be empty".to_string());
+    }
+    if api_key.is_empty() {
+        return Err("API Key cannot be empty".to_string());
+    }
+    if model.is_empty() {
+        return Err("Model cannot be empty".to_string());
+    }
+
+    let claude_dir = app
+        .path()
+        .home_dir()
+        .map_err(|err| err.to_string())?
+        .join(".claude");
+    fs::create_dir_all(&claude_dir).map_err(|err| err.to_string())?;
+    let settings_path = claude_dir.join("settings.json");
+
+    let mut settings = if settings_path.exists() {
+        let raw = fs::read_to_string(&settings_path).map_err(|err| err.to_string())?;
+        serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    let settings_obj = settings
+        .as_object_mut()
+        .ok_or_else(|| "Claude Code settings must be a JSON object".to_string())?;
+    let env_value = settings_obj.entry("env").or_insert_with(|| json!({}));
+    if !env_value.is_object() {
+        *env_value = json!({});
+    }
+    let env = env_value
+        .as_object_mut()
+        .ok_or_else(|| "Claude Code env settings must be a JSON object".to_string())?;
+
+    env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        Value::String(base_url.to_string()),
+    );
+    for (key, value) in claude_code_model_envs(model) {
+        env.insert(key.to_string(), Value::String(value));
+    }
+    if provider.eq_ignore_ascii_case("anthropic") {
+        env.insert(
+            "ANTHROPIC_API_KEY".to_string(),
+            Value::String(api_key.to_string()),
+        );
+        env.remove("ANTHROPIC_AUTH_TOKEN");
+    } else {
+        env.insert(
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            Value::String(api_key.to_string()),
+        );
+        env.remove("ANTHROPIC_API_KEY");
+    }
+
+    let pretty = serde_json::to_string_pretty(&settings).map_err(|err| err.to_string())?;
+    fs::write(&settings_path, pretty).map_err(|err| err.to_string())?;
+
+    Ok(ClaudeCodeConfigResult {
+        path: settings_path.to_string_lossy().to_string(),
+        model: model.to_string(),
+        base_url: base_url.to_string(),
+    })
+}
+
+fn claude_code_model_envs(model: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("ANTHROPIC_DEFAULT_HAIKU_MODEL", model.to_string()),
+        ("ANTHROPIC_DEFAULT_OPUS_MODEL", model.to_string()),
+        ("ANTHROPIC_DEFAULT_SONNET_MODEL", model.to_string()),
+        ("ANTHROPIC_MODEL", model.to_string()),
+        ("ANTHROPIC_SMALL_FAST_MODEL", model.to_string()),
+    ]
 }
 
 #[tauri::command]

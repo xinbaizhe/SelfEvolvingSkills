@@ -12,9 +12,9 @@ use super::file_cleanup::{
     scan_full_path_size, DirectoryStats,
 };
 use super::utils::{
-    default_system_root, disk_node_json, existing_reveal_target, is_log_dir_path,
-    is_log_like_path, is_protected_delete_target, is_reparse_point, normalize_db_path,
-    parent_path_string, path_to_db_string, reveal_path_in_file_manager, unix_timestamp_string,
+    default_system_root, disk_node_json, existing_reveal_target, is_log_dir_path, is_log_like_path,
+    is_protected_delete_target, is_reparse_point, normalize_db_path, parent_path_string,
+    path_to_db_string, reveal_path_in_file_manager, unix_timestamp_string,
 };
 use super::DiskUsageCache;
 
@@ -66,11 +66,7 @@ pub(crate) fn disk_usage_cache_status(cache: Option<&DiskUsageCache>) -> Value {
     }
 }
 
-pub(crate) fn disk_usage_cached_view(
-    cache: &DiskUsageCache,
-    path: &str,
-    filter: &str,
-) -> Value {
+pub(crate) fn disk_usage_cached_view(cache: &DiskUsageCache, path: &str, filter: &str) -> Value {
     disk_usage_cached_view_paged(cache, path, filter, 1, 200)
 }
 
@@ -110,7 +106,11 @@ pub(crate) fn disk_usage_cached_view_paged(
             .filter_map(|path| cache.nodes_by_path.get(path))
             .cloned()
             .collect::<Vec<_>>();
-        entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes).then_with(|| a.name.cmp(&b.name)));
+        entries.sort_by(|a, b| {
+            b.size_bytes
+                .cmp(&a.size_bytes)
+                .then_with(|| a.name.cmp(&b.name))
+        });
         let total_entries = entries.len();
         let entries = entries
             .into_iter()
@@ -278,10 +278,7 @@ pub(crate) fn reveal_disk_usage_path(body: Option<Value>) -> Value {
     }
 }
 
-fn scan_disk_usage_tree_with_progress(
-    root: &Path,
-    app: Option<&AppHandle>,
-) -> DiskUsageCache {
+fn scan_disk_usage_tree_with_progress(root: &Path, app: Option<&AppHandle>) -> DiskUsageCache {
     let root_string = path_to_db_string(root);
     let disk_usage = disk_usage_for_path(root);
     let mut nodes_by_path = HashMap::new();

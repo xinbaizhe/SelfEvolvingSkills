@@ -54,7 +54,10 @@ fn strip_removes_fence_with_language_tag() {
 #[test]
 fn strip_preserves_non_fenced_text() {
     let input = "plain text without fence";
-    assert_eq!(utils::strip_markdown_fence(input), "plain text without fence");
+    assert_eq!(
+        utils::strip_markdown_fence(input),
+        "plain text without fence"
+    );
 }
 
 #[test]

@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 
 // ---- Re-exports ----
-pub(crate) use monitor::*;
-pub(crate) use maintenance::*;
 pub(crate) use disk_cleanup::*;
 pub(crate) use disk_usage::*;
+pub(crate) use maintenance::*;
+pub(crate) use monitor::*;
 
-mod monitor;
-mod maintenance;
-mod utils;
-mod file_cleanup;
 mod disk_cleanup;
 mod disk_usage;
+mod file_cleanup;
+mod maintenance;
+mod monitor;
+mod utils;
 
 // ---- Public structs ----
 

@@ -255,32 +255,32 @@ pub(crate) fn start_evolution_pipeline(
             22,
             "正在检索社区参考 Skills（GitHub / Web / 本地）...",
         );
-        let community_error =
-            match community::fetch_top_community_skills(&db_path_clone, &[]).await {
-                Ok(count) => {
-                    phase_update(
-                        &app_handle,
-                        &db_path_clone,
-                        next_run_id,
-                        "reference_retrieval",
-                        32,
-                        &format!("社区检索完成，新增 {} 条参考结果", count),
-                    );
-                    None
-                }
-                Err(err) => {
-                    let message = format!("社区检索失败：{}。管道将继续执行。", err);
-                    phase_update(
-                        &app_handle,
-                        &db_path_clone,
-                        next_run_id,
-                        "reference_retrieval",
-                        32,
-                        &message,
-                    );
-                    Some(message)
-                }
-            };
+        let community_error = match community::fetch_top_community_skills(&db_path_clone, &[]).await
+        {
+            Ok(count) => {
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "reference_retrieval",
+                    32,
+                    &format!("社区检索完成，新增 {} 条参考结果", count),
+                );
+                None
+            }
+            Err(err) => {
+                let message = format!("社区检索失败：{}。管道将继续执行。", err);
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "reference_retrieval",
+                    32,
+                    &message,
+                );
+                Some(message)
+            }
+        };
 
         // =====================================================================
         // Phase 3: cluster (32-50%)
@@ -451,48 +451,52 @@ pub(crate) fn start_evolution_pipeline(
             64,
             "正在用大模型逐条优化草稿...",
         );
-        let optimized =
-            match optimize::optimize_drafts_with_llm(&db_path_clone, &clusters, next_run_id).await
-            {
-                Ok(count) => {
-                    if count > 0 {
-                        phase_update(
-                            &app_handle,
-                            &db_path_clone,
-                            next_run_id,
-                            "optimize",
-                            78,
-                            &format!("大模型已优化 {} 个 Skill 草稿", count),
-                        );
-                    } else {
-                        phase_update(
-                            &app_handle,
-                            &db_path_clone,
-                            next_run_id,
-                            "optimize",
-                            78,
-                            "未启用大模型，使用本地草稿",
-                        );
-                    }
-                    count
-                }
-                Err(err) => {
-                    let message = format!("大模型草稿优化失败：{}。已保留本地草稿。", err);
-                    llm_error = Some(match llm_error {
-                        Some(existing) => format!("{existing}；{message}"),
-                        None => message.clone(),
-                    });
+        let optimized = match optimize::optimize_drafts_with_llm(
+            &db_path_clone,
+            &clusters,
+            next_run_id,
+        )
+        .await
+        {
+            Ok(count) => {
+                if count > 0 {
                     phase_update(
                         &app_handle,
                         &db_path_clone,
                         next_run_id,
                         "optimize",
                         78,
-                        &message,
+                        &format!("大模型已优化 {} 个 Skill 草稿", count),
                     );
-                    0
+                } else {
+                    phase_update(
+                        &app_handle,
+                        &db_path_clone,
+                        next_run_id,
+                        "optimize",
+                        78,
+                        "未启用大模型，使用本地草稿",
+                    );
                 }
-            };
+                count
+            }
+            Err(err) => {
+                let message = format!("大模型草稿优化失败：{}。已保留本地草稿。", err);
+                llm_error = Some(match llm_error {
+                    Some(existing) => format!("{existing}；{message}"),
+                    None => message.clone(),
+                });
+                phase_update(
+                    &app_handle,
+                    &db_path_clone,
+                    next_run_id,
+                    "optimize",
+                    78,
+                    &message,
+                );
+                0
+            }
+        };
 
         let ab_count = match optimize::generate_ab_variants(&db_path_clone, &clusters).await {
             Ok(count) => {

@@ -1,6 +1,6 @@
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::path::Path;
-use rusqlite::Connection;
 
 pub(crate) fn get_system_monitor() -> Value {
     use sysinfo::{CpuRefreshKind, Disks, RefreshKind, System};
