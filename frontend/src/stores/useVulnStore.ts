@@ -4,6 +4,7 @@ import {
   scanUrl,
   scanCode,
   fetchScanHistory,
+  fetchScanResult,
   fetchVulnIntel,
   uploadManifest,
   fetchDepSnapshots,
@@ -19,13 +20,25 @@ import {
   type UploadManifestResult,
 } from '../api/vuln'
 
+function isConnectionError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e)
+  return msg.includes('error sending request for url')
+      || msg.includes('ConnectError')
+      || msg.includes('connection refused')
+      || msg.includes('NetworkError')
+      || msg.includes('fetch failed')
+}
+
 export const useVulnStore = defineStore('vuln', () => {
   const scanning = ref(false)
   const currentResult = ref<VulnScanJob | null>(null)
   const history = ref<VulnScanJob[]>([])
+  const historyTotal = ref(0)
+  const selectedHistoryJob = ref<VulnScanJob | null>(null)
   const intel = ref<VulnIntel[]>([])
   const intelLoading = ref(false)
   const error = ref('')
+  const offline = ref(false)
 
   // Dep monitor state
   const snapshots = ref<DepSnapshot[]>([])
@@ -36,13 +49,18 @@ export const useVulnStore = defineStore('vuln', () => {
   async function runUrlScan(url: string, options: VulnScanOptions = {}): Promise<VulnScanJob | null> {
     scanning.value = true
     error.value = ''
+    offline.value = false
     currentResult.value = null
     try {
       const job = await scanUrl(url, options)
       currentResult.value = job
       return job
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      if (isConnectionError(e)) {
+        offline.value = true
+      } else {
+        error.value = e instanceof Error ? e.message : String(e)
+      }
       return null
     } finally {
       scanning.value = false
@@ -52,25 +70,54 @@ export const useVulnStore = defineStore('vuln', () => {
   async function runCodeScan(path: string, options: VulnScanOptions = {}): Promise<VulnScanJob | null> {
     scanning.value = true
     error.value = ''
+    offline.value = false
     currentResult.value = null
     try {
       const job = await scanCode(path, options)
       currentResult.value = job
       return job
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      if (isConnectionError(e)) {
+        offline.value = true
+      } else {
+        error.value = e instanceof Error ? e.message : String(e)
+      }
       return null
     } finally {
       scanning.value = false
     }
   }
 
-  async function loadHistory(): Promise<void> {
+  async function loadHistory(pageNum = 1, pageSize = 10): Promise<void> {
     try {
-      history.value = await fetchScanHistory()
+      const result = await fetchScanHistory(pageNum, pageSize)
+      history.value = result.items
+      historyTotal.value = result.total
+      offline.value = false
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      if (isConnectionError(e)) {
+        offline.value = true
+      } else {
+        error.value = e instanceof Error ? e.message : String(e)
+      }
     }
+  }
+
+  async function loadHistoryDetail(jobId: number): Promise<void> {
+    try {
+      selectedHistoryJob.value = await fetchScanResult(jobId)
+      offline.value = false
+    } catch (e: unknown) {
+      if (isConnectionError(e)) {
+        offline.value = true
+      } else {
+        error.value = e instanceof Error ? e.message : String(e)
+      }
+    }
+  }
+
+  function clearHistoryDetail() {
+    selectedHistoryJob.value = null
   }
 
   function clearResult() {
@@ -82,8 +129,13 @@ export const useVulnStore = defineStore('vuln', () => {
     intelLoading.value = true
     try {
       intel.value = await fetchVulnIntel(params)
+      offline.value = false
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      if (isConnectionError(e)) {
+        offline.value = true
+      } else {
+        error.value = e instanceof Error ? e.message : String(e)
+      }
     } finally {
       intelLoading.value = false
     }
@@ -165,9 +217,12 @@ export const useVulnStore = defineStore('vuln', () => {
     scanning,
     currentResult,
     history,
+    historyTotal,
+    selectedHistoryJob,
     intel,
     intelLoading,
     error,
+    offline,
     snapshots,
     currentSnapshotDeps,
     depFindings,
@@ -175,6 +230,8 @@ export const useVulnStore = defineStore('vuln', () => {
     runUrlScan,
     runCodeScan,
     loadHistory,
+    loadHistoryDetail,
+    clearHistoryDetail,
     loadIntel,
     clearResult,
     uploadMonitor,

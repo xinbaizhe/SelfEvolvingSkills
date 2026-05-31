@@ -17,6 +17,8 @@ const activeTab = ref('url')
 const urlInput = ref('')
 const dirInput = ref('')
 const showHistory = ref(false)
+const historyPage = ref(1)
+const historyPageSize = 10
 const modelType = ref<'department' | 'personal'>('department')
 const modelId = ref<number | undefined>(undefined)
 const models = ref<TeamModelConfig[]>([])
@@ -224,8 +226,20 @@ async function queryIntel() {
 async function toggleHistory() {
   showHistory.value = !showHistory.value
   if (showHistory.value) {
-    await vulnStore.loadHistory()
+    historyPage.value = 1
+    await vulnStore.loadHistory(historyPage.value, historyPageSize)
+  } else {
+    vulnStore.clearHistoryDetail()
   }
+}
+
+async function onHistoryPageChange(page: number) {
+  historyPage.value = page
+  await vulnStore.loadHistory(page, historyPageSize)
+}
+
+async function viewHistoryDetail(job: VulnScanJob) {
+  await vulnStore.loadHistoryDetail(job.id)
 }
 
 function formatTime(dateStr: string): string {
@@ -278,7 +292,7 @@ async function handleDepUpload() {
 
 onMounted(() => {
   if (store.isAuthenticated) {
-    vulnStore.loadHistory()
+    vulnStore.loadHistory(1, historyPageSize)
     vulnStore.loadIntel()
     loadModels()
   }
@@ -315,32 +329,113 @@ onMounted(() => {
     <template v-else-if="showHistory">
       <section class="history-section">
         <h3 class="section-title">扫描历史</h3>
-        <div v-if="vulnStore.history.length === 0" class="empty-state">
+        <div v-if="vulnStore.history.length === 0 && !vulnStore.offline" class="empty-state">
           <p>暂无扫描记录</p>
         </div>
-        <div v-else class="history-list">
-          <article
-            v-for="job in vulnStore.history"
-            :key="job.id"
-            class="history-card"
-          >
-            <div class="history-main">
-              <div class="history-header">
-                <el-tag size="small" :type="job.scanType === 'url' ? 'primary' : 'success'">
-                  {{ scanTypeLabel(job.scanType) }}
-                </el-tag>
-                <span class="history-target">{{ job.target }}</span>
+
+        <!-- History detail view -->
+        <div v-if="vulnStore.selectedHistoryJob" class="history-detail-view">
+          <div class="detail-back-row">
+            <el-button size="small" @click="vulnStore.clearHistoryDetail()">&larr; 返回历史列表</el-button>
+          </div>
+          <div class="result-section">
+            <div class="result-header">
+              <div>
+                <h3>扫描详情</h3>
+                <p class="result-target">
+                  <el-tag size="small" :type="vulnStore.selectedHistoryJob.scanType === 'url' ? 'primary' : 'success'">
+                    {{ scanTypeLabel(vulnStore.selectedHistoryJob.scanType) }}
+                  </el-tag>
+                  {{ vulnStore.selectedHistoryJob.target }}
+                </p>
               </div>
-              <div class="history-meta">
-                <span>共 {{ job.totalFindings }} 个漏洞</span>
-                <span v-if="job.criticalCount" class="count-danger">严重 {{ job.criticalCount }}</span>
-                <span v-if="job.highCount" class="count-warning">高危 {{ job.highCount }}</span>
-                <span v-if="job.mediumCount" class="count-default">中危 {{ job.mediumCount }}</span>
-                <span>{{ formatTime(job.createdAt) }}</span>
+              <div class="result-summary">
+                <div class="finding-counts">
+                  <div class="finding-badge badge-danger">
+                    <span class="badge-count">{{ vulnStore.selectedHistoryJob.criticalCount }}</span>
+                    <span class="badge-label">严重</span>
+                  </div>
+                  <div class="finding-badge badge-warning">
+                    <span class="badge-count">{{ vulnStore.selectedHistoryJob.highCount }}</span>
+                    <span class="badge-label">高危</span>
+                  </div>
+                  <div class="finding-badge">
+                    <span class="badge-count">{{ vulnStore.selectedHistoryJob.mediumCount }}</span>
+                    <span class="badge-label">中危</span>
+                  </div>
+                  <div class="finding-badge badge-info">
+                    <span class="badge-count">{{ vulnStore.selectedHistoryJob.lowCount }}</span>
+                    <span class="badge-label">低危</span>
+                  </div>
+                </div>
               </div>
             </div>
-          </article>
+            <div v-if="vulnStore.selectedHistoryJob.findings.length === 0" class="empty-state safe-state">
+              <p class="safe-text">未发现安全漏洞</p>
+            </div>
+            <div v-else class="findings-table-wrapper">
+              <table class="findings-table">
+                <thead>
+                  <tr>
+                    <th style="width:72px">严重程度</th>
+                    <th style="width:110px">类型</th>
+                    <th style="width:180px">位置</th>
+                    <th>描述</th>
+                    <th>修复建议</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(f, idx) in vulnStore.selectedHistoryJob.findings" :key="idx">
+                    <td><el-tag :type="severityType(f.severity)" size="small" effect="dark">{{ severityLabel(f.severity) }}</el-tag></td>
+                    <td><span class="finding-type">{{ f.type }}</span></td>
+                    <td><code class="finding-location">{{ f.location }}</code></td>
+                    <td class="finding-desc">{{ f.description }}</td>
+                    <td class="finding-suggestion">{{ f.suggestion }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
+
+        <!-- History list -->
+        <template v-else>
+          <div v-if="vulnStore.history.length > 0" class="history-list">
+            <article
+              v-for="job in vulnStore.history"
+              :key="job.id"
+              class="history-card"
+              @click="viewHistoryDetail(job)"
+            >
+              <div class="history-main">
+                <div class="history-header">
+                  <el-tag size="small" :type="job.scanType === 'url' ? 'primary' : 'success'">
+                    {{ scanTypeLabel(job.scanType) }}
+                  </el-tag>
+                  <span class="history-target">{{ job.target }}</span>
+                </div>
+                <div class="history-meta">
+                  <span>共 {{ job.totalFindings }} 个漏洞</span>
+                  <span v-if="job.criticalCount" class="count-danger">严重 {{ job.criticalCount }}</span>
+                  <span v-if="job.highCount" class="count-warning">高危 {{ job.highCount }}</span>
+                  <span v-if="job.mediumCount" class="count-default">中危 {{ job.mediumCount }}</span>
+                  <span>{{ formatTime(job.createdAt) }}</span>
+                </div>
+              </div>
+              <div class="history-arrow">&rarr;</div>
+            </article>
+          </div>
+          <div v-if="vulnStore.historyTotal > historyPageSize" class="history-pagination">
+            <el-pagination
+              background
+              layout="prev, pager, next"
+              v-model:current-page="historyPage"
+              :page-size="historyPageSize"
+              :total="vulnStore.historyTotal"
+              @current-change="onHistoryPageChange"
+            />
+          </div>
+        </template>
       </section>
     </template>
 
@@ -585,7 +680,14 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-if="vulnStore.error" class="error-banner">
+      <div v-if="vulnStore.offline" class="offline-banner">
+        <span class="offline-icon">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9s3.36 7.5 7.5 7.5 7.5-3.36 7.5-7.5S13.14 1.5 9 1.5zM9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </span>
+        离线模式 — 无法连接到服务器，请确认服务已启动。接口恢复后页面将自动重试。
+        <el-button size="small" @click="vulnStore.loadHistory()">重试</el-button>
+      </div>
+      <div v-else-if="vulnStore.error" class="error-banner">
         <span class="error-icon">!</span>
         {{ vulnStore.error }}
       </div>
@@ -854,6 +956,25 @@ onMounted(() => {
 .ref-link { color: var(--blue); text-decoration: none; }
 .ref-link:hover { text-decoration: underline; }
 
+.offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: rgba(217, 134, 18, .08);
+  border: 1px solid rgba(217, 134, 18, .28);
+  border-radius: 8px;
+  color: #d98612;
+  font-size: 13px;
+}
+
+.offline-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .error-banner {
   display: flex;
   align-items: center;
@@ -1083,11 +1204,31 @@ onMounted(() => {
   background: var(--panel);
   box-shadow: var(--shadow);
   transition: all .2s;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
 }
 
 .history-card:hover {
   box-shadow: var(--shadow-hover);
   border-color: rgba(13, 148, 136, .18);
+}
+
+.history-arrow {
+  font-size: 16px;
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+.history-detail-view { margin-top: 4px; }
+.detail-back-row { margin-bottom: 16px; }
+
+.history-pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
 }
 
 .history-header {

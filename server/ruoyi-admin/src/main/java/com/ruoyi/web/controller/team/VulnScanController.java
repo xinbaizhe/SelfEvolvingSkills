@@ -18,6 +18,7 @@ import com.ruoyi.common.annotation.Anonymous;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.domain.model.LoginUser;
+import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.team.domain.DepFinding;
 import com.ruoyi.team.domain.DepMonitor;
@@ -161,12 +162,13 @@ public class VulnScanController extends BaseController {
     }
 
     @GetMapping("/history")
-    public AjaxResult getHistory() {
+    public TableDataInfo getHistory() {
         LoginUser loginUser = SecurityUtils.getLoginUser();
+        startPage();
         List<VulnScanJob> history = vulnScanService.getHistory(
             loginUser.getUser().getUserId()
         );
-        return success(history);
+        return getDataTable(history);
     }
 
     private Long parseLong(String value) {

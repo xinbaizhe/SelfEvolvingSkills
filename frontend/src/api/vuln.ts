@@ -106,12 +106,17 @@ export async function fetchScanResult(jobId: number): Promise<VulnScanJob> {
   return res.data
 }
 
-export async function fetchScanHistory(): Promise<VulnScanJob[]> {
-  const res = await teamApiGet<{ code: number; msg: string; data: VulnScanJob[] }>(
-    '/vuln/history',
+export interface PaginatedHistory {
+  items: VulnScanJob[]
+  total: number
+}
+
+export async function fetchScanHistory(pageNum = 1, pageSize = 10): Promise<PaginatedHistory> {
+  const res = await teamApiGet<{ code: number; msg: string; rows: VulnScanJob[]; total: number }>(
+    `/vuln/history?pageNum=${pageNum}&pageSize=${pageSize}`,
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '获取历史失败')
-  return res.data
+  if (res.code !== 200) throw new Error(res.msg || '获取历史失败')
+  return { items: res.rows ?? [], total: res.total ?? 0 }
 }
 
 export async function fetchVulnIntel(params?: Record<string, string>): Promise<VulnIntel[]> {
