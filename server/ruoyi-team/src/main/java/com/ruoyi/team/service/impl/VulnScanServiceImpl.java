@@ -147,8 +147,8 @@ public class VulnScanServiceImpl implements IVulnScanService {
 
     @Override
     @Transactional
-    public VulnScanJob scanUrl(String targetUrl, Long userId, Long deptId) {
-        VulnScanJob job = createJob("url", targetUrl, userId, deptId);
+    public VulnScanJob scanUrl(String targetUrl, Long userId, Long deptId, String modelType, Long modelId) {
+        VulnScanJob job = createJob("url", targetUrl, userId, deptId, modelType, modelId);
         jobMapper.insertVulnScanJob(job);
 
         List<VulnFinding> findings = doUrlScan(targetUrl);
@@ -160,8 +160,8 @@ public class VulnScanServiceImpl implements IVulnScanService {
 
     @Override
     @Transactional
-    public VulnScanJob scanCode(String dirPath, Long userId, Long deptId) {
-        VulnScanJob job = createJob("code", dirPath, userId, deptId);
+    public VulnScanJob scanCode(String dirPath, Long userId, Long deptId, String modelType, Long modelId) {
+        VulnScanJob job = createJob("code", dirPath, userId, deptId, modelType, modelId);
         jobMapper.insertVulnScanJob(job);
 
         VulnLlmVerifier llm = buildVerifier(deptId, userId);
@@ -211,13 +211,16 @@ public class VulnScanServiceImpl implements IVulnScanService {
 
     // ---- Job helpers ----
 
-    private VulnScanJob createJob(String type, String target, Long userId, Long deptId) {
+    private VulnScanJob createJob(String type, String target, Long userId, Long deptId,
+                                   String modelType, Long modelId) {
         VulnScanJob job = new VulnScanJob();
         job.setScanType(type);
         job.setTarget(target);
         job.setStatus("running");
         job.setUserId(userId);
         job.setDeptId(deptId);
+        job.setModelType(modelType);
+        job.setModelId(modelId);
         job.setCreatedAt(LocalDateTime.now());
         return job;
     }

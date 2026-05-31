@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.DepMonitorMapper">
+
+    <resultMap type="com.ruoyi.team.domain.DepMonitor" id="DepMonitorResult">
+        <id     property="id"             column="id"              />
+        <result property="userId"         column="user_id"         />
+        <result property="deptId"         column="dept_id"         />
+        <result property="name"           column="name"            />
+        <result property="ecosystem"      column="ecosystem"       />
+        <result property="packageName"    column="package_name"    />
+        <result property="version"        column="version"         />
+        <result property="vulnCount"      column="vuln_count"      />
+        <result property="poisoningCount" column="poisoning_count" />
+        <result property="lastCheckedAt"  column="last_checked_at" />
+        <result property="createdAt"      column="created_at"      />
+        <result property="updatedAt"      column="updated_at"      />
+    </resultMap>
+
+    <select id="selectByUserId" resultMap="DepMonitorResult">
+        select id, user_id, dept_id, name, ecosystem, package_name, version,
+               vuln_count, poisoning_count, last_checked_at, created_at, updated_at
+        from dep_monitor
+        where user_id = #{userId}
+        order by created_at desc
+    </select>
+
+    <select id="selectByUserIdAndName" resultMap="DepMonitorResult">
+        select id, user_id, dept_id, name, ecosystem, package_name, version,
+               vuln_count, poisoning_count, last_checked_at, created_at, updated_at
+        from dep_monitor
+        where user_id = #{userId} and name = #{name}
+        order by ecosystem, package_name
+    </select>
+
+    <insert id="insertDepMonitor" parameterType="com.ruoyi.team.domain.DepMonitor" useGeneratedKeys="true" keyProperty="id">
+        insert into dep_monitor (user_id, dept_id, name, ecosystem, package_name, version)
+        values (#{userId}, #{deptId}, #{name}, #{ecosystem}, #{packageName}, #{version})
+    </insert>
+
+    <insert id="batchInsertDepMonitor" parameterType="list" useGeneratedKeys="true" keyProperty="id">
+        insert into dep_monitor (user_id, dept_id, name, ecosystem, package_name, version) values
+        <foreach collection="list" item="item" separator=",">
+            (#{item.userId}, #{item.deptId}, #{item.name}, #{item.ecosystem}, #{item.packageName}, #{item.version})
+        </foreach>
+    </insert>
+
+    <update id="updateDepMonitorCounts" parameterType="com.ruoyi.team.domain.DepMonitor">
+        update dep_monitor
+        set vuln_count = #{vulnCount}, poisoning_count = #{poisoningCount}, last_checked_at = sysdate()
+        where id = #{id}
+    </update>
+
+    <update id="updateDepMonitorCheckedAt">
+        update dep_monitor set last_checked_at = sysdate() where id = #{id}
+    </update>
+
+    <delete id="deleteDepMonitorById">
+        delete from dep_monitor where id = #{id}
+    </delete>
+
+    <delete id="deleteDepMonitorByUserIdAndName">
+        delete from dep_monitor where user_id = #{userId} and name = #{name}
+    </delete>
+
+</mapper>
