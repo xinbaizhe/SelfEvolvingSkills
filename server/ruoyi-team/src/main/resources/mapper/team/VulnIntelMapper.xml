@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.VulnIntelMapper">
+
+    <resultMap type="com.ruoyi.team.domain.VulnIntel" id="VulnIntelResult">
+        <id     property="id"            column="id"             />
+        <result property="source"        column="source"         />
+        <result property="cveId"         column="cve_id"         />
+        <result property="title"         column="title"          />
+        <result property="vulnType"      column="vuln_type"      />
+        <result property="severity"      column="severity"       />
+        <result property="vendorProject" column="vendor_project" />
+        <result property="product"       column="product"        />
+        <result property="ecosystem"     column="ecosystem"      />
+        <result property="isPoisoning"   column="is_poisoning"   />
+        <result property="aliases"       column="aliases"        />
+        <result property="description"   column="description"    />
+        <result property="referenceUrl"  column="reference_url"  />
+        <result property="publishedAt"   column="published_at"   />
+        <result property="updatedAt"     column="updated_at"     />
+        <result property="createdAt"     column="created_at"     />
+    </resultMap>
+
+    <select id="selectVulnIntelList" resultMap="VulnIntelResult">
+        select id, source, cve_id, title, vuln_type, severity, vendor_project, product,
+               ecosystem, is_poisoning, aliases,
+               description, reference_url, published_at, updated_at, created_at
+        from vuln_intel
+        <where>
+            <if test="vulnType != null and vulnType != ''">
+                AND vuln_type = #{vulnType}
+            </if>
+            <if test="severity != null and severity != ''">
+                AND severity = #{severity}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (cve_id like concat('%', #{keyword}, '%')
+                    OR title like concat('%', #{keyword}, '%')
+                    OR vendor_project like concat('%', #{keyword}, '%')
+                    OR product like concat('%', #{keyword}, '%'))
+            </if>
+            <if test="startDate != null and startDate != ''">
+                AND published_at &gt;= #{startDate}
+            </if>
+            <if test="endDate != null and endDate != ''">
+                AND published_at &lt;= concat(#{endDate}, ' 23:59:59')
+            </if>
+        </where>
+        order by published_at desc, id desc
+        limit 200
+    </select>
+
+    <insert id="upsertVulnIntel" parameterType="com.ruoyi.team.domain.VulnIntel">
+        insert into vuln_intel (
+            source, cve_id, title, vuln_type, severity, vendor_project, product,
+            ecosystem, is_poisoning, aliases,
+            description, reference_url, published_at, updated_at, created_at
+        ) values (
+            #{source}, #{cveId}, #{title}, #{vulnType}, #{severity}, #{vendorProject}, #{product},
+            #{ecosystem}, #{isPoisoning}, #{aliases},
+            #{description}, #{referenceUrl}, #{publishedAt}, #{updatedAt}, sysdate()
+        )
+        on duplicate key update
+            title = values(title),
+            vuln_type = values(vuln_type),
+            severity = values(severity),
+            vendor_project = values(vendor_project),
+            product = values(product),
+            ecosystem = values(ecosystem),
+            is_poisoning = values(is_poisoning),
+            aliases = values(aliases),
+            description = values(description),
+            reference_url = values(reference_url),
+            published_at = values(published_at),
+            updated_at = values(updated_at)
+    </insert>
+
+</mapper>

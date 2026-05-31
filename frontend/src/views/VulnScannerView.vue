@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useTeamStore } from '../stores/useTeamStore'
 import { useVulnStore } from '../stores/useVulnStore'
 import { getErrorMessage } from '../utils/error'
+import { fetchLlmConfig } from '../api/admin'
+import { fetchAvailableModels, type TeamModelConfig } from '../api/team'
 import LoginDialog from '../components/team/LoginDialog.vue'
 import type { VulnScanJob, VulnFinding } from '../api/vuln'
 
@@ -15,6 +17,40 @@ const activeTab = ref('url')
 const urlInput = ref('')
 const dirInput = ref('')
 const showHistory = ref(false)
+const modelType = ref<'department' | 'personal'>('department')
+const modelId = ref<number | undefined>(undefined)
+const models = ref<TeamModelConfig[]>([])
+const localResourceModel = ref<TeamModelConfig | null>(null)
+const scanStep = ref(0)
+const intelQuery = ref('')
+const intelType = ref('')
+const intelSeverity = ref('')
+const intelStartDate = ref('')
+const intelEndDate = ref('')
+const intelPage = ref(1)
+const intelPageSize = 10
+
+// Dep monitor state
+const depMonitorName = ref('')
+const depUploadFiles = ref<{ name: string; content: string }[]>([])
+const depFileInput = ref<HTMLInputElement | null>(null)
+const expandedDepId = ref<number | null>(null)
+
+const scanSteps = [
+  '准备扫描目标',
+  '同步公开漏洞情报',
+  '爬取页面/收集入口',
+  '检测 SQL 注入、XSS、CSRF、敏感路径',
+  '大模型复核和生成修改建议',
+  '保存扫描结果',
+]
+
+const filteredModels = computed(() => {
+  if (modelType.value === 'department') {
+    return models.value.filter(item => (item.sourceType || 'department') === 'department')
+  }
+  return localResourceModel.value ? [localResourceModel.value] : []
+})
 
 const findingCounts = computed(() => {
   const r = vulnStore.currentResult
@@ -56,7 +92,14 @@ async function handleUrlScan() {
     ElMessage.warning('请输入网址')
     return
   }
-  const result = await vulnStore.runUrlScan(urlInput.value.trim())
+  scanStep.value = 1
+  scanStep.value = 2
+  const result = await vulnStore.runUrlScan(urlInput.value.trim(), { modelType: modelType.value, modelId: modelId.value })
+  if (result && modelType.value === 'personal') {
+    scanStep.value = 4
+    await reviewResultWithLocalModel(result)
+  }
+  scanStep.value = result ? 5 : 0
   if (result) {
     ElMessage.success(`扫描完成，发现 ${result.totalFindings} 个漏洞`)
   } else if (vulnStore.error) {
@@ -69,12 +112,113 @@ async function handleCodeScan() {
     ElMessage.warning('请选择或输入目录路径')
     return
   }
-  const result = await vulnStore.runCodeScan(dirInput.value.trim())
+  scanStep.value = 1
+  scanStep.value = 2
+  const result = await vulnStore.runCodeScan(dirInput.value.trim(), { modelType: modelType.value, modelId: modelId.value })
+  if (result && modelType.value === 'personal') {
+    scanStep.value = 4
+    await reviewResultWithLocalModel(result)
+  }
+  scanStep.value = result ? 5 : 0
   if (result) {
     ElMessage.success(`扫描完成，发现 ${result.totalFindings} 个漏洞`)
   } else if (vulnStore.error) {
     ElMessage.error(vulnStore.error)
   }
+}
+
+async function loadModels() {
+  try {
+    const [departmentModels] = await Promise.all([
+      fetchAvailableModels(),
+      loadLocalResourceModel(),
+    ])
+    models.value = departmentModels
+    if (!modelId.value) modelId.value = filteredModels.value[0]?.id
+  } catch { /* model list should not block basic scan */ }
+}
+
+async function loadLocalResourceModel() {
+  try {
+    const res = await fetchLlmConfig()
+    const data = res.success ? (res.data as {
+      enabled?: boolean
+      provider?: string
+      base_url?: string
+      model?: string
+      api_format?: string
+      api_key_configured?: boolean
+      has_api_key?: boolean
+    } | null) : null
+    if (!data?.enabled || !data.model || !data.base_url) {
+      localResourceModel.value = null
+      return
+    }
+    localResourceModel.value = {
+      id: -1,
+      name: '资源与配置的模型配置',
+      provider: data.provider || data.api_format || 'custom',
+      baseUrl: data.base_url,
+      model: data.model,
+      deptId: null,
+      sourceType: 'personal',
+      apiKeyHash: data.api_key_configured || data.has_api_key ? 'configured' : undefined,
+      isActive: 1,
+      createdAt: '',
+    }
+  } catch {
+    localResourceModel.value = null
+  }
+}
+
+async function reviewResultWithLocalModel(result: VulnScanJob) {
+  const payload = {
+    metadata: {
+      shareType: 'vulnerability-scan',
+      name: result.target,
+      scanType: result.scanType,
+      evaluationModelType: 'personal',
+      evaluationModel: localResourceModel.value?.model || '',
+    },
+    heuristic: {
+      score: Math.max(0, 100 - result.criticalCount * 25 - result.highCount * 15 - result.mediumCount * 8 - result.lowCount * 3),
+      securityScore: Math.max(0, 100 - result.criticalCount * 25 - result.highCount * 15 - result.mediumCount * 8 - result.lowCount * 3),
+      performanceScore: 100,
+      penalties: result.findings.map(item => `${item.severity} ${item.type}: ${item.description}`),
+    },
+    content: [
+      `# 漏洞扫描结果`,
+      `目标: ${result.target}`,
+      `类型: ${result.scanType}`,
+      '',
+      ...result.findings.map(item => [
+        `## ${item.severity} ${item.type}`,
+        `位置: ${item.location}`,
+        `描述: ${item.description}`,
+        `建议: ${item.suggestion}`,
+      ].join('\n')),
+    ].join('\n\n'),
+  }
+}
+
+watch(modelType, () => {
+  modelId.value = filteredModels.value[0]?.id
+})
+
+const pagedIntel = computed(() => {
+  const start = (intelPage.value - 1) * intelPageSize
+  return vulnStore.intel.slice(start, start + intelPageSize)
+})
+
+async function queryIntel() {
+  const params: Record<string, string> = {}
+  if (intelQuery.value.trim()) params.keyword = intelQuery.value.trim()
+  if (intelType.value) params.vulnType = intelType.value
+  if (intelSeverity.value) params.severity = intelSeverity.value
+  if (intelStartDate.value) params.startDate = intelStartDate.value
+  if (intelEndDate.value) params.endDate = intelEndDate.value
+  intelPage.value = 1
+  await vulnStore.loadIntel(params)
 }
 
 async function toggleHistory() {
@@ -89,9 +233,54 @@ function formatTime(dateStr: string): string {
   return dateStr.slice(0, 16).replace('T', ' ')
 }
 
+// Dep monitor handlers
+async function handleDepFilesSelected(event: Event) {
+  const target = event.target as HTMLInputElement
+  if (!target.files) return
+  const files: { name: string; content: string }[] = []
+  for (const file of Array.from(target.files)) {
+    const content = await file.text()
+    files.push({ name: file.name, content })
+  }
+  depUploadFiles.value = files
+  if (!depMonitorName.value.trim()) {
+    depMonitorName.value = files[0]?.name.replace(/\.[^.]+$/, '') || ''
+  }
+}
+
+async function handleDepDrop(event: DragEvent) {
+  const dt = event.dataTransfer
+  if (!dt?.files) return
+  const files: { name: string; content: string }[] = []
+  for (const file of Array.from(dt.files)) {
+    const content = await file.text()
+    files.push({ name: file.name, content })
+  }
+  depUploadFiles.value = files
+  if (!depMonitorName.value.trim()) {
+    depMonitorName.value = files[0]?.name.replace(/\.[^.]+$/, '') || ''
+  }
+}
+
+async function handleDepUpload() {
+  if (!depMonitorName.value.trim() || depUploadFiles.value.length === 0) {
+    ElMessage.warning('请输入项目名称并选择依赖文件')
+    return
+  }
+  const result = await vulnStore.uploadMonitor(depMonitorName.value.trim(), depUploadFiles.value)
+  if (result) {
+    ElMessage.success(`已解析 ${result.deps.length} 个依赖包，已查询关联漏洞`)
+    depUploadFiles.value = []
+  } else if (vulnStore.error) {
+    ElMessage.error(vulnStore.error)
+  }
+}
+
 onMounted(() => {
   if (store.isAuthenticated) {
     vulnStore.loadHistory()
+    vulnStore.loadIntel()
+    loadModels()
   }
 })
 </script>
@@ -157,6 +346,20 @@ onMounted(() => {
 
     <template v-else>
       <div class="scan-container">
+        <div class="model-row">
+          <el-segmented
+            v-model="modelType"
+            :options="[
+              { label: '部门模型', value: 'department' },
+              { label: '资源与配置的模型配置', value: 'personal' },
+            ]"
+            @change="modelId = filteredModels[0]?.id"
+          />
+          <el-select v-model="modelId" placeholder="选择评估模型" style="width: 280px">
+            <el-option v-for="model in filteredModels" :key="model.id" :label="`${model.name} / ${model.model}`" :value="model.id" />
+          </el-select>
+        </div>
+
         <el-tabs v-model="activeTab" class="scan-tabs">
           <el-tab-pane label="网址扫描" name="url">
             <div class="scan-input-row">
@@ -182,7 +385,7 @@ onMounted(() => {
                 {{ vulnStore.scanning ? '扫描中...' : '开始扫描' }}
               </el-button>
             </div>
-            <p class="scan-hint">AI 会自动检测目标网站的 SQL注入、XSS、CSRF、信息泄露、安全响应头缺失等常见漏洞</p>
+            <p class="scan-hint">系统会爬取同源页面并检测 SQL 注入、XSS、CSRF、信息泄露、安全响应头缺失等常见漏洞。</p>
           </el-tab-pane>
 
           <el-tab-pane label="代码扫描" name="code">
@@ -209,9 +412,177 @@ onMounted(() => {
                 {{ vulnStore.scanning ? '扫描中...' : '开始扫描' }}
               </el-button>
             </div>
-            <p class="scan-hint">AI 会扫描目录下的源代码文件，检测硬编码密钥、SQL注入、XSS、命令注入、路径遍历、不安全加密等漏洞</p>
+            <p class="scan-hint">系统会扫描目录下的源代码文件，检测硬编码密钥、SQL 注入、XSS、命令注入、路径遍历、不安全加密等漏洞。</p>
+          </el-tab-pane>
+
+          <el-tab-pane label="漏洞列表" name="intel">
+            <div class="intel-panel" v-loading="vulnStore.intelLoading">
+              <div class="intel-header">
+                <div>
+                  <h3>漏洞列表</h3>
+                  <p>公开漏洞情报由后台每半小时自动更新，这里仅提供查询。</p>
+                </div>
+              </div>
+              <div class="intel-filters">
+                <el-input v-model="intelQuery" placeholder="CVE / 厂商 / 产品" clearable style="width: 220px" />
+                <el-select v-model="intelType" placeholder="漏洞类型" clearable filterable allow-create style="width: 170px">
+                  <el-option label="SQL注入" value="SQL注入" />
+                  <el-option label="XSS" value="XSS" />
+                  <el-option label="远程代码执行" value="远程代码执行" />
+                  <el-option label="权限提升" value="权限提升" />
+                  <el-option label="系统漏洞" value="系统漏洞" />
+                  <el-option label="供应链投毒" value="供应链投毒" />
+                </el-select>
+                <el-select v-model="intelSeverity" placeholder="等级" clearable filterable allow-create style="width: 130px">
+                  <el-option label="严重" value="CRITICAL" />
+                  <el-option label="高危" value="HIGH" />
+                  <el-option label="中危" value="MEDIUM" />
+                  <el-option label="低危" value="LOW" />
+                </el-select>
+                <el-date-picker v-model="intelStartDate" format="YYYY-MM-DD" value-format="YYYY-MM-DD" type="date" placeholder="开始时间" style="width: 150px" />
+                <el-date-picker v-model="intelEndDate" format="YYYY-MM-DD" value-format="YYYY-MM-DD" type="date" placeholder="结束时间" style="width: 150px" />
+                <el-button type="primary" @click="queryIntel">查询</el-button>
+              </div>
+              <el-table :data="pagedIntel" size="small" class="intel-table">
+                <el-table-column prop="cveId" label="CVE" width="150" />
+                <el-table-column prop="vulnType" label="漏洞类型" width="130" />
+                <el-table-column label="投毒" width="80">
+                  <template #default="{ row }">
+                    <el-tag v-if="row.isPoisoning" type="danger" size="small" effect="dark">投毒</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="severity" label="等级" width="90">
+                  <template #default="{ row }">{{ severityLabel(row.severity) }}</template>
+                </el-table-column>
+                <el-table-column prop="ecosystem" label="生态" width="90" show-overflow-tooltip />
+                <el-table-column prop="vendorProject" label="厂商" width="150" show-overflow-tooltip />
+                <el-table-column prop="product" label="产品" width="150" show-overflow-tooltip />
+                <el-table-column prop="title" label="漏洞名称" min-width="260" show-overflow-tooltip />
+                <el-table-column prop="publishedAt" label="发布时间" width="160">
+                  <template #default="{ row }">{{ formatTime(row.publishedAt) }}</template>
+                </el-table-column>
+              </el-table>
+              <div class="intel-pagination">
+                <el-pagination
+                  background
+                  layout="prev, pager, next"
+                  v-model:current-page="intelPage"
+                  :page-size="intelPageSize"
+                  :total="vulnStore.intel.length"
+                />
+              </div>
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="依赖监控" name="monitor">
+            <div class="dep-monitor-panel" v-loading="vulnStore.depLoading">
+              <!-- Upload area -->
+              <div v-if="!vulnStore.snapshots.length && depUploadFiles.length === 0" class="dep-upload-area">
+                <div class="dep-upload-drop"
+                  @dragover.prevent
+                  @drop.prevent="handleDepDrop">
+                  <p class="upload-icon">+</p>
+                  <p>拖拽依赖清单文件到此处，或点击下方选择</p>
+                  <p class="upload-hint">支持 package.json / pom.xml / go.mod / Cargo.toml / composer.json / requirements.txt / *.csproj / build.gradle</p>
+                </div>
+                <div class="dep-upload-row">
+                  <input type="file" multiple @change="handleDepFilesSelected" accept=".json,.xml,.toml,.txt,.gradle,.kts,.mod,.csproj" style="display:none" ref="depFileInput" />
+                  <el-button @click="depFileInput?.click()">选择文件</el-button>
+                </div>
+              </div>
+
+              <!-- Selected files preview -->
+              <div v-if="depUploadFiles.length > 0" class="dep-files-preview">
+                <h4>已选择 {{ depUploadFiles.length }} 个文件</h4>
+                <ul>
+                  <li v-for="(f, i) in depUploadFiles" :key="i">{{ f.name }} ({{ f.content.length }} 字符)</li>
+                </ul>
+                <div class="dep-upload-form">
+                  <el-input v-model="depMonitorName" placeholder="项目名称" style="width: 260px" size="small" />
+                  <el-button type="primary" size="small" @click="handleDepUpload" :loading="vulnStore.depLoading">上传并分析</el-button>
+                  <el-button size="small" @click="depUploadFiles = []">取消</el-button>
+                </div>
+              </div>
+
+              <!-- Snapshots list -->
+              <div v-if="vulnStore.snapshots.length > 0" class="dep-snapshots">
+                <div class="dep-snapshots-header">
+                  <h3>监控快照 ({{ vulnStore.snapshots.length }})</h3>
+                  <el-button size="small" @click="depUploadFiles = []; vulnStore.clearDepDetail()">+ 新建</el-button>
+                </div>
+                <div class="dep-snapshot-cards">
+                  <div v-for="snap in vulnStore.snapshots" :key="snap.id" class="dep-snapshot-card">
+                    <div class="dep-snapshot-main">
+                      <div class="dep-snapshot-name">{{ snap.name }}</div>
+                      <div class="dep-snapshot-meta">
+                        <span :class="{ 'count-danger': snap.poisoningCount > 0 }">投毒 {{ snap.poisoningCount }}</span>
+                        <span>漏洞 {{ snap.vulnCount }}</span>
+                        <span>{{ formatTime(snap.lastCheckedAt || snap.createdAt) }}</span>
+                      </div>
+                    </div>
+                    <div class="dep-snapshot-actions">
+                      <el-button size="small" @click="vulnStore.loadDepDeps(snap.id, snap.name).then(() => expandedDepId = snap.id)">查看依赖</el-button>
+                      <el-button size="small" type="warning" :loading="vulnStore.depLoading" @click="vulnStore.refreshSnapshot(snap.id)">刷新</el-button>
+                      <el-button size="small" type="danger" @click="vulnStore.removeSnapshot(snap.id)">删除</el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Expanded dependency details -->
+              <div v-if="expandedDepId && vulnStore.currentSnapshotDeps.length > 0" class="dep-detail">
+                <h4>依赖清单</h4>
+                <el-table :data="vulnStore.currentSnapshotDeps" size="small">
+                  <el-table-column prop="ecosystem" label="生态" width="90" />
+                  <el-table-column prop="packageName" label="包名" min-width="220" show-overflow-tooltip />
+                  <el-table-column prop="version" label="版本" width="140" show-overflow-tooltip />
+                  <el-table-column label="投毒" width="70">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.poisoningCount > 0" type="danger" size="small" effect="dark">{{ row.poisoningCount }}</el-tag>
+                      <span v-else>-</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="漏洞" width="70">
+                    <template #default="{ row }">{{ row.vulnCount > 0 ? row.vulnCount : '-' }}</template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="80">
+                    <template #default="{ row }">
+                      <el-button size="small" @click="vulnStore.loadDepFindings(row.id)">详情</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+
+                <!-- Findings sub-table -->
+                <div v-if="vulnStore.depFindings.length > 0" class="dep-findings">
+                  <h5>关联漏洞/投毒 ({{ vulnStore.depFindings.length }})</h5>
+                  <el-table :data="vulnStore.depFindings" size="small">
+                    <el-table-column label="投毒" width="70">
+                      <template #default="{ row }">
+                        <el-tag v-if="row.isPoisoning" type="danger" size="small" effect="dark">投毒</el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="severity" label="等级" width="80">
+                      <template #default="{ row }">{{ severityLabel(row.severity) }}</template>
+                    </el-table-column>
+                    <el-table-column prop="cveId" label="ID" width="160" show-overflow-tooltip />
+                    <el-table-column prop="title" label="标题" min-width="260" show-overflow-tooltip />
+                    <el-table-column label="来源" width="80">
+                      <template #default="{ row }">
+                        <a v-if="row.referenceUrl" :href="row.referenceUrl" target="_blank" class="ref-link">链接</a>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </div>
+            </div>
           </el-tab-pane>
         </el-tabs>
+
+        <div v-if="activeTab !== 'intel' && activeTab !== 'monitor'" class="scan-progress">
+          <el-steps :active="scanStep" finish-status="success" simple>
+            <el-step v-for="step in scanSteps" :key="step" :title="step" />
+          </el-steps>
+        </div>
       </div>
 
       <div v-if="vulnStore.error" class="error-banner">
@@ -356,6 +727,14 @@ onMounted(() => {
   margin-bottom: 24px;
 }
 
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
 .scan-tabs {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -389,6 +768,91 @@ onMounted(() => {
   color: var(--muted);
   line-height: 1.5;
 }
+
+.scan-progress {
+  margin-top: 16px;
+}
+
+.intel-panel {
+  padding-top: 4px;
+}
+
+.intel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.intel-header h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.intel-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.intel-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.intel-pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+/* Dep monitor styles */
+.dep-monitor-panel { padding-top: 4px; }
+
+.dep-upload-area { margin-bottom: 16px; }
+.dep-upload-drop {
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s;
+}
+.dep-upload-drop:hover { border-color: var(--blue); }
+.upload-icon { font-size: 32px; color: var(--muted); margin: 0 0 8px; }
+.upload-hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.dep-upload-row { display: flex; justify-content: center; margin-top: 10px; }
+
+.dep-files-preview { margin-bottom: 16px; }
+.dep-files-preview h4 { margin: 0 0 8px; font-size: 14px; }
+.dep-files-preview ul { margin: 0 0 12px; padding-left: 20px; font-size: 13px; color: var(--muted); }
+.dep-upload-form { display: flex; gap: 10px; align-items: center; }
+
+.dep-snapshots-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
+}
+.dep-snapshots-header h3 { margin: 0; font-size: 16px; }
+
+.dep-snapshot-cards { display: grid; gap: 10px; }
+.dep-snapshot-card {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.dep-snapshot-name { font-size: 15px; font-weight: 600; color: var(--ink); }
+.dep-snapshot-meta { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.dep-snapshot-actions { display: flex; gap: 6px; }
+
+.dep-detail { margin-top: 16px; }
+.dep-detail h4 { margin: 0 0 8px; font-size: 15px; }
+.dep-findings { margin-top: 14px; }
+.dep-findings h5 { margin: 0 0 8px; font-size: 14px; color: var(--muted); }
+.ref-link { color: var(--blue); text-decoration: none; }
+.ref-link:hover { text-decoration: underline; }
 
 .error-banner {
   display: flex;

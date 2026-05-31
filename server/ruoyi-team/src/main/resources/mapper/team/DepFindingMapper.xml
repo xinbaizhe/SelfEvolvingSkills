@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.team.mapper.DepFindingMapper">
+
+    <resultMap type="com.ruoyi.team.domain.DepFinding" id="DepFindingResult">
+        <id     property="id"           column="id"            />
+        <result property="depId"        column="dep_id"        />
+        <result property="intelId"      column="intel_id"      />
+        <result property="cveId"        column="cve_id"        />
+        <result property="title"        column="title"         />
+        <result property="severity"     column="severity"      />
+        <result property="isPoisoning"  column="is_poisoning"  />
+        <result property="referenceUrl" column="reference_url" />
+        <result property="createdAt"    column="created_at"    />
+    </resultMap>
+
+    <select id="selectByDepId" resultMap="DepFindingResult">
+        select id, dep_id, intel_id, cve_id, title, severity, is_poisoning, reference_url, created_at
+        from dep_finding
+        where dep_id = #{depId}
+        order by is_poisoning desc, severity desc
+    </select>
+
+    <insert id="batchInsertDepFindings" parameterType="list">
+        insert into dep_finding (dep_id, intel_id, cve_id, title, severity, is_poisoning, reference_url) values
+        <foreach collection="list" item="item" separator=",">
+            (#{item.depId}, #{item.intelId}, #{item.cveId}, #{item.title}, #{item.severity}, #{item.isPoisoning}, #{item.referenceUrl})
+        </foreach>
+    </insert>
+
+    <delete id="deleteByDepId">
+        delete from dep_finding where dep_id = #{depId}
+    </delete>
+
+</mapper>

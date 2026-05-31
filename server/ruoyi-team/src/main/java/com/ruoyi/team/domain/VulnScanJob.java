@@ -13,6 +13,10 @@ public class VulnScanJob {
     private Integer highCount;
     private Integer mediumCount;
     private Integer lowCount;
+    private String modelType;
+    private Long modelId;
+    private String progressStep;
+    private String progressText;
     private List<VulnFinding> findings;
     private Long userId;
     private Long deptId;
@@ -36,6 +40,14 @@ public class VulnScanJob {
     public void setMediumCount(Integer mediumCount) { this.mediumCount = mediumCount; }
     public Integer getLowCount() { return lowCount; }
     public void setLowCount(Integer lowCount) { this.lowCount = lowCount; }
+    public String getModelType() { return modelType; }
+    public void setModelType(String modelType) { this.modelType = modelType; }
+    public Long getModelId() { return modelId; }
+    public void setModelId(Long modelId) { this.modelId = modelId; }
+    public String getProgressStep() { return progressStep; }
+    public void setProgressStep(String progressStep) { this.progressStep = progressStep; }
+    public String getProgressText() { return progressText; }
+    public void setProgressText(String progressText) { this.progressText = progressText; }
     public List<VulnFinding> getFindings() { return findings; }
     public void setFindings(List<VulnFinding> findings) { this.findings = findings; }
     public Long getUserId() { return userId; }

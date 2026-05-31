@@ -14,6 +14,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="highCount"      column="high_count"      />
         <result property="mediumCount"    column="medium_count"    />
         <result property="lowCount"       column="low_count"       />
+        <result property="modelType"      column="model_type"      />
+        <result property="modelId"        column="model_id"        />
+        <result property="progressStep"   column="progress_step"   />
+        <result property="progressText"   column="progress_text"   />
         <result property="userId"         column="user_id"         />
         <result property="deptId"         column="dept_id"         />
         <result property="createdAt"      column="created_at"      />
@@ -22,6 +26,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <sql id="selectVulnScanJobVo">
         select id, scan_type, target, status, total_findings,
                critical_count, high_count, medium_count, low_count,
+               model_type, model_id, progress_step, progress_text,
                user_id, dept_id, created_at
         from vuln_scan_jobs
     </sql>
@@ -54,10 +59,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         insert into vuln_scan_jobs (
             scan_type, target, status,
             total_findings, critical_count, high_count, medium_count, low_count,
+            model_type, model_id,
             user_id, dept_id, created_at
         ) values (
             #{scanType}, #{target}, #{status},
             #{totalFindings}, #{criticalCount}, #{highCount}, #{mediumCount}, #{lowCount},
+            #{modelType}, #{modelId},
             #{userId}, #{deptId}, sysdate()
         )
     </insert>
