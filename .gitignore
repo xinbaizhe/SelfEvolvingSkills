@@ -13,7 +13,7 @@ frontend/tsconfig.tsbuildinfo
 # Java server
 server/target/
 server/ruoyi-admin/target/
-server/ruoyi-commin/target/
+server/ruoyi-common/target/
 server/ruoyi-framework/target/
 server/ruoyi-generator/target/
 server/ruoyi-quartz/target/
@@ -51,6 +51,9 @@ Thumbs.db
 
 # IntelliJ IDEA
 *.iml
+
+# Git worktrees
+.worktrees/
 
 # Root lock file (no root package.json)
 package-lock.json
