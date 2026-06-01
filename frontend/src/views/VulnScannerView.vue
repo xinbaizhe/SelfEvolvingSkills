@@ -7,7 +7,7 @@ import { getErrorMessage } from '../utils/error'
 import { fetchLlmConfig } from '../api/admin'
 import { fetchAvailableModels, type TeamModelConfig } from '../api/team'
 import LoginDialog from '../components/team/LoginDialog.vue'
-import type { VulnScanJob, VulnFinding } from '../api/vuln'
+import type { VulnScanJob, VulnFinding, AgentCredential } from '../api/vuln'
 
 const store = useTeamStore()
 const vulnStore = useVulnStore()
@@ -37,6 +37,25 @@ const depMonitorName = ref('')
 const depUploadFiles = ref<{ name: string; content: string }[]>([])
 const depFileInput = ref<HTMLInputElement | null>(null)
 const expandedDepId = ref<number | null>(null)
+
+const useAgent = ref(false)
+const agentCredentials = ref<AgentCredential[]>([])
+
+function addCredential() {
+  agentCredentials.value = [...agentCredentials.value, {
+    credId: 'cred' + Date.now(),
+    role: 'user',
+    username: '',
+    cookie: '',
+    authorization: '',
+    permissions: '',
+    sessionValid: true,
+  }]
+}
+
+function removeCredential(idx: number) {
+  agentCredentials.value = agentCredentials.value.filter((_, i) => i !== idx)
+}
 
 const scanSteps = [
   '准备扫描目标',
@@ -96,7 +115,20 @@ async function handleUrlScan() {
   }
   scanStep.value = 1
   scanStep.value = 2
-  const result = await vulnStore.runUrlScan(urlInput.value.trim(), { modelType: modelType.value, modelId: modelId.value })
+
+  let result: VulnScanJob | null
+  if (useAgent.value) {
+    const { scanUrlWithAgent } = await import('../api/vuln')
+    result = await scanUrlWithAgent(
+      urlInput.value.trim(),
+      { modelType: modelType.value, modelId: modelId.value },
+      agentCredentials.value,
+    )
+    vulnStore.currentResult = result
+  } else {
+    result = await vulnStore.runUrlScan(urlInput.value.trim(), { modelType: modelType.value, modelId: modelId.value })
+  }
+
   if (result && modelType.value === 'personal') {
     scanStep.value = 4
     await reviewResultWithLocalModel(result)
@@ -481,6 +513,27 @@ onMounted(() => {
               </el-button>
             </div>
             <p class="scan-hint">系统会爬取同源页面并检测 SQL 注入、XSS、CSRF、信息泄露、安全响应头缺失等常见漏洞。</p>
+            <el-checkbox v-model="useAgent" class="agent-toggle" style="margin-top:12px">
+              启用 AI 自主渗透测试 Agent（需配置LLM模型，扫描耗时 30-60 分钟）
+            </el-checkbox>
+            <div v-if="useAgent" class="credential-section" style="margin-top:12px">
+              <div class="cred-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-size:14px;font-weight:500">多角色凭据（Agent 多角色越权测试用）</span>
+                <el-button size="small" @click="addCredential">+ 添加凭据</el-button>
+              </div>
+              <div
+                v-for="(cred, idx) in agentCredentials"
+                :key="idx"
+                class="cred-row"
+                style="display:flex;gap:8px;margin-bottom:6px;align-items:center"
+              >
+                <el-input v-model="cred.username" placeholder="用户名" size="small" style="width:100px" />
+                <el-input v-model="cred.role" placeholder="角色(admin/user)" size="small" style="width:120px" />
+                <el-input v-model="cred.cookie" placeholder="Cookie" size="small" style="width:160px" />
+                <el-input v-model="cred.authorization" placeholder="Authorization" size="small" style="width:160px" />
+                <el-button @click="removeCredential(idx)" size="small" type="danger" circle>×</el-button>
+              </div>
+            </div>
           </el-tab-pane>
 
           <el-tab-pane label="代码扫描" name="code">

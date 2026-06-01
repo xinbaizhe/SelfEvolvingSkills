@@ -80,6 +80,34 @@ export interface UploadManifestResult {
   deps: DepSnapshot[]
 }
 
+export interface AgentCredential {
+  credId: string
+  role: string
+  username: string
+  cookie: string
+  authorization: string
+  permissions: string
+  sessionValid: boolean
+}
+
+export async function scanUrlWithAgent(
+  url: string,
+  options: VulnScanOptions = {},
+  credentials: AgentCredential[] = [],
+): Promise<VulnScanJob> {
+  const res = await teamApiPost<{ code: number; msg: string; data: VulnScanJob }>(
+    '/vuln/scan-url/agent',
+    {
+      url,
+      modelType: options.modelType,
+      modelId: options.modelId ? String(options.modelId) : undefined,
+      agentCredentials: credentials,
+    },
+  )
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || '扫描失败，Agent 未启用')
+  return res.data
+}
+
 export async function scanUrl(url: string, options: VulnScanOptions = {}): Promise<VulnScanJob> {
   const res = await teamApiPost<{ code: number; msg: string; data: VulnScanJob }>(
     '/vuln/scan-url',

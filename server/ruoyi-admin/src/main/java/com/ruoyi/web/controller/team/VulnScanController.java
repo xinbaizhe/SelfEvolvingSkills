@@ -1,5 +1,6 @@
 package com.ruoyi.web.controller.team;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,7 @@ import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
+import com.ruoyi.team.domain.CredentialState;
 import com.ruoyi.team.domain.DepFinding;
 import com.ruoyi.team.domain.DepMonitor;
 import com.ruoyi.team.domain.VulnIntel;
@@ -64,6 +66,46 @@ public class VulnScanController extends BaseController {
             loginUser.getUser().getDeptId(),
             body.get("modelType"),
             parseLong(body.get("modelId"))
+        );
+        return success(job);
+    }
+
+    @SuppressWarnings("unchecked")
+    @PostMapping("/scan-url/agent")
+    public AjaxResult scanUrlWithAgent(@RequestBody Map<String, Object> body) {
+        String url = (String) body.get("url");
+        if (url == null || url.isBlank()) {
+            return error("URL不能为空");
+        }
+
+        List<CredentialState> creds = new ArrayList<>();
+        Object credsObj = body.get("agentCredentials");
+        if (credsObj instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> m = (Map<String, Object>) item;
+                    creds.add(new CredentialState(
+                        String.valueOf(m.getOrDefault("credId", "")),
+                        String.valueOf(m.getOrDefault("role", "unknown")),
+                        String.valueOf(m.getOrDefault("username", "")),
+                        String.valueOf(m.getOrDefault("permissions", "")),
+                        !"false".equals(String.valueOf(m.get("sessionValid"))),
+                        String.valueOf(m.getOrDefault("cookie", "")),
+                        String.valueOf(m.getOrDefault("authorization", ""))
+                    ));
+                }
+            }
+        }
+
+        LoginUser loginUser = SecurityUtils.getLoginUser();
+        VulnScanJob job = vulnScanService.scanUrlWithAgent(
+            url.trim(),
+            loginUser.getUser().getUserId(),
+            loginUser.getUser().getDeptId(),
+            (String) body.get("modelType"),
+            parseLong((String) body.get("modelId")),
+            creds
         );
         return success(job);
     }
