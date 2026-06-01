@@ -54,6 +54,10 @@ public class VulnLlmVerifier {
         this(config.getBaseUrl(), config.getModel(), config.getApiKeyHash());
     }
 
+    public String getBaseUrl() { return baseUrl; }
+    public String getModel() { return model; }
+    public String getApiKey() { return apiKey; }
+
     /**
      * Verify a batch of regex-detected findings through LLM semantic analysis.
      * Each finding is individually evaluated; those confirmed as real

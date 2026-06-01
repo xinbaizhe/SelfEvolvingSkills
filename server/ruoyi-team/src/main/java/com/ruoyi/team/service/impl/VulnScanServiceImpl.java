@@ -8,12 +8,16 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -24,6 +28,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.ruoyi.team.domain.CredentialState;
 import com.ruoyi.team.domain.TeamModelConfig;
 import com.ruoyi.team.domain.VulnFinding;
 import com.ruoyi.team.domain.VulnScanJob;
@@ -484,5 +489,65 @@ public class VulnScanServiceImpl implements IVulnScanService {
     private static String truncate(String s, int maxLen) {
         if (s == null) return "";
         return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
+    }
+
+    // ---- Agent integration ----
+
+    @Override
+    public VulnScanJob scanUrlWithAgent(String targetUrl, Long userId, Long deptId,
+                                         String modelType, Long modelId,
+                                         List<CredentialState> agentCredentials) {
+        VulnScanJob job = createJob("url", targetUrl, userId, deptId, modelType, modelId);
+        jobMapper.insertVulnScanJob(job);
+
+        VulnLlmVerifier llm = buildVerifier(deptId, userId);
+        List<VulnFinding> findings = doUrlScan(targetUrl);
+        List<String> messages = new ArrayList<>();
+
+        CompletableFuture<List<VulnFinding>> agentFuture = launchAgentIfConfigured(
+            targetUrl, llm, agentCredentials, messages);
+
+        try {
+            List<VulnFinding> agentFindings = agentFuture.get(5, TimeUnit.MINUTES);
+            if (agentFindings != null && !agentFindings.isEmpty()) {
+                findings.addAll(agentFindings);
+            }
+        } catch (Exception e) {
+            log.warn("Agent scan incomplete: {}", e.getMessage());
+        }
+
+        saveFindings(job.getId(), findings);
+        updateJobCounts(job, findings);
+        job.setFindings(findings);
+        return job;
+    }
+
+    private CompletableFuture<List<VulnFinding>> launchAgentIfConfigured(
+            String targetUrl, VulnLlmVerifier llm,
+            List<CredentialState> agentCredentials,
+            List<String> progressMessages) {
+        if (llm == null) {
+            log.info("Agent skipped: no LLM configured");
+            return CompletableFuture.completedFuture(List.of());
+        }
+
+        PenTestAgent agent = new PenTestAgent(
+            targetUrl,
+            llm.getBaseUrl(),
+            llm.getModel(),
+            llm.getApiKey(),
+            50,
+            Duration.ofMinutes(55),
+            msg -> {
+                log.info("[Agent] {}", msg);
+                if (progressMessages != null) progressMessages.add(msg);
+            }
+        );
+
+        if (agentCredentials != null && !agentCredentials.isEmpty()) {
+            agent.loadCredentials(agentCredentials);
+        }
+
+        return CompletableFuture.supplyAsync(() -> agent.run());
     }
 }

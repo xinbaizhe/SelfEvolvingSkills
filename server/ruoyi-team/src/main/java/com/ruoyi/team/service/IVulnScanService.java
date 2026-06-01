@@ -1,6 +1,7 @@
 package com.ruoyi.team.service;
 
 import java.util.List;
+import com.ruoyi.team.domain.CredentialState;
 import com.ruoyi.team.domain.VulnScanJob;
 
 public interface IVulnScanService {
@@ -8,4 +9,8 @@ public interface IVulnScanService {
     VulnScanJob scanCode(String dirPath, Long userId, Long deptId, String modelType, Long modelId);
     VulnScanJob getJobWithFindings(Long jobId);
     List<VulnScanJob> getHistory(Long userId);
+
+    VulnScanJob scanUrlWithAgent(String targetUrl, Long userId, Long deptId,
+                                  String modelType, Long modelId,
+                                  List<CredentialState> agentCredentials);
 }
