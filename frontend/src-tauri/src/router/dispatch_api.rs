@@ -4,6 +4,66 @@ use serde_json::json;
 use crate::services;
 use crate::{open_conn, parse_scope_payload, ApiResponse, SourceUpdate};
 
+fn configured_llm_tuple(conn: &rusqlite::Connection) -> anyhow::Result<(String, String, String, String)> {
+    if !services::admin_service::get_config_bool(conn, "llm_enabled", false)? {
+        return Err(anyhow!("大模型未启用，请先到资源与配置中启用模型配置"));
+    }
+    let api_key = services::admin_service::get_config(conn, "llm_api_key")?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow!("大模型未配置 API Key"))?;
+    let base_url = services::admin_service::get_config(conn, "llm_base_url")?
+        .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let model = services::admin_service::get_config(conn, "llm_model")?
+        .unwrap_or_else(|| "gpt-5.5".to_string());
+    let api_format = services::admin_service::get_config(conn, "llm_api_format")?
+        .unwrap_or_else(|| "openai".to_string());
+    Ok((base_url, api_key, model, api_format))
+}
+
+fn llm_tuple_from_body(body: &Option<serde_json::Value>) -> anyhow::Result<Option<(String, String, String, String)>> {
+    let Some(config) = body
+        .as_ref()
+        .and_then(|value| value.get("metadata"))
+        .and_then(|metadata| metadata.get("evaluationModelConfig"))
+    else {
+        return Ok(None);
+    };
+    if config.is_null() {
+        return Ok(None);
+    }
+    let api_key = config
+        .get("apiKey")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("所选评估模型缺少 API Key"))?
+        .to_string();
+    let base_url = config
+        .get("baseUrl")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("所选评估模型缺少 Base URL"))?
+        .trim_end_matches('/')
+        .to_string();
+    let model = config
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("所选评估模型缺少模型标识"))?
+        .to_string();
+    let api_format = config
+        .get("apiFormat")
+        .or_else(|| config.get("provider"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("openai")
+        .to_string();
+    Ok(Some((base_url, api_key, model, api_format)))
+}
+
 pub(crate) async fn dispatch_api(
     state: &crate::AppState,
     app: &tauri::AppHandle,
@@ -42,6 +102,46 @@ pub(crate) async fn dispatch_api(
         return services::admin_service::test_llm_connection(Some(body))
             .await
             .map(|value| json!(ApiResponse::ok(value)));
+    }
+
+    if matches!(
+        (method, clean_path),
+        ("POST", "/admin/config/llm/evaluate-share") | ("POST", "admin/config/llm/evaluate-share")
+    ) {
+        let (base_url, api_key, model, api_format) = match llm_tuple_from_body(&body)? {
+            Some(tuple) => tuple,
+            None => {
+                let conn = open_conn(&state.db_path)?;
+                let tuple = configured_llm_tuple(&conn)?;
+                drop(conn);
+                tuple
+            }
+        };
+        return services::admin_service::evaluate_share_resource_with_llm(
+            base_url, api_key, model, api_format, body,
+        )
+        .await
+        .map(|value| json!(ApiResponse::ok(value)));
+    }
+
+    if matches!(
+        (method, clean_path),
+        ("POST", "/admin/config/llm/evaluate-directory") | ("POST", "admin/config/llm/evaluate-directory")
+    ) {
+        let (base_url, api_key, model, api_format) = match llm_tuple_from_body(&body)? {
+            Some(tuple) => tuple,
+            None => {
+                let conn = open_conn(&state.db_path)?;
+                let tuple = configured_llm_tuple(&conn)?;
+                drop(conn);
+                tuple
+            }
+        };
+        return services::admin_service::evaluate_directory_skills_with_llm(
+            base_url, api_key, model, api_format, body,
+        )
+        .await
+        .map(|value| json!(ApiResponse::ok(value)));
     }
 
     // Scan requires the lock to be acquired before opening the connection

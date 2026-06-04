@@ -12,7 +12,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="sourceType"       column="source_type"     />
         <result property="originAgent"      column="origin_agent"    />
         <result property="bodyMd"           column="body_md"         />
+        <result property="zipFileName"      column="zip_file_name"   />
+        <result property="zipFilePath"      column="zip_file_path"   />
+        <result property="zipFileSize"      column="zip_file_size"   />
         <result property="authorId"         column="author_id"       />
+        <result property="createdBy"        column="created_by"      />
+        <result property="authorName"       column="author_name"     />
         <result property="deptId"           column="dept_id"         />
         <result property="compatibleModels" column="compatible_models"/>
         <result property="compatibleAgents" column="compatible_agents"/>
@@ -25,50 +30,53 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </resultMap>
 
     <sql id="selectTeamSkillVo">
-        select id, name, description, category, source_type, origin_agent, body_md,
-               author_id, dept_id, compatible_models, compatible_agents,
-               usage_count, avg_score, status, version, created_at, updated_at
-        from team_skills
+        select s.id, s.name, s.description, s.category, s.source_type, s.origin_agent, s.body_md,
+               s.zip_file_name, s.zip_file_path, s.zip_file_size,
+               s.author_id, s.created_by, COALESCE(s.created_by, u.user_name) as author_name,
+               s.dept_id, s.compatible_models, s.compatible_agents,
+               s.usage_count, s.avg_score, s.status, s.version, s.created_at, s.updated_at
+        from team_skills s
+        left join sys_user u on u.user_id = s.author_id
     </sql>
 
     <select id="selectTeamSkillList" parameterType="com.ruoyi.team.domain.TeamSkill" resultMap="TeamSkillResult">
         <include refid="selectTeamSkillVo"/>
         <where>
             <if test="name != null and name != ''">
-                AND name like concat('%', #{name}, '%')
+                AND s.name like concat('%', #{name}, '%')
             </if>
             <if test="category != null and category != ''">
-                AND category = #{category}
+                AND s.category = #{category}
             </if>
             <if test="sourceType != null and sourceType != ''">
-                AND source_type = #{sourceType}
+                AND s.source_type = #{sourceType}
             </if>
             <if test="status != null and status != ''">
-                AND status = #{status}
+                AND s.status = #{status}
             </if>
             <if test="deptId != null">
-                AND dept_id = #{deptId}
+                AND s.dept_id = #{deptId}
             </if>
             <if test="authorId != null">
-                AND author_id = #{authorId}
+                AND s.author_id = #{authorId}
             </if>
             <if test="params.roleId != null and params.roleId != ''">
-                AND author_id IN (
+                AND s.author_id IN (
                     SELECT ur.user_id FROM sys_user_role ur WHERE ur.role_id = #{params.roleId}
                 )
             </if>
             <if test="params.postId != null and params.postId != ''">
-                AND author_id IN (
+                AND s.author_id IN (
                     SELECT up.user_id FROM sys_user_post up WHERE up.post_id = #{params.postId}
                 )
             </if>
         </where>
-        order by usage_count desc, avg_score desc
+        order by s.created_at desc, s.usage_count desc, s.avg_score desc
     </select>
 
     <select id="selectTeamSkillById" parameterType="Long" resultMap="TeamSkillResult">
         <include refid="selectTeamSkillVo"/>
-        where id = #{id}
+        where s.id = #{id}
     </select>
 
     <insert id="insertTeamSkill" parameterType="com.ruoyi.team.domain.TeamSkill" useGeneratedKeys="true" keyProperty="id">
@@ -79,7 +87,11 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="sourceType != null">source_type,</if>
             <if test="originAgent != null">origin_agent,</if>
             <if test="bodyMd != null">body_md,</if>
+            <if test="zipFileName != null">zip_file_name,</if>
+            <if test="zipFilePath != null">zip_file_path,</if>
+            <if test="zipFileSize != null">zip_file_size,</if>
             <if test="authorId != null">author_id,</if>
+            <if test="createdBy != null and createdBy != ''">created_by,</if>
             <if test="deptId != null">dept_id,</if>
             <if test="compatibleModels != null">compatible_models,</if>
             <if test="compatibleAgents != null">compatible_agents,</if>
@@ -95,7 +107,11 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="sourceType != null">#{sourceType},</if>
             <if test="originAgent != null">#{originAgent},</if>
             <if test="bodyMd != null">#{bodyMd},</if>
+            <if test="zipFileName != null">#{zipFileName},</if>
+            <if test="zipFilePath != null">#{zipFilePath},</if>
+            <if test="zipFileSize != null">#{zipFileSize},</if>
             <if test="authorId != null">#{authorId},</if>
+            <if test="createdBy != null and createdBy != ''">#{createdBy},</if>
             <if test="deptId != null">#{deptId},</if>
             <if test="compatibleModels != null">#{compatibleModels},</if>
             <if test="compatibleAgents != null">#{compatibleAgents},</if>
@@ -116,6 +132,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="sourceType != null">source_type = #{sourceType},</if>
             <if test="originAgent != null">origin_agent = #{originAgent},</if>
             <if test="bodyMd != null">body_md = #{bodyMd},</if>
+            <if test="zipFileName != null">zip_file_name = #{zipFileName},</if>
+            <if test="zipFilePath != null">zip_file_path = #{zipFilePath},</if>
+            <if test="zipFileSize != null">zip_file_size = #{zipFileSize},</if>
             <if test="compatibleModels != null">compatible_models = #{compatibleModels},</if>
             <if test="compatibleAgents != null">compatible_agents = #{compatibleAgents},</if>
             <if test="usageCount != null">usage_count = #{usageCount},</if>

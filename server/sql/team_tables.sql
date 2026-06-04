@@ -8,7 +8,11 @@ CREATE TABLE team_skills (
     source_type     VARCHAR(50)  DEFAULT 'user',
     origin_agent    VARCHAR(50),
     body_md         MEDIUMTEXT NOT NULL,
+    zip_file_name   VARCHAR(255) COMMENT '服务器存储的原始zip文件名',
+    zip_file_path   VARCHAR(1000) COMMENT '服务器zip相对路径',
+    zip_file_size   BIGINT COMMENT 'zip文件大小',
     author_id       BIGINT NOT NULL COMMENT '上传者',
+    created_by      VARCHAR(64) COMMENT '创建人',
     dept_id         BIGINT COMMENT '所属部门',
     compatible_models TEXT COMMENT 'JSON: ["claude-sonnet-4-6","*"]',
     compatible_agents TEXT COMMENT 'JSON: ["claude-code","cursor"]',
@@ -20,8 +24,16 @@ CREATE TABLE team_skills (
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_team_skills_dept (dept_id),
     INDEX idx_team_skills_category (category),
-    INDEX idx_team_skills_author (author_id)
+    INDEX idx_team_skills_author (author_id),
+    INDEX idx_team_skills_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='团队Skills';
+
+-- Existing MySQL 8 deployments can apply this migration after confirming the column/index do not exist:
+-- ALTER TABLE team_skills ADD COLUMN created_by VARCHAR(64) COMMENT '创建人' AFTER author_id;
+-- ALTER TABLE team_skills ADD COLUMN zip_file_name VARCHAR(255) COMMENT '服务器存储的原始zip文件名' AFTER body_md;
+-- ALTER TABLE team_skills ADD COLUMN zip_file_path VARCHAR(1000) COMMENT '服务器zip相对路径' AFTER zip_file_name;
+-- ALTER TABLE team_skills ADD COLUMN zip_file_size BIGINT COMMENT 'zip文件大小' AFTER zip_file_path;
+-- CREATE INDEX idx_team_skills_created ON team_skills (created_at);
 
 -- 安装记录
 DROP TABLE IF EXISTS team_skill_installs;
@@ -65,6 +77,10 @@ CREATE TABLE vuln_scan_jobs (
     high_count      INT DEFAULT 0,
     medium_count    INT DEFAULT 0,
     low_count       INT DEFAULT 0,
+    model_type      VARCHAR(20) COMMENT 'department/personal',
+    model_id        BIGINT COMMENT 'department model id',
+    progress_step   VARCHAR(50) COMMENT 'current scan step',
+    progress_text   LONGTEXT COMMENT 'scan execution records',
     user_id         BIGINT NOT NULL,
     dept_id         BIGINT,
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,

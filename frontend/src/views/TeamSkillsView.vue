@@ -6,6 +6,7 @@ import { useTeamStore } from '../stores/useTeamStore'
 import {
   approveEvolution,
   cacheTeamSkills,
+  downloadTeamSkillZip,
   fetchAllPosts,
   fetchDeptTree,
   fetchEvolutions,
@@ -93,10 +94,10 @@ async function loadSkills() {
         isOffline.value = true
         cachedAt.value = cached.cached_at
       } else {
-        ElMessage.error(getErrorMessage(e, '加载团队 Skills 失败'))
+        isOffline.value = true
       }
     } catch {
-      ElMessage.error(getErrorMessage(e, '加载团队 Skills 失败'))
+      isOffline.value = true
     }
   } finally {
     loading.value = false
@@ -142,7 +143,15 @@ function handlePageChange(nextPage: number) {
 }
 
 function openShare() {
-  shareDialog.value?.open()
+  if (!store.isAuthenticated) {
+    loginDialog.value?.open()
+    return
+  }
+  if (!shareDialog.value) {
+    ElMessage.error('分享窗口未加载，请刷新后重试')
+    return
+  }
+  shareDialog.value.open()
 }
 
 function openEvolution(skillId?: number) {
@@ -221,6 +230,56 @@ function extractUrl(skill: TeamSkill) {
   return match?.[0] || ''
 }
 
+function extractUsageGuide(body: string) {
+  const match = body.match(/(?:^|\n)##\s*使用说明\s*\n([\s\S]*?)(?=\n##\s+|$)/)
+  return match?.[1]?.trim() || ''
+}
+
+function extractUploadedZip(skill: TeamSkill) {
+  if (skill.zipFilePath || skill.zipFileName) {
+    return { filename: skill.zipFileName || `${sanitizeZipSegment(skill.name)}.zip` }
+  }
+  return null
+}
+
+function hasUploadedZip(skill: TeamSkill) {
+  return !!extractUploadedZip(skill)
+}
+
+function base64ToBlob(base64: string, type: string) {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type })
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const value = String(reader.result || '')
+      resolve(value.includes(',') ? value.split(',')[1] : value)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function saveZipToLocal(blob: Blob, filename: string) {
+  if (window.__TAURI_INTERNALS__) {
+    const savedPath = await invoke<string | null>('save_file_base64', {
+      filename,
+      contentBase64: await blobToBase64(blob),
+    })
+    if (savedPath) {
+      ElMessage.success(`zip 已保存：${savedPath}`)
+    }
+    return
+  }
+  downloadBlob(blob, filename)
+  ElMessage.success('zip 已生成')
+}
+
 function parseJsonArray(val: string): string[] {
   if (!val) return []
   try {
@@ -249,10 +308,15 @@ async function downloadSkillZip(skill: TeamSkill) {
       ElMessage.warning('该 Skill 没有可下载的内容')
       return
     }
+    const uploadedZip = extractUploadedZip(detail)
+    if (uploadedZip) {
+      const remoteZip = await downloadTeamSkillZip(detail.id)
+      await saveZipToLocal(base64ToBlob(remoteZip.contentBase64, 'application/zip'), remoteZip.filename || uploadedZip.filename)
+      return
+    }
     const dir = sanitizeZipSegment(detail.name)
     const blob = createStoredZip([{ path: `${dir}/SKILL.md`, content: body }])
-    downloadBlob(blob, `${dir}.zip`)
-    ElMessage.success('zip 已生成')
+    await saveZipToLocal(blob, `${dir}.zip`)
   } catch (e: unknown) {
     ElMessage.error(getErrorMessage(e, '下载 zip 失败'))
   } finally {
@@ -275,6 +339,23 @@ async function openToolUrl(skill: TeamSkill) {
     }
   } catch (e: unknown) {
     ElMessage.error(getErrorMessage(e, '打开网址失败'))
+  }
+}
+
+async function showUsageGuide(skill: TeamSkill) {
+  try {
+    const detail = skill.bodyMd ? skill : await fetchTeamSkillDetail(skill.id)
+    const usageGuide = extractUsageGuide(detail.bodyMd || '')
+    if (!usageGuide) {
+      ElMessage.warning('该 Skill 暂无使用说明')
+      return
+    }
+    await ElMessageBox.alert(usageGuide, `${detail.name} 使用说明`, {
+      confirmButtonText: '关闭',
+      customClass: 'usage-guide-message',
+    })
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '加载使用说明失败'))
   }
 }
 
@@ -303,6 +384,15 @@ onMounted(() => {
       </div>
     </div>
 
+    <div v-if="isOffline" class="offline-banner">
+      <span class="offline-icon">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9s3.36 7.5 7.5 7.5 7.5-3.36 7.5-7.5S13.14 1.5 9 1.5zM9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </span>
+      离线模式 — 无法连接到服务器，请确认服务已启动。接口恢复后页面将自动重试。
+      <span v-if="cachedAt" class="offline-cache">当前展示缓存：{{ cachedAt }}</span>
+      <el-button size="small" @click="loadSkills">重试</el-button>
+    </div>
+
     <template v-if="!store.isAuthenticated">
       <div class="login-prompt">
         <div class="login-card">
@@ -314,12 +404,6 @@ onMounted(() => {
     </template>
 
     <template v-else>
-      <div v-if="isOffline" class="offline-banner">
-        <span class="offline-dot"></span>
-        离线模式，当前展示缓存数据。上次缓存：{{ cachedAt || '未知' }}
-        <el-button size="small" text @click="loadSkills">重试</el-button>
-      </div>
-
       <div v-if="!showEvolutions" class="toolbar">
         <div class="toolbar-main">
           <el-input
@@ -374,6 +458,7 @@ onMounted(() => {
             <div class="header-tags">
               <el-tag size="small">{{ categoryLabel(skill.category) }}</el-tag>
               <el-tag size="small" :type="isUrlResource(skill) ? 'warning' : 'success'" effect="plain">{{ typeLabel(skill.sourceType) }}</el-tag>
+              <el-tag v-if="hasUploadedZip(skill)" size="small" type="info" effect="plain">ZIP</el-tag>
             </div>
           </div>
 
@@ -384,6 +469,8 @@ onMounted(() => {
             <span>使用 {{ skill.usageCount ?? 0 }} 次</span>
             <span v-if="skill.avgScore">评分 {{ (skill.avgScore * 100).toFixed(0) }}</span>
             <span v-if="skill.originAgent">{{ skill.originAgent }}</span>
+            <span v-if="skill.authorName || skill.createdBy">创建人 {{ skill.authorName || skill.createdBy }}</span>
+            <span v-if="skill.createdAt">创建 {{ skill.createdAt.slice(0, 10) }}</span>
           </div>
 
           <div v-if="!isUrlResource(skill) && parseJsonArray(skill.compatibleAgents).length" class="compat-row">
@@ -401,14 +488,14 @@ onMounted(() => {
           </div>
 
           <div class="card-actions">
-            <span class="updated-at">{{ skill.updatedAt?.slice(0, 10) || '' }}</span>
             <div class="action-buttons">
               <el-button v-if="isUrlResource(skill)" size="small" text type="primary" @click="openToolUrl(skill)">
                 打开网址
               </el-button>
               <el-button v-else size="small" text type="primary" :loading="downloading === skill.id" @click="downloadSkillZip(skill)">
-                下载 zip
+                {{ hasUploadedZip(skill) ? '下载原始 zip' : '下载为 zip' }}
               </el-button>
+              <el-button size="small" text type="primary" @click="showUsageGuide(skill)">使用说明</el-button>
               <el-button v-if="!isUrlResource(skill)" size="small" text type="primary" @click="openEvolution(skill.id)">提案进化</el-button>
             </div>
           </div>
@@ -581,22 +668,25 @@ onMounted(() => {
 .offline-banner {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  margin-bottom: 14px;
-  background: rgba(245, 158, 11, .12);
-  border: 1px solid rgba(245, 158, 11, .28);
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: rgba(217, 134, 18, .08);
+  border: 1px solid rgba(217, 134, 18, .28);
   border-radius: 8px;
+  color: #d98612;
   font-size: 13px;
-  color: #b7791f;
 }
 
-.offline-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #f59e0b;
+.offline-icon {
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
+}
+
+.offline-cache {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .search-input {
@@ -634,6 +724,12 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.card-actions {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 
 .header-tags {
@@ -681,16 +777,37 @@ onMounted(() => {
   margin-right: 2px;
 }
 
-.updated-at {
-  font-size: 12px;
-  color: var(--muted);
-}
-
 .action-buttons {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+  justify-content: stretch;
+  width: 100%;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid rgba(148, 163, 184, .24);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, .72);
+}
+
+.action-buttons :deep(.el-button) {
+  margin-left: 0;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  justify-content: center;
+}
+
+.action-buttons :deep(.el-button.is-text) {
+  background: transparent;
+}
+
+.action-buttons :deep(.el-button.is-text:hover),
+.action-buttons :deep(.el-button.is-text:focus) {
+  background: var(--panel);
 }
 
 .empty-state {
@@ -810,6 +927,15 @@ onMounted(() => {
   .action-buttons,
   .evolution-actions {
     justify-content: flex-start;
+  }
+
+  .action-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .action-buttons :deep(.el-button) {
+    width: 100%;
   }
 }
 </style>

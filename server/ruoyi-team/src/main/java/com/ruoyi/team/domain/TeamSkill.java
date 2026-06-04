@@ -14,7 +14,12 @@ public class TeamSkill extends BaseEntity {
     private String sourceType;
     private String originAgent;
     private String bodyMd;
+    private String zipFileName;
+    private String zipFilePath;
+    private Long zipFileSize;
     private Long authorId;
+    private String createdBy;
+    private String authorName;
     private Long deptId;
     private String compatibleModels;
     private String compatibleAgents;
@@ -39,8 +44,18 @@ public class TeamSkill extends BaseEntity {
     public void setOriginAgent(String originAgent) { this.originAgent = originAgent; }
     public String getBodyMd() { return bodyMd; }
     public void setBodyMd(String bodyMd) { this.bodyMd = bodyMd; }
+    public String getZipFileName() { return zipFileName; }
+    public void setZipFileName(String zipFileName) { this.zipFileName = zipFileName; }
+    public String getZipFilePath() { return zipFilePath; }
+    public void setZipFilePath(String zipFilePath) { this.zipFilePath = zipFilePath; }
+    public Long getZipFileSize() { return zipFileSize; }
+    public void setZipFileSize(Long zipFileSize) { this.zipFileSize = zipFileSize; }
     public Long getAuthorId() { return authorId; }
     public void setAuthorId(Long authorId) { this.authorId = authorId; }
+    public String getCreatedBy() { return createdBy; }
+    public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
+    public String getAuthorName() { return authorName; }
+    public void setAuthorName(String authorName) { this.authorName = authorName; }
     public Long getDeptId() { return deptId; }
     public void setDeptId(Long deptId) { this.deptId = deptId; }
     public String getCompatibleModels() { return compatibleModels; }

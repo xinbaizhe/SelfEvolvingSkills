@@ -1,4 +1,5 @@
 import { teamApiGet, teamApiPost, teamApiDelete } from './team'
+import { invoke } from '@tauri-apps/api/core'
 
 export interface VulnFinding {
   severity: string
@@ -31,6 +32,15 @@ export interface VulnScanJob {
 export interface VulnScanOptions {
   modelType?: 'department' | 'personal'
   modelId?: number
+  cookie?: string
+  authorization?: string
+  headers?: string
+  scanProfile?: 'quick' | 'standard' | 'deep'
+  customPaths?: string
+  maxDepth?: number
+  maxPages?: number
+  portScanEnabled?: boolean
+  portSpec?: string
 }
 
 export interface VulnIntel {
@@ -111,10 +121,53 @@ export async function scanUrlWithAgent(
 export async function scanUrl(url: string, options: VulnScanOptions = {}): Promise<VulnScanJob> {
   const res = await teamApiPost<{ code: number; msg: string; data: VulnScanJob }>(
     '/vuln/scan-url',
-    { url, modelType: options.modelType, modelId: options.modelId ? String(options.modelId) : undefined },
+    {
+      url,
+      modelType: options.modelType,
+      modelId: options.modelId ? String(options.modelId) : undefined,
+      cookie: options.cookie,
+      authorization: options.authorization,
+      headers: options.headers,
+      scanProfile: options.scanProfile,
+      customPaths: options.customPaths,
+      maxDepth: options.maxDepth == null ? undefined : String(options.maxDepth),
+      maxPages: options.maxPages == null ? undefined : String(options.maxPages),
+      portScanEnabled: options.portScanEnabled ? 'true' : undefined,
+      portSpec: options.portSpec,
+    },
   )
   if (res.code !== 200 || !res.data) throw new Error(res.msg || '扫描失败')
   return res.data
+}
+
+export async function scanUrlStream(options: {
+  url: string
+  modelType?: string
+  modelId?: string
+  cookie?: string
+  authorization?: string
+  headers?: string
+  scanProfile?: string
+  customPaths?: string
+  maxDepth?: string
+  maxPages?: string
+  portScanEnabled?: string
+  portSpec?: string
+}): Promise<VulnScanJob> {
+  return invoke<VulnScanJob>('scan_url_stream', {
+    url: options.url,
+    modelType: options.modelType,
+    modelId: options.modelId,
+    cookie: options.cookie,
+    authorization: options.authorization,
+    headers: options.headers,
+    scanProfile: options.scanProfile,
+    customPaths: options.customPaths,
+    maxDepth: options.maxDepth,
+    maxPages: options.maxPages,
+    portScanEnabled: options.portScanEnabled,
+    portSpec: options.portSpec,
+  })
 }
 
 export async function scanCode(path: string, options: VulnScanOptions = {}): Promise<VulnScanJob> {

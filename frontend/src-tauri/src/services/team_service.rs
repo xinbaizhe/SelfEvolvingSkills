@@ -1,9 +1,11 @@
 use crate::AppState;
 
+use base64::Engine;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Mutex;
+use tauri::Emitter;
 
 const KEYRING_SERVICE: &str = "self-evolving-skills";
 const KEYRING_TOKEN_KEY: &str = "team-jwt";
@@ -254,6 +256,23 @@ pub(crate) async fn team_api_delete(
 }
 
 #[tauri::command]
+pub(crate) async fn team_api_download(
+    state: tauri::State<'_, TeamState>,
+    path: String,
+) -> Result<Value, String> {
+    let resp = download_call_with_retry(&state, &path).await?;
+    let filename = response_filename(&resp).unwrap_or_else(|| "download.zip".to_string());
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("下载响应读取失败: {}", e))?;
+    Ok(serde_json::json!({
+        "filename": filename,
+        "contentBase64": base64::engine::general_purpose::STANDARD.encode(bytes.as_ref())
+    }))
+}
+
+#[tauri::command]
 pub(crate) async fn check_team_connection(
     state: tauri::State<'_, TeamState>,
 ) -> Result<Value, String> {
@@ -339,7 +358,7 @@ async fn api_call_with_retry(
 
 async fn parse_api_response(resp: reqwest::Response) -> Result<Value, String> {
     let status = resp.status();
-    let body: Value = resp
+    let mut body: Value = resp
         .json()
         .await
         .map_err(|e| format!("服务端响应解析失败 (HTTP {}): {}", status.as_u16(), e))?;
@@ -355,6 +374,11 @@ async fn parse_api_response(resp: reqwest::Response) -> Result<Value, String> {
             let msg = body["msg"].as_str().unwrap_or("请求失败");
             return Err(msg.to_string());
         }
+    }
+
+    // Strip Ruoyi envelope fields to prevent msg leakage to UI
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("msg");
     }
 
     Ok(body)
@@ -396,6 +420,179 @@ async fn do_api_call(
     };
 
     req.send().await.map_err(|e| format!("API 请求失败: {}", e))
+}
+
+async fn download_call_with_retry(
+    state: &TeamState,
+    path: &str,
+) -> Result<reqwest::Response, String> {
+    let resp = do_download_call(state, path).await?;
+    if resp.status().as_u16() == 401 {
+        state.try_refresh_token().await?;
+        return do_download_call(state, path).await;
+    }
+    if !resp.status().is_success() {
+        return Err(format!("[HTTP {}] 下载失败", resp.status().as_u16()));
+    }
+    Ok(resp)
+}
+
+async fn do_download_call(state: &TeamState, path: &str) -> Result<reqwest::Response, String> {
+    let (url, token) = {
+        let session = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session.as_ref().ok_or("未登录")?;
+        (
+            format!("{}/api{}", session.server_url, path),
+            format!("Bearer {}", session.access_token),
+        )
+    };
+    state
+        .http_client
+        .get(&url)
+        .header(AUTHORIZATION, token)
+        .send()
+        .await
+        .map_err(|e| format!("下载请求失败: {}", e))
+}
+
+fn response_filename(resp: &reqwest::Response) -> Option<String> {
+    resp.headers()
+        .get("download-filename")
+        .and_then(|value| value.to_str().ok())
+        .map(percent_decode)
+        .or_else(|| {
+            resp.headers()
+                .get(reqwest::header::CONTENT_DISPOSITION)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.split("filename=").nth(1))
+                .map(|value| value.trim_matches('"').trim_end_matches(';').to_string())
+        })
+}
+
+fn percent_decode(value: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut chars = value.as_bytes().iter().copied().peekable();
+    while let Some(byte) = chars.next() {
+        if byte == b'%' {
+            let hi = chars.next();
+            let lo = chars.next();
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                let hex = [hi, lo];
+                if let Ok(text) = std::str::from_utf8(&hex) {
+                    if let Ok(decoded) = u8::from_str_radix(text, 16) {
+                        bytes.push(decoded);
+                        continue;
+                    }
+                }
+            }
+        }
+        bytes.push(byte);
+    }
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+// ---- SSE streaming scan command ----
+
+#[tauri::command]
+pub(crate) async fn scan_url_stream(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, TeamState>,
+    url: String,
+    model_type: Option<String>,
+    model_id: Option<String>,
+    cookie: Option<String>,
+    authorization: Option<String>,
+    headers: Option<String>,
+    scan_profile: Option<String>,
+    custom_paths: Option<String>,
+    max_depth: Option<String>,
+    max_pages: Option<String>,
+    port_scan_enabled: Option<String>,
+    port_spec: Option<String>,
+) -> Result<Value, String> {
+    let (server_url, token) = {
+        let session = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session.as_ref().ok_or("未登录")?;
+        (session.server_url.clone(), format!("Bearer {}", session.access_token))
+    };
+
+    let mut body_map = serde_json::Map::new();
+    body_map.insert("url".to_string(), Value::String(url));
+    if let Some(v) = model_type { body_map.insert("modelType".to_string(), Value::String(v)); }
+    if let Some(v) = model_id { body_map.insert("modelId".to_string(), Value::String(v)); }
+    if let Some(v) = cookie { body_map.insert("cookie".to_string(), Value::String(v)); }
+    if let Some(v) = authorization { body_map.insert("authorization".to_string(), Value::String(v)); }
+    if let Some(v) = headers { body_map.insert("headers".to_string(), Value::String(v)); }
+    if let Some(v) = scan_profile { body_map.insert("scanProfile".to_string(), Value::String(v)); }
+    if let Some(v) = custom_paths { body_map.insert("customPaths".to_string(), Value::String(v)); }
+    if let Some(v) = max_depth { body_map.insert("maxDepth".to_string(), Value::String(v)); }
+    if let Some(v) = max_pages { body_map.insert("maxPages".to_string(), Value::String(v)); }
+    if let Some(v) = port_scan_enabled { body_map.insert("portScanEnabled".to_string(), Value::String(v)); }
+    if let Some(v) = port_spec { body_map.insert("portSpec".to_string(), Value::String(v)); }
+
+    let mut resp = state
+        .http_client
+        .post(format!("{}/api/vuln/scan-url/stream", server_url))
+        .header(AUTHORIZATION, &token)
+        .header(CONTENT_TYPE, "application/json")
+        .json(&Value::Object(body_map))
+        .send()
+        .await
+        .map_err(|e| format!("SSE 请求失败: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("[HTTP {}] {}", status, body));
+    }
+
+    // Read SSE stream chunk by chunk
+    let mut buffer = String::new();
+    let mut current_event = String::new();
+    let mut current_data = String::new();
+    let mut final_result: Option<Value> = None;
+
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("读取流失败: {}", e))? {
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(line_end) = buffer.find('\n') {
+            let line = buffer[..line_end].trim().to_string();
+            buffer = buffer[line_end + 1..].to_string();
+
+            if line.is_empty() {
+                // Empty line = end of event
+                if !current_data.is_empty() {
+                    match current_event.as_str() {
+                        "progress" => {
+                            let _ = app.emit("scan-progress", &current_data);
+                        }
+                        "complete" => {
+                            if let Ok(parsed) = serde_json::from_str::<Value>(&current_data) {
+                                final_result = Some(parsed);
+                            }
+                        }
+                        "error" => {
+                            return Err(current_data);
+                        }
+                        _ => {}
+                    }
+                }
+                current_event.clear();
+                current_data.clear();
+            } else if let Some(data) = line.strip_prefix("event: ") {
+                current_event = data.to_string();
+            } else if let Some(data) = line.strip_prefix("data: ") {
+                current_data = data.to_string();
+            } else if let Some(data) = line.strip_prefix("data:") {
+                current_data = data.trim().to_string();
+            }
+        }
+    }
+
+    match final_result {
+        Some(result) => Ok(result),
+        None => Err("SSE 流未返回完整结果".to_string()),
+    }
 }
 
 // ---- Offline cache commands ----

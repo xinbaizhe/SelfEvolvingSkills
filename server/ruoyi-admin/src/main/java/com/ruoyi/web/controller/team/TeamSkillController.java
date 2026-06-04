@@ -1,10 +1,18 @@
 package com.ruoyi.web.controller.team;
 
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDate;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -21,12 +29,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.ruoyi.common.annotation.Anonymous;
+import com.ruoyi.common.config.RuoYiConfig;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.common.utils.StringUtils;
+import com.ruoyi.common.utils.file.FileUtils;
 import com.ruoyi.framework.security.context.AuthenticationContextHolder;
 import com.ruoyi.framework.web.service.TokenService;
 import com.ruoyi.common.core.domain.TreeSelect;
@@ -181,7 +191,8 @@ public class TeamSkillController extends BaseController {
     }
 
     @PostMapping("/skills")
-    public AjaxResult add(@RequestBody TeamSkill skill) {
+    public AjaxResult add(@RequestBody TeamSkillRequest request) {
+        TeamSkill skill = request.toTeamSkill();
         if (StringUtils.isEmpty(skill.getSourceType())) {
             skill.setSourceType("skill");
         }
@@ -192,8 +203,34 @@ public class TeamSkillController extends BaseController {
             skill.setVersion(1);
         }
         skill.setAuthorId(SecurityUtils.getUserId());
+        skill.setCreatedBy(SecurityUtils.getUsername());
         skill.setDeptId(SecurityUtils.getLoginUser().getUser().getDeptId());
+        if (StringUtils.isNotEmpty(request.getZipBase64())) {
+            try {
+                saveZipFile(skill, request.getZipFileName(), request.getZipBase64());
+            } catch (Exception e) {
+                return error("zip 保存失败: " + e.getMessage());
+            }
+        }
         return toAjax(teamSkillService.insertTeamSkill(skill));
+    }
+
+    @GetMapping("/skills/{id}/zip")
+    public void downloadZip(@PathVariable Long id, HttpServletResponse response) throws Exception {
+        TeamSkill skill = teamSkillService.selectTeamSkillById(id);
+        if (skill == null || StringUtils.isEmpty(skill.getZipFilePath())) {
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+        File file = resolveZipFile(skill.getZipFilePath());
+        if (!file.exists() || !file.isFile()) {
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+        response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+        FileUtils.setAttachmentResponseHeader(response,
+            StringUtils.isNotEmpty(skill.getZipFileName()) ? skill.getZipFileName() : file.getName());
+        FileUtils.writeBytes(file.getAbsolutePath(), response.getOutputStream());
     }
 
     @PutMapping("/skills")
@@ -204,6 +241,35 @@ public class TeamSkillController extends BaseController {
     @DeleteMapping("/skills/{ids}")
     public AjaxResult remove(@PathVariable Long[] ids) {
         return toAjax(teamSkillService.deleteTeamSkillByIds(ids));
+    }
+
+    private void saveZipFile(TeamSkill skill, String originalName, String zipBase64) throws Exception {
+        String fileName = StringUtils.isNotEmpty(originalName) ? originalName : skill.getName() + ".zip";
+        if (!fileName.toLowerCase().endsWith(".zip")) {
+            throw new IllegalArgumentException("只允许上传 .zip 文件");
+        }
+        String safeName = fileName.replaceAll("[\\\\/:*?\"<>|\\x00-\\x1F]", "-");
+        byte[] bytes = Base64.getDecoder().decode(zipBase64);
+        String relativeDir = "team-skills/" + SecurityUtils.getUserId() + "/" + LocalDate.now();
+        Path dir = Path.of(RuoYiConfig.getProfile(), relativeDir);
+        Files.createDirectories(dir);
+        String storedName = UUID.randomUUID().toString().replace("-", "") + "-" + safeName;
+        Path target = dir.resolve(storedName).normalize();
+        if (!target.startsWith(dir)) {
+            throw new IllegalArgumentException("非法文件路径");
+        }
+        Files.write(target, bytes);
+        skill.setZipFileName(safeName);
+        skill.setZipFilePath(relativeDir + "/" + storedName);
+        skill.setZipFileSize((long) bytes.length);
+    }
+
+    private File resolveZipFile(String relativePath) {
+        String normalized = relativePath.replace('\\', '/');
+        if (normalized.startsWith("/") || normalized.contains("..")) {
+            return new File("");
+        }
+        return Path.of(RuoYiConfig.getProfile(), normalized).normalize().toFile();
     }
 
     @GetMapping("/deptTree")
@@ -224,5 +290,52 @@ public class TeamSkillController extends BaseController {
     public AjaxResult posts() {
         List<SysPost> posts = postService.selectPostAll();
         return success(posts);
+    }
+
+    public static class TeamSkillRequest {
+        private String name;
+        private String description;
+        private String category;
+        private String sourceType;
+        private String originAgent;
+        private String bodyMd;
+        private String compatibleModels;
+        private String compatibleAgents;
+        private String zipFileName;
+        private String zipBase64;
+
+        public TeamSkill toTeamSkill() {
+            TeamSkill skill = new TeamSkill();
+            skill.setName(name);
+            skill.setDescription(description);
+            skill.setCategory(category);
+            skill.setSourceType(sourceType);
+            skill.setOriginAgent(originAgent);
+            skill.setBodyMd(bodyMd);
+            skill.setCompatibleModels(compatibleModels);
+            skill.setCompatibleAgents(compatibleAgents);
+            return skill;
+        }
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public String getCategory() { return category; }
+        public void setCategory(String category) { this.category = category; }
+        public String getSourceType() { return sourceType; }
+        public void setSourceType(String sourceType) { this.sourceType = sourceType; }
+        public String getOriginAgent() { return originAgent; }
+        public void setOriginAgent(String originAgent) { this.originAgent = originAgent; }
+        public String getBodyMd() { return bodyMd; }
+        public void setBodyMd(String bodyMd) { this.bodyMd = bodyMd; }
+        public String getCompatibleModels() { return compatibleModels; }
+        public void setCompatibleModels(String compatibleModels) { this.compatibleModels = compatibleModels; }
+        public String getCompatibleAgents() { return compatibleAgents; }
+        public void setCompatibleAgents(String compatibleAgents) { this.compatibleAgents = compatibleAgents; }
+        public String getZipFileName() { return zipFileName; }
+        public void setZipFileName(String zipFileName) { this.zipFileName = zipFileName; }
+        public String getZipBase64() { return zipBase64; }
+        public void setZipBase64(String zipBase64) { this.zipBase64 = zipBase64; }
     }
 }

@@ -337,7 +337,12 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
             source_type TEXT,
             origin_agent TEXT,
             body_md TEXT,
+            zip_file_name TEXT,
+            zip_file_path TEXT,
+            zip_file_size INTEGER,
             author_id INTEGER,
+            created_by TEXT,
+            author_name TEXT,
             dept_id INTEGER,
             compatible_models TEXT,
             compatible_agents TEXT,
@@ -366,6 +371,26 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
     )?;
     let _ = conn.execute(
         "ALTER TABLE sessions ADD COLUMN compressed_summary TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE team_skills_cache ADD COLUMN created_by TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE team_skills_cache ADD COLUMN author_name TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE team_skills_cache ADD COLUMN zip_file_name TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE team_skills_cache ADD COLUMN zip_file_path TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE team_skills_cache ADD COLUMN zip_file_size INTEGER",
         [],
     );
     let _ = conn.execute(

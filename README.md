@@ -27,6 +27,15 @@ Self Evolving Skills 包含三个子系统：
 | **团队后台** | `server/` | Spring Boot 4 + MyBatis + MySQL | 团队版 API 服务 |
 | **管理界面** | `admin-ui/` | Vue 3 + Element Plus + Vite | 团队版 Web 管理后台 |
 
+### 核心能力一览
+
+| 模块 | 说明 | 版本 |
+|:---|:---|---|
+| 7 步进化管道 | 从会话历史自动发现重复工作流，生成可安装 Skill | v2.0 |
+| 自主渗透 Agent | ReAct 循环（Observe-Think-Act），8 种攻击工具，多凭证管理 | v2.0 |
+| 漏洞扫描器 | URL/代码扫描，攻击链还原，Credentials/Endpoint 发现 | v2.0 |
+| 供应链情报 | osv.dev 集成，依赖监控与 CVE 预警 | v2.0 |
+
 ---
 
 ## 系统架构
@@ -300,6 +309,70 @@ Self Evolving Skills 是一款**本地优先**的桌面应用。它会扫描你�
 | **已生成** | 可安装的已审核草稿，一键安装到目标 Agent |
 | **操作记录** | 历史进化管道执行记录，分页查看每步状态 |
 
+## 自主渗透 Agent
+
+基于 ReAct 框架的自主渗透测试引擎，模拟攻击者思维链路进行自动化安全测试。
+
+```
+目标 URL
+  → Observe（侦查）：端口扫描 + 路径爆破 + 指纹识别 + 漏洞检测
+  → Think（推理）：2 层推理（情景感知 + 策略规划）+ 3 层记忆（短期/中期/长期）
+  → Act（行动）：8 种攻击工具（SQLi、XSS、SSRF、LFI、命令注入、文件上传、认证绕过、信息泄露）
+  → 循环迭代，直到达成目标或达到最大步数
+```
+
+### Agent 架构
+
+| 组件 | 说明 |
+|:---|:---|
+| **AgentThinkingModule** | 2 层推理：situational（当前状态评估）+ strategic（攻击路径规划） |
+| **AgentMemory** | 3 层记忆：短期（会话上下文）+ 中期（跨请求模式）+ 长期（知识库积累） |
+| **AgentToolSet** | 8 种攻击工具，支持并行执行，结果标准化输出 |
+| **CredentialState** | 多凭证管理，自动标记 active/expired/locked 状态 |
+| **AttackChain** | 攻击路径还原，可视化展示从入口到目标的完整链路 |
+
+### Agent 扫描 API
+
+| 端点 | 说明 |
+|:---|:---|
+| `POST /api/team/vuln/scan/agent` | 启动 Agent 扫描（同步） |
+| `POST /api/team/vuln/scan/agent/stream` | 启动 Agent 扫描（SSE 流式，实时进度推送） |
+| `GET /api/team/vuln/scan/job/:id` | 获取扫描任务详情（含 findings 和 attack chains） |
+
+> Agent 模式下多个 PenTestAgent 并行执行，每个 Agent 可携带不同的凭证组合。
+
+## 漏洞扫描器
+
+多维度安全扫描引擎，支持传统规则匹配与 AI Agent 自主渗透两种模式。
+
+### 扫描能力
+
+| 扫描模式 | 说明 | 关键参数 |
+|:---|:---|:---|
+| **URL 扫描** | 目标 Web 应用全量扫描 | 深度、页数、端口范围、自定义路径、请求头 |
+| **代码扫描** | 源代码静态安全分析 | 目录路径、语言检测 |
+| **Agent 扫描** | AI 驱动的自主渗透测试 | 凭证列表、模型选择 |
+
+### 扫描结果
+
+| 实体 | 说明 |
+|:---|:---|
+| **VulnFinding** | 漏洞发现（类型、严重等级、CVSS、PoC、修复建议） |
+| **DiscoveredEndpoint** | 发现的端点（URL、方法、参数、响应特征） |
+| **CredentialState** | 凭证状态追踪（有效/过期/锁定） |
+| **AttackChain** | 攻击链还原（步骤序列、每步时间戳和结果） |
+
+## 供应链情报
+
+集成 [osv.dev](https://osv.dev) 开源漏洞数据库，持续监控项目依赖安全。
+
+| 功能 | 说明 |
+|:---|:---|
+| **依赖发现** | 自动解析 pom.xml / package.json / Cargo.toml，提取依赖树 |
+| **CVE 查询** | 通过 OSV API 查询已知漏洞，匹配 CVE 编号和影响版本 |
+| **监控告警** | DepMonitor 定时检查依赖变更，新漏洞自动预警 |
+| **DepFinding** | 依赖漏洞发现记录，含修复版本建议 |
+
 ## 技术栈
 
 | 层 | 技术 |
@@ -369,6 +442,15 @@ npm run tauri:dev
 | | `POST /api/team/skills` | 新增团队 Skill |
 | | `PUT /api/team/skills` | 编辑团队 Skill |
 | | `DELETE /api/team/skills/:ids` | 删除团队 Skill |
+| 漏洞扫描 | `POST /api/team/vuln/scan/url` | 启动 URL 扫描 |
+| | `POST /api/team/vuln/scan/code` | 启动代码扫描 |
+| | `POST /api/team/vuln/scan/agent` | 启动 Agent 自主渗透扫描 |
+| | `POST /api/team/vuln/scan/agent/stream` | Agent 扫描（SSE 流式） |
+| | `GET /api/team/vuln/scan/job/:id` | 扫描任务详情（含 findings、attack chains） |
+| | `GET /api/team/vuln/scan/history` | 历史扫描任务 |
+| 供应链 | `GET /api/team/dep/scan` | 扫描项目依赖漏洞 |
+| | `GET /api/team/dep/monitor` | 依赖监控状态 |
+| | `GET /api/team/dep/findings` | 依赖漏洞列表 |
 
 ## 同类对比
 
@@ -418,8 +500,9 @@ npm run tauri:dev
 | Phase 2 | 多Agent A/B变体 + 效果追踪 | ✅ |
 | Phase 3 | 反馈修正循环 + 评分阈值优化 | ✅ |
 | Phase 4 | 团队版 Java后台 + Web管理 | ✅ |
-| Phase 5 | 协同进化 + Skills市场 | 📋 |
-| Phase 6 | 定时自动进化 + 通知推送 | 📋 |
+| Phase 5 | 自主渗透Agent + 漏洞扫描 + 供应链情报 | ✅ |
+| Phase 6 | 协同进化 + Skills市场 | 📋 |
+| Phase 7 | 定时自动进化 + 通知推送 | 📋 |
 
 ## 隐私
 

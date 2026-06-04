@@ -59,12 +59,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         insert into vuln_scan_jobs (
             scan_type, target, status,
             total_findings, critical_count, high_count, medium_count, low_count,
-            model_type, model_id,
+            model_type, model_id, progress_step, progress_text,
             user_id, dept_id, created_at
         ) values (
             #{scanType}, #{target}, #{status},
             #{totalFindings}, #{criticalCount}, #{highCount}, #{mediumCount}, #{lowCount},
-            #{modelType}, #{modelId},
+            #{modelType}, #{modelId}, #{progressStep}, #{progressText},
             #{userId}, #{deptId}, sysdate()
         )
     </insert>
@@ -78,6 +78,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="highCount != null">high_count = #{highCount},</if>
             <if test="mediumCount != null">medium_count = #{mediumCount},</if>
             <if test="lowCount != null">low_count = #{lowCount},</if>
+            <if test="progressStep != null">progress_step = #{progressStep},</if>
+            <if test="progressText != null">progress_text = #{progressText},</if>
         </set>
         where id = #{id}
     </update>

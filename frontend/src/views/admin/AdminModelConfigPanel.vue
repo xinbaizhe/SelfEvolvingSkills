@@ -48,6 +48,7 @@ const configDialogVisible = ref(false)
 const searchName = ref('')
 const configs = ref<TeamModelConfig[]>([])
 const personalRecords = ref<TeamModelConfig[]>([])
+const offline = ref(false)
 const selectedModel = ref<TeamModelConfig | null>(null)
 const configTarget = ref<'system' | 'claude'>('system')
 const userKeyword = ref('')
@@ -87,8 +88,13 @@ async function loadConfigs() {
   loading.value = true
   try {
     configs.value = await fetchAvailableModels(searchName.value)
+    offline.value = false
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载团队模型列表失败'))
+    if (isConnectionError(e)) {
+      offline.value = true
+    } else {
+      ElMessage.error(getErrorMessage(e, '加载团队模型列表失败'))
+    }
   } finally {
     loading.value = false
   }
@@ -99,8 +105,13 @@ async function loadPersonalRecords() {
   recordsLoading.value = true
   try {
     personalRecords.value = await fetchMyPersonalModels()
+    offline.value = false
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载转赠记录失败'))
+    if (isConnectionError(e)) {
+      offline.value = true
+    } else {
+      ElMessage.error(getErrorMessage(e, '加载转赠记录失败'))
+    }
   } finally {
     recordsLoading.value = false
   }
@@ -108,6 +119,17 @@ async function loadPersonalRecords() {
 
 async function loadAll() {
   await Promise.all([loadConfigs(), loadPersonalRecords()])
+}
+
+function isConnectionError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e)
+  return msg.includes('error sending request for url')
+    || msg.includes('ConnectError')
+    || msg.includes('connection refused')
+    || msg.includes('NetworkError')
+    || msg.includes('fetch failed')
+    || msg.includes('请求失败')
+    || msg.includes('Failed to fetch')
 }
 
 function onShareProviderChange(key: string) {
@@ -286,6 +308,14 @@ onMounted(loadAll)
         <p>登录团队版后查看部门模型和个人转赠模型，并可一键写入本地大模型配置。</p>
       </div>
       <el-button size="small" :loading="loading || recordsLoading" @click="loadAll">刷新</el-button>
+    </div>
+
+    <div v-if="offline" class="offline-banner">
+      <span class="offline-icon">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9s3.36 7.5 7.5 7.5 7.5-3.36 7.5-7.5S13.14 1.5 9 1.5zM9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </span>
+      离线模式 — 无法连接到服务器，请确认服务已启动。接口恢复后页面将自动重试。
+      <el-button size="small" @click="loadAll">重试</el-button>
     </div>
 
     <template v-if="!store.isAuthenticated">
@@ -574,6 +604,25 @@ onMounted(loadAll)
   margin: 6px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: rgba(217, 134, 18, .08);
+  border: 1px solid rgba(217, 134, 18, .28);
+  border-radius: 8px;
+  color: #d98612;
+  font-size: 13px;
+}
+
+.offline-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .toolbar {

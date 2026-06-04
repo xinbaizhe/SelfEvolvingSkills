@@ -16,10 +16,11 @@ pub(crate) fn cache_team_skills(db_path: &Path, skills: &[Value]) -> Result<usiz
         conn.execute(
             "INSERT OR REPLACE INTO team_skills_cache
              (id, name, description, category, source_type, origin_agent, body_md,
-              author_id, dept_id, compatible_models, compatible_agents,
+              zip_file_name, zip_file_path, zip_file_size,
+              author_id, created_by, author_name, dept_id, compatible_models, compatible_agents,
               usage_count, avg_score, status, version,
               server_created_at, server_updated_at, cached_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17, CURRENT_TIMESTAMP)",
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22, CURRENT_TIMESTAMP)",
             params![
                 id,
                 skill["name"].as_str().unwrap_or(""),
@@ -28,7 +29,12 @@ pub(crate) fn cache_team_skills(db_path: &Path, skills: &[Value]) -> Result<usiz
                 skill["sourceType"].as_str().unwrap_or(""),
                 skill["originAgent"].as_str().unwrap_or(""),
                 skill["bodyMd"].as_str().unwrap_or(""),
+                skill["zipFileName"].as_str().unwrap_or(""),
+                skill["zipFilePath"].as_str().unwrap_or(""),
+                skill["zipFileSize"].as_i64().unwrap_or(0),
                 skill["authorId"].as_i64().unwrap_or(0),
+                skill["createdBy"].as_str().unwrap_or(""),
+                skill["authorName"].as_str().unwrap_or(""),
                 skill["deptId"].as_i64().unwrap_or(0),
                 skill["compatibleModels"].as_str().unwrap_or(""),
                 skill["compatibleAgents"].as_str().unwrap_or(""),
@@ -52,7 +58,8 @@ pub(crate) fn get_cached_skills(db_path: &Path) -> Result<Value, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, name, description, category, source_type, origin_agent, body_md,
-                    author_id, dept_id, compatible_models, compatible_agents,
+                    zip_file_name, zip_file_path, zip_file_size,
+                    author_id, created_by, author_name, dept_id, compatible_models, compatible_agents,
                     usage_count, avg_score, status, version,
                     server_created_at, server_updated_at, cached_at
              FROM team_skills_cache
@@ -70,17 +77,22 @@ pub(crate) fn get_cached_skills(db_path: &Path) -> Result<Value, String> {
                 "sourceType": row.get::<_, Option<String>>(4)?,
                 "originAgent": row.get::<_, Option<String>>(5)?,
                 "bodyMd": row.get::<_, Option<String>>(6)?,
-                "authorId": row.get::<_, i64>(7)?,
-                "deptId": row.get::<_, i64>(8)?,
-                "compatibleModels": row.get::<_, Option<String>>(9)?,
-                "compatibleAgents": row.get::<_, Option<String>>(10)?,
-                "usageCount": row.get::<_, i64>(11)?,
-                "avgScore": row.get::<_, f64>(12)?,
-                "status": row.get::<_, Option<String>>(13)?,
-                "version": row.get::<_, i64>(14)?,
-                "createdAt": row.get::<_, Option<String>>(15)?,
-                "updatedAt": row.get::<_, Option<String>>(16)?,
-                "cachedAt": row.get::<_, String>(17)?
+                "zipFileName": row.get::<_, Option<String>>(7)?,
+                "zipFilePath": row.get::<_, Option<String>>(8)?,
+                "zipFileSize": row.get::<_, i64>(9)?,
+                "authorId": row.get::<_, i64>(10)?,
+                "createdBy": row.get::<_, Option<String>>(11)?,
+                "authorName": row.get::<_, Option<String>>(12)?,
+                "deptId": row.get::<_, i64>(13)?,
+                "compatibleModels": row.get::<_, Option<String>>(14)?,
+                "compatibleAgents": row.get::<_, Option<String>>(15)?,
+                "usageCount": row.get::<_, i64>(16)?,
+                "avgScore": row.get::<_, f64>(17)?,
+                "status": row.get::<_, Option<String>>(18)?,
+                "version": row.get::<_, i64>(19)?,
+                "createdAt": row.get::<_, Option<String>>(20)?,
+                "updatedAt": row.get::<_, Option<String>>(21)?,
+                "cachedAt": row.get::<_, String>(22)?
             }))
         })
         .map_err(|e| e.to_string())?

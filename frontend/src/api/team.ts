@@ -16,7 +16,12 @@ export interface TeamSkill {
   sourceType: string
   originAgent: string
   bodyMd: string
+  zipFileName?: string
+  zipFilePath?: string
+  zipFileSize?: number
   authorId: number
+  createdBy?: string
+  authorName?: string
   deptId: number | null
   compatibleModels: string
   compatibleAgents: string
@@ -162,11 +167,18 @@ export async function fetchTeamSkillDetail(id: number) {
 export async function shareSkillToTeam(skill: {
   name: string; description: string; category: string;
   bodyMd: string; sourceType?: string; originAgent?: string;
-  compatibleModels?: string; compatibleAgents?: string
+  compatibleModels?: string; compatibleAgents?: string;
+  zipFileName?: string; zipBase64?: string; usageGuide?: string
 }) {
   const res = await teamApiPost<RuoyiResponse<TeamSkill>>('/team/skills', skill)
   if (res.code !== 200) throw new Error(res.msg || '分享失败')
   return res.data
+}
+
+export async function downloadTeamSkillZip(skillId: number) {
+  return invoke<{ filename: string; contentBase64: string }>('team_api_download', {
+    path: `/team/skills/${skillId}/zip`,
+  })
 }
 
 export async function fetchTeamStats() {

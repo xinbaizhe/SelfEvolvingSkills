@@ -1,7 +1,13 @@
 use crate::{hash_bytes, now_string};
 use anyhow::{anyhow, Result};
+use base64::Engine;
+use reqwest::header;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
+use std::io::{Cursor, Read};
+use std::path::PathBuf;
+use walkdir::WalkDir;
+use zip::ZipArchive;
 
 use super::scan;
 
@@ -86,6 +92,7 @@ pub(crate) fn save_llm_config(conn: &Connection, body: Option<Value>) -> Result<
         "provider": provider,
         "base_url": base_url,
         "model": model,
+        "api_format": api_format,
         "has_api_key": get_config(conn, "llm_api_key")?.is_some()
     }))
 }
@@ -200,6 +207,589 @@ pub(crate) async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
             message
         ))
     }
+}
+
+fn extract_json_object(text: &str) -> Result<String> {
+    let mut stripped = text.trim().to_string();
+    if stripped.starts_with("```") {
+        let mut lines = stripped.lines().collect::<Vec<_>>();
+        if lines
+            .first()
+            .is_some_and(|line| line.trim_start().starts_with("```"))
+        {
+            lines.remove(0);
+        }
+        if lines
+            .last()
+            .is_some_and(|line| line.trim_start().starts_with("```"))
+        {
+            lines.pop();
+        }
+        stripped = lines.join("\n").trim().to_string();
+    }
+    let start = stripped
+        .find('{')
+        .ok_or_else(|| anyhow!("大模型未返回 JSON 对象"))?;
+    let end = stripped
+        .rfind('}')
+        .ok_or_else(|| anyhow!("大模型未返回完整 JSON 对象"))?;
+    Ok(stripped[start..=end].to_string())
+}
+
+fn extract_text_from_content(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) if !text.trim().is_empty() => Some(text.to_string()),
+        Value::Array(items) => {
+            let parts = items
+                .iter()
+                .filter_map(|item| {
+                    item.as_str()
+                        .map(ToString::to_string)
+                        .or_else(|| item.get("text").and_then(Value::as_str).map(ToString::to_string))
+                        .or_else(|| item.get("content").and_then(extract_text_from_content))
+                })
+                .filter(|text| !text.trim().is_empty())
+                .collect::<Vec<_>>();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("\n"))
+            }
+        }
+        Value::Object(map) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| map.get("content").and_then(extract_text_from_content)),
+        _ => None,
+    }
+}
+
+fn extract_llm_text(value: &Value, is_anthropic: bool) -> Option<String> {
+    if let Some(text) = value.get("output_text").and_then(Value::as_str) {
+        if !text.trim().is_empty() {
+            return Some(text.to_string());
+        }
+    }
+    if let Some(text) = value.get("text").and_then(Value::as_str) {
+        if !text.trim().is_empty() {
+            return Some(text.to_string());
+        }
+    }
+    if is_anthropic {
+        if let Some(text) = value.get("content").and_then(extract_text_from_content) {
+            return Some(text);
+        }
+    }
+    value
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| {
+            choice
+                .get("message")
+                .and_then(|message| {
+                    message
+                        .get("content")
+                        .and_then(extract_text_from_content)
+                        .or_else(|| {
+                            message
+                                .get("reasoning_content")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
+                })
+                .or_else(|| choice.get("text").and_then(Value::as_str).map(ToString::to_string))
+        })
+        .or_else(|| {
+            value
+                .get("output")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find_map(|item| item.get("content").and_then(extract_text_from_content))
+                })
+        })
+}
+
+fn response_shape(value: &Value) -> String {
+    match value {
+        Value::Object(map) => format!(
+            "top-level keys: {}",
+            map.keys().cloned().collect::<Vec<_>>().join(", ")
+        ),
+        other => format!("top-level type: {}", other),
+    }
+}
+
+async fn call_configured_llm(
+    base_url: String,
+    api_key: String,
+    model: String,
+    api_format: String,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<String> {
+    let is_anthropic = api_format == "anthropic";
+    let url = if is_anthropic {
+        format!("{}/v1/messages", base_url)
+    } else {
+        format!("{}/chat/completions", base_url)
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    let mut req = client
+        .post(&url)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json");
+
+    if is_anthropic {
+        req = req
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&json!({
+                "model": model,
+                "max_tokens": 2048,
+                "system": system_prompt,
+                "messages": [
+                    { "role": "user", "content": user_prompt }
+                ],
+                "temperature": 0.1
+            }));
+    } else {
+        req = req.bearer_auth(api_key).json(&json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ],
+            "max_tokens": 2048,
+            "temperature": 0.1
+        }));
+    }
+
+    let response = req.send().await?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+    let text = response
+        .text()
+        .await
+        .unwrap_or_else(|err| format!("[Failed to read response body: {err}]"));
+    if !status.is_success() {
+        let preview = text.chars().take(500).collect::<String>();
+        return Err(anyhow!(
+            "大模型评估请求失败：HTTP {} {} {}",
+            status.as_u16(),
+            content_type,
+            preview
+        ));
+    }
+
+    let value: Value = serde_json::from_str(&text)?;
+    extract_llm_text(&value, is_anthropic).ok_or_else(|| {
+        anyhow!(
+            "大模型响应缺少文本内容（{}）。原始响应预览：{}",
+            response_shape(&value),
+            text.chars().take(500).collect::<String>()
+        )
+    })
+}
+
+fn clamp_score(value: Option<i64>, default: i64) -> i64 {
+    value.unwrap_or(default).clamp(0, 100)
+}
+
+fn extract_line_value(content: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    content.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix(&prefix)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn is_auditable_zip_entry(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with("skill.md")
+        || lower.ends_with(".py")
+        || lower.ends_with(".md")
+        || lower.ends_with(".json")
+        || lower.ends_with(".toml")
+        || lower.ends_with(".yaml")
+        || lower.ends_with(".yml")
+        || lower.ends_with(".txt")
+}
+
+fn scan_uploaded_zip(content: &str) -> Result<Option<Value>> {
+    let Some(encoded) = extract_line_value(content, "ZIP_BASE64") else {
+        return Ok(None);
+    };
+    let filename = extract_line_value(content, "ZIP_FILE").unwrap_or_else(|| "uploaded.zip".to_string());
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .map_err(|err| anyhow!("zip base64 解码失败：{err}"))?;
+    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    let mut entries = Vec::new();
+    let mut scanned_files = 0usize;
+    let mut skipped_files = 0usize;
+
+    for index in 0..archive.len().min(120) {
+        let mut file = archive.by_index(index)?;
+        let name = file.name().replace('\\', "/");
+        if file.is_dir() {
+            continue;
+        }
+        if !is_auditable_zip_entry(&name) {
+            skipped_files += 1;
+            continue;
+        }
+        if file.size() > 512_000 {
+            entries.push(json!({
+                "path": name,
+                "size": file.size(),
+                "skipped": true,
+                "reason": "文件过大，未读取正文"
+            }));
+            skipped_files += 1;
+            continue;
+        }
+        let mut text = String::new();
+        file.read_to_string(&mut text)?;
+        let excerpt = text.chars().take(4_000).collect::<String>();
+        entries.push(json!({
+            "path": name,
+            "size": file.size(),
+            "lines": text.lines().count(),
+            "excerpt": excerpt
+        }));
+        scanned_files += 1;
+    }
+
+    Ok(Some(json!({
+        "filename": filename,
+        "entryCount": archive.len(),
+        "scannedFiles": scanned_files,
+        "skippedFiles": skipped_files,
+        "entries": entries
+    })))
+}
+
+pub(crate) async fn evaluate_share_resource_with_llm(
+    base_url: String,
+    api_key: String,
+    model: String,
+    api_format: String,
+    body: Option<Value>,
+) -> Result<Value> {
+    let body = body.ok_or_else(|| anyhow!("Missing request body"))?;
+    let content = body
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let zip_scan = scan_uploaded_zip(&content)?;
+    let content_preview = content
+        .chars()
+        .take(16_000)
+        .collect::<String>();
+    let metadata = body.get("metadata").cloned().unwrap_or_else(|| json!({}));
+    let heuristic = body.get("heuristic").cloned().unwrap_or_else(|| json!({}));
+
+    let system_prompt = r#"你是 AI Coding Agent Skill 的安全与性能评估专家。
+你必须返回严格 JSON，不要 Markdown，不要解释 JSON 外的文本。
+请从安全风险、性能成本、可维护性、可复用性、执行边界、敏感信息暴露、危险命令、依赖和网络访问风险等角度评分。
+如果资源包含上传 zip，你必须优先审查 zip 内抽取出的 SKILL.md、Python 代码和配置文件，不要只根据 ZIP_BASE64 字符串评分。
+分数必须严格，只有生产级、风险清晰、说明充分、性能成本可控的资源才可达到 95 分以上。"#;
+    let user_prompt = format!(
+        r#"请评估以下团队分享资源，并给出分数和修改建议。
+
+元数据:
+{}
+
+规则预检结果:
+{}
+
+资源内容:
+{}
+
+上传 zip 扫描结果:
+{}
+
+返回 JSON 格式:
+{{
+  "score": 0-100,
+  "securityScore": 0-100,
+  "performanceScore": 0-100,
+  "summary": "中文总评",
+  "risks": ["主要风险1", "主要风险2"],
+  "suggestions": ["具体修改建议1", "具体修改建议2"],
+  "requiredChanges": ["未达到95分时必须修改的项"],
+  "confidence": 0.0-1.0
+}}"#,
+        serde_json::to_string_pretty(&metadata)?,
+        serde_json::to_string_pretty(&heuristic)?,
+        content_preview,
+        serde_json::to_string_pretty(&zip_scan.clone().unwrap_or_else(|| json!(null)))?
+    );
+
+    let raw = call_configured_llm(base_url, api_key, model, api_format, system_prompt, &user_prompt)
+        .await?;
+    let parsed: Value = serde_json::from_str(&extract_json_object(&raw)?)?;
+    let llm_score = clamp_score(parsed.get("score").and_then(Value::as_i64), 0);
+    let security_score = clamp_score(parsed.get("securityScore").and_then(Value::as_i64), llm_score);
+    let performance_score =
+        clamp_score(parsed.get("performanceScore").and_then(Value::as_i64), llm_score);
+
+    Ok(json!({
+        "score": llm_score,
+        "securityScore": security_score,
+        "performanceScore": performance_score,
+        "summary": parsed.get("summary").and_then(Value::as_str).unwrap_or("大模型评估完成"),
+        "risks": parsed.get("risks").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "suggestions": parsed.get("suggestions").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "requiredChanges": parsed.get("requiredChanges").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "confidence": parsed.get("confidence").and_then(Value::as_f64).unwrap_or(0.7).clamp(0.0, 1.0),
+        "zipScan": zip_scan,
+        "source": "llm"
+    }))
+}
+
+fn scan_skill_directory(directory: &str) -> Result<Value> {
+    let path = PathBuf::from(directory.trim());
+    if directory.trim().is_empty() {
+        return Err(anyhow!("评估目录不能为空"));
+    }
+    if !path.exists() {
+        return Err(anyhow!("评估目录不存在：{}", directory));
+    }
+    if !path.is_dir() {
+        return Err(anyhow!("评估目标不是目录：{}", directory));
+    }
+
+    let mut skills = Vec::new();
+    let mut python_files = Vec::new();
+    let mut scanned_files = 0usize;
+    let mut total_bytes = 0u64;
+    for entry in WalkDir::new(&path)
+        .max_depth(6)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        scanned_files += 1;
+        let target_path = entry.path();
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        let extension = target_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if file_name != "SKILL.md" && extension != "py" {
+            continue;
+        }
+
+        let metadata = std::fs::metadata(target_path)?;
+        total_bytes = total_bytes.saturating_add(metadata.len());
+        let text = std::fs::read_to_string(target_path)
+            .unwrap_or_else(|err| format!("[failed to read file: {err}]"));
+
+        if file_name == "SKILL.md" {
+            let first_heading = text
+                .lines()
+                .find(|line| line.trim_start().starts_with('#'))
+                .map(|line| line.trim().trim_start_matches('#').trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| {
+                    target_path
+                        .parent()
+                        .and_then(|parent| parent.file_name())
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("Unnamed Skill")
+                        .to_string()
+                });
+            let excerpt = text.chars().take(2400).collect::<String>();
+            skills.push(json!({
+                "name": first_heading,
+                "path": target_path.to_string_lossy(),
+                "bytes": metadata.len(),
+                "lines": text.lines().count(),
+                "excerpt": excerpt
+            }));
+        } else {
+            let lower = text.to_lowercase();
+            let risk_markers = [
+                "subprocess",
+                "os.system",
+                "eval(",
+                "exec(",
+                "pickle.load",
+                "yaml.load",
+                "requests.",
+                "httpx.",
+                "open(",
+                "shutil.rmtree",
+                "socket.",
+                "paramiko",
+                "boto3",
+                "sqlalchemy",
+                "pymysql",
+                "psycopg",
+                "input(",
+            ]
+            .iter()
+            .filter(|marker| lower.contains(**marker))
+            .map(|marker| marker.to_string())
+            .collect::<Vec<_>>();
+            let imports = text
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("import ") || trimmed.starts_with("from ") {
+                        Some(trimmed.chars().take(160).collect::<String>())
+                    } else {
+                        None
+                    }
+                })
+                .take(30)
+                .collect::<Vec<_>>();
+            let excerpt = text
+                .lines()
+                .filter(|line| {
+                    let lower_line = line.to_lowercase();
+                    risk_markers.iter().any(|marker| lower_line.contains(marker))
+                        || lower_line.starts_with("def ")
+                        || lower_line.starts_with("class ")
+                        || lower_line.contains("__main__")
+                })
+                .take(80)
+                .collect::<Vec<_>>()
+                .join("\n")
+                .chars()
+                .take(3000)
+                .collect::<String>();
+            python_files.push(json!({
+                "path": target_path.to_string_lossy(),
+                "bytes": metadata.len(),
+                "lines": text.lines().count(),
+                "imports": imports,
+                "riskMarkers": risk_markers,
+                "excerpt": excerpt
+            }));
+        }
+
+        if skills.len() >= 40 && python_files.len() >= 80 {
+            break;
+        }
+    }
+
+    if skills.is_empty() && python_files.is_empty() {
+        return Err(anyhow!("目录下未发现 SKILL.md 或 Python 代码，无法进行评估"));
+    }
+
+    Ok(json!({
+        "directory": path.to_string_lossy(),
+        "scannedFiles": scanned_files,
+        "skillCount": skills.len(),
+        "pythonFileCount": python_files.len(),
+        "totalBytes": total_bytes,
+        "skills": skills,
+        "pythonFiles": python_files
+    }))
+}
+
+pub(crate) async fn evaluate_directory_skills_with_llm(
+    base_url: String,
+    api_key: String,
+    model: String,
+    api_format: String,
+    body: Option<Value>,
+) -> Result<Value> {
+    let body = body.ok_or_else(|| anyhow!("Missing request body"))?;
+    let directory = body
+        .get("directory")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("Missing directory"))?;
+    let metadata = body.get("metadata").cloned().unwrap_or_else(|| json!({}));
+    let scan = scan_skill_directory(directory)?;
+
+    let system_prompt = r#"你是一个多 Agent 评估委员会，包含安全审计 Agent、性能评估 Agent、Skill 质量 Agent、Python 代码审计 Agent、可维护性 Agent、平台兼容 Agent。
+你必须同时审查 SKILL.md 和 Python 代码。Python 代码重点关注命令执行、反序列化、文件删除、网络请求、密钥泄露、依赖风险、异常处理、资源释放、性能热点和入口行为。
+你必须返回严格 JSON，不要 Markdown，不要 JSON 外文本。评分必须严格，只有所有 Agent 都认为可发布时综合分才可达到 95 以上。"#;
+    let user_prompt = format!(
+        r#"请对目录扫描出的 Skills 和 Python 代码进行多 Agent 评估。
+
+分享元数据:
+{}
+
+目录扫描结果:
+{}
+
+请返回 JSON:
+{{
+  "score": 0-100,
+  "securityScore": 0-100,
+  "performanceScore": 0-100,
+  "summary": "中文总评",
+  "risks": ["风险1"],
+  "suggestions": ["修改建议1"],
+  "requiredChanges": ["低于95时必须修改项"],
+  "agents": [
+    {{"agent": "安全审计 Agent", "score": 0-100, "verdict": "pass|warn|fail", "findings": ["发现"], "suggestions": ["建议"]}},
+    {{"agent": "性能评估 Agent", "score": 0-100, "verdict": "pass|warn|fail", "findings": ["发现"], "suggestions": ["建议"]}},
+    {{"agent": "Skill 质量 Agent", "score": 0-100, "verdict": "pass|warn|fail", "findings": ["发现"], "suggestions": ["建议"]}},
+    {{"agent": "Python 代码审计 Agent", "score": 0-100, "verdict": "pass|warn|fail", "findings": ["发现"], "suggestions": ["建议"]}},
+    {{"agent": "可维护性 Agent", "score": 0-100, "verdict": "pass|warn|fail", "findings": ["发现"], "suggestions": ["建议"]}},
+    {{"agent": "平台兼容 Agent", "score": 0-100, "verdict": "pass|warn|fail", "findings": ["发现"], "suggestions": ["建议"]}}
+  ],
+  "skills": [
+    {{"name": "Skill 名称", "score": 0-100, "risks": ["风险"], "suggestions": ["建议"]}}
+  ],
+  "pythonFiles": [
+    {{"path": "文件路径", "score": 0-100, "risks": ["风险"], "suggestions": ["建议"]}}
+  ],
+  "confidence": 0.0-1.0
+}}"#,
+        serde_json::to_string_pretty(&metadata)?,
+        serde_json::to_string_pretty(&scan)?
+    );
+
+    let raw = call_configured_llm(base_url, api_key, model, api_format, system_prompt, &user_prompt)
+        .await?;
+    let parsed: Value = serde_json::from_str(&extract_json_object(&raw)?)?;
+    let llm_score = clamp_score(parsed.get("score").and_then(Value::as_i64), 0);
+    let security_score = clamp_score(parsed.get("securityScore").and_then(Value::as_i64), llm_score);
+    let performance_score =
+        clamp_score(parsed.get("performanceScore").and_then(Value::as_i64), llm_score);
+
+    Ok(json!({
+        "score": llm_score,
+        "securityScore": security_score,
+        "performanceScore": performance_score,
+        "summary": parsed.get("summary").and_then(Value::as_str).unwrap_or("目录 Skills 多 Agent 评估完成"),
+        "risks": parsed.get("risks").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "suggestions": parsed.get("suggestions").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "requiredChanges": parsed.get("requiredChanges").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "agents": parsed.get("agents").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "skills": parsed.get("skills").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "pythonFiles": parsed.get("pythonFiles").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "scan": scan,
+        "confidence": parsed.get("confidence").and_then(Value::as_f64).unwrap_or(0.7).clamp(0.0, 1.0),
+        "source": "multi-agent-directory-llm"
+    }))
 }
 
 pub(crate) fn system_info(conn: &Connection) -> Result<Value> {

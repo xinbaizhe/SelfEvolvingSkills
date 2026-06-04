@@ -4,8 +4,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.ruoyi.common.annotation.Anonymous;
 import com.ruoyi.common.core.controller.BaseController;
@@ -65,7 +68,14 @@ public class VulnScanController extends BaseController {
             loginUser.getUser().getUserId(),
             loginUser.getUser().getDeptId(),
             body.get("modelType"),
-            parseLong(body.get("modelId"))
+            parseLong(body.get("modelId")),
+            buildScanHeaders(body),
+            body.get("scanProfile"),
+            body.get("customPaths"),
+            parseInteger(body.get("maxDepth")),
+            parseInteger(body.get("maxPages")),
+            parseBoolean(body.get("portScanEnabled")),
+            body.get("portSpec")
         );
         return success(job);
     }
@@ -108,6 +118,54 @@ public class VulnScanController extends BaseController {
             creds
         );
         return success(job);
+    }
+
+    @PostMapping(value = "/scan-url/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter scanUrlStream(@RequestBody Map<String, String> body) {
+        String url = body.get("url");
+        if (url == null || url.isBlank()) {
+            throw new IllegalArgumentException("URL不能为空");
+        }
+
+        LoginUser loginUser = SecurityUtils.getLoginUser();
+        SseEmitter emitter = new SseEmitter(300_000L); // 5 minute timeout
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                VulnScanJob job = vulnScanService.scanUrlStream(
+                    url.trim(),
+                    loginUser.getUser().getUserId(),
+                    loginUser.getUser().getDeptId(),
+                    body.get("modelType"),
+                    parseLong(body.get("modelId")),
+                    buildScanHeaders(body),
+                    body.get("scanProfile"),
+                    body.get("customPaths"),
+                    parseInteger(body.get("maxDepth")),
+                    parseInteger(body.get("maxPages")),
+                    parseBoolean(body.get("portScanEnabled")),
+                    body.get("portSpec"),
+                    msg -> {
+                        try {
+                            emitter.send(SseEmitter.event().name("progress").data(msg));
+                        } catch (Exception ignored) {
+                            // client disconnected
+                        }
+                    }
+                );
+                emitter.send(SseEmitter.event().name("complete").data(job));
+                emitter.complete();
+            } catch (Exception e) {
+                try {
+                    emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
+                    emitter.completeWithError(e);
+                } catch (Exception ignored) {
+                    // client disconnected
+                }
+            }
+        });
+
+        return emitter;
     }
 
     @PostMapping("/scan-code")
@@ -220,5 +278,42 @@ public class VulnScanController extends BaseController {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private Integer parseInteger(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return Integer.parseInt(value);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private Boolean parseBoolean(String value) {
+        if (value == null || value.isBlank()) return null;
+        return "true".equalsIgnoreCase(value) || "1".equals(value) || "yes".equalsIgnoreCase(value);
+    }
+
+    private Map<String, String> buildScanHeaders(Map<String, String> body) {
+        Map<String, String> headers = new HashMap<>();
+        putHeader(headers, "Cookie", body.get("cookie"));
+        putHeader(headers, "Authorization", body.get("authorization"));
+        String customHeaders = body.get("headers");
+        if (customHeaders != null && !customHeaders.isBlank()) {
+            String[] lines = customHeaders.split("\\r?\\n");
+            for (String line : lines) {
+                int idx = line.indexOf(':');
+                if (idx > 0) {
+                    putHeader(headers, line.substring(0, idx).trim(), line.substring(idx + 1).trim());
+                }
+            }
+        }
+        return headers;
+    }
+
+    private void putHeader(Map<String, String> headers, String name, String value) {
+        if (name == null || name.isBlank() || value == null || value.isBlank()) return;
+        if ("Host".equalsIgnoreCase(name) || "Content-Length".equalsIgnoreCase(name)) return;
+        headers.put(name, value);
     }
 }

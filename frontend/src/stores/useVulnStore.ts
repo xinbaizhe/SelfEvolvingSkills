@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   scanUrl,
+  scanUrlStream,
   scanCode,
   fetchScanHistory,
   fetchScanResult,
@@ -31,6 +33,7 @@ function isConnectionError(e: unknown): boolean {
 
 export const useVulnStore = defineStore('vuln', () => {
   const scanning = ref(false)
+  const scanProgress = ref<string[]>([])
   const currentResult = ref<VulnScanJob | null>(null)
   const history = ref<VulnScanJob[]>([])
   const historyTotal = ref(0)
@@ -64,6 +67,48 @@ export const useVulnStore = defineStore('vuln', () => {
       return null
     } finally {
       scanning.value = false
+    }
+  }
+
+  async function runUrlScanStream(url: string, options: VulnScanOptions = {}): Promise<VulnScanJob | null> {
+    scanning.value = true
+    error.value = ''
+    offline.value = false
+    currentResult.value = null
+    scanProgress.value = []
+
+    let unlisten: UnlistenFn | null = null
+    try {
+      unlisten = await listen<string>('scan-progress', (event) => {
+        scanProgress.value = [...scanProgress.value, event.payload]
+      })
+
+      const job = await scanUrlStream({
+        url,
+        modelType: options.modelType,
+        modelId: options.modelId ? String(options.modelId) : undefined,
+        cookie: options.cookie,
+        authorization: options.authorization,
+        headers: options.headers,
+        scanProfile: options.scanProfile,
+        customPaths: options.customPaths,
+        maxDepth: options.maxDepth != null ? String(options.maxDepth) : undefined,
+        maxPages: options.maxPages != null ? String(options.maxPages) : undefined,
+        portScanEnabled: options.portScanEnabled ? 'true' : undefined,
+        portSpec: options.portSpec,
+      })
+      currentResult.value = job
+      return job
+    } catch (e: unknown) {
+      if (isConnectionError(e)) {
+        offline.value = true
+      } else {
+        error.value = e instanceof Error ? e.message : String(e)
+      }
+      return null
+    } finally {
+      scanning.value = false
+      if (unlisten) unlisten()
     }
   }
 
@@ -127,6 +172,7 @@ export const useVulnStore = defineStore('vuln', () => {
 
   async function loadIntel(params?: Record<string, string>) {
     intelLoading.value = true
+    error.value = ''
     try {
       intel.value = await fetchVulnIntel(params)
       offline.value = false
@@ -215,6 +261,7 @@ export const useVulnStore = defineStore('vuln', () => {
 
   return {
     scanning,
+    scanProgress,
     currentResult,
     history,
     historyTotal,
@@ -228,6 +275,7 @@ export const useVulnStore = defineStore('vuln', () => {
     depFindings,
     depLoading,
     runUrlScan,
+    runUrlScanStream,
     runCodeScan,
     loadHistory,
     loadHistoryDetail,

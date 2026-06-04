@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 import { useTeamStore } from '../stores/useTeamStore'
 import { useVulnStore } from '../stores/useVulnStore'
 import { getErrorMessage } from '../utils/error'
-import { fetchLlmConfig } from '../api/admin'
+import { evaluateShareResource, fetchLlmConfig, testLlmConnection } from '../api/admin'
 import { fetchAvailableModels, type TeamModelConfig } from '../api/team'
 import LoginDialog from '../components/team/LoginDialog.vue'
 import type { VulnScanJob, VulnFinding, AgentCredential } from '../api/vuln'
@@ -15,6 +15,15 @@ const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
 
 const activeTab = ref('url')
 const urlInput = ref('')
+const urlCookie = ref('')
+const urlAuthorization = ref('')
+const urlHeaders = ref('')
+const urlCustomPaths = ref('')
+const portScanEnabled = ref(false)
+const portSpec = ref('')
+const scanProfile = ref<'quick' | 'standard' | 'deep'>('standard')
+const maxDepth = ref(2)
+const maxPages = ref(24)
 const dirInput = ref('')
 const showHistory = ref(false)
 const historyPage = ref(1)
@@ -23,6 +32,9 @@ const modelType = ref<'department' | 'personal'>('department')
 const modelId = ref<number | undefined>(undefined)
 const models = ref<TeamModelConfig[]>([])
 const localResourceModel = ref<TeamModelConfig | null>(null)
+const localLlmConfig = ref<Record<string, unknown> | null>(null)
+const modelLoading = ref(false)
+const modelLoadError = ref('')
 const scanStep = ref(0)
 const intelQuery = ref('')
 const intelType = ref('')
@@ -58,17 +70,75 @@ function removeCredential(idx: number) {
 }
 
 const scanSteps = [
-  '准备扫描目标',
-  '同步公开漏洞情报',
-  '爬取页面/收集入口',
-  '检测 SQL 注入、XSS、CSRF、敏感路径',
-  '大模型复核和生成修改建议',
-  '保存扫描结果',
+  '校验目标',
+  '加载登录态',
+  '策略配置',
+  '爬取入口',
+  'SQL/XSS/SSRF等注入检测',
+  '敏感路径/端口检测',
+  'TLS/证书检查',
+  '系统漏洞检测',
+  'AI 多角色智能发现',
+  'AI 多角色复核',
+  '保存结果',
 ]
+
+const scanProfileOptions = [
+  {
+    value: 'quick',
+    label: '快速',
+    title: '快速扫描',
+    description: '少量页面、常见端口、基础安全头和敏感路径检查，适合先判断目标是否有明显问题。',
+  },
+  {
+    value: 'standard',
+    label: '标准',
+    title: '标准扫描',
+    description: '默认模式，爬取更多入口，执行 SQL/XSS/CSRF/SSRF/NoSQL/SSTI/LFI、系统漏洞检测（HTTP方法/CRLF/Host头/默认凭据/源码泄露），6角色 AI 并行复核。',
+  },
+  {
+    value: 'deep',
+    label: '深度',
+    title: '深度扫描',
+    description: '更多页面、更全端口集合、更完整敏感路径和全部 payload 变种 + 6角色 AI 并行发现与复核，适合正式排查但耗时更长。',
+  },
+] as const
+
+const selectedScanProfile = computed(() =>
+  scanProfileOptions.find(item => item.value === scanProfile.value) || scanProfileOptions[1],
+)
+
+const scanStepDescriptions: Record<string, string> = {
+  校验目标: '校验 URL、目录路径、模型配置和扫描参数是否可用。',
+  加载登录态: '装载 Cookie、Authorization 和自定义请求头，用于访问需要登录的页面。',
+  策略配置: '按快速、标准、深度模式确定爬取深度、页面数量、payload 和敏感路径范围。',
+  爬取入口: '请求目标页面并收集同源链接、表单、参数和可测试入口。',
+  'SQL/XSS/SSRF等注入检测': '对 URL 参数和表单输入点执行 SQL 注入（含盲注/堆叠）、XSS、CSRF、SSRF、NoSQL、SSTI、LFI 全部注入类型检测。',
+  '敏感路径/端口检测': '探测常见敏感路径（Swagger、Actuator、配置文件等），扫描目标 IP 开放端口并识别服务用途。',
+  'TLS/证书检查': '检查 HTTPS 证书有效性、TLS 协议版本、自签名证书等传输层安全问题。',
+  '系统漏洞检测': 'HTTP 方法探测（TRACE/PUT/DELETE）、CRLF 注入、Host 头注入、默认凭据爆破（18组常见凭据）、源码泄露路径扫描。',
+  'AI 多角色智能发现': '注入专家/认证审计/信息泄露/HTTP配置/客户端安全/基础设施 6角色并行分析原始响应，发现规则扫描遗漏的漏洞。',
+  'AI 多角色复核': '6个安全角色并行复核候选漏洞，各角色验证领域内漏洞真实性，去重汇总结果。',
+  保存结果: '保存扫描结果、统计分级数量，并写入扫描历史。',
+}
+
+const scanStepKeywords: Record<string, string[]> = {
+  校验目标: ['校验目标', '准备扫描目标', '规范化 URL', '目标'],
+  加载登录态: ['加载登录态', 'Cookie', 'Authorization', '自定义请求头', '登录态'],
+  策略配置: ['扫描策略', '快速扫描', '标准扫描', '深度扫描', 'maxDepth', 'maxPages'],
+  爬取入口: ['爬取页面', '爬取入口', '读取源码文件', '读取文件'],
+  'SQL/XSS/SSRF等注入检测': ['SQL 注入', 'XSS', 'CSRF', 'SSRF', 'NoSQL', 'SSTI', 'LFI', 'SQL错误', '布尔盲注', '反射型', '模板注入', '文件包含', '目录穿越'],
+  '敏感路径/端口检测': ['敏感路径', 'heapdump', 'swagger', 'api-docs', 'actuator', '端口扫描', '开放端口', 'TCP'],
+  'TLS/证书检查': ['TLS 检查', 'HTTPS', '证书', 'SSL'],
+  '系统漏洞检测': ['系统漏洞检测', 'HTTP 方法', 'CRLF', 'Host 头', '默认凭据', '源码泄露', '方法探测'],
+  'AI 多角色智能发现': ['AI 智能发现', '6角色并行分析', '大模型额外发现'],
+  'AI 多角色复核': ['AI 复核', '6角色并行复核', '模型复核'],
+  保存结果: ['保存结果', '保存扫描结果', '扫描完成'],
+}
 
 const filteredModels = computed(() => {
   if (modelType.value === 'department') {
-    return models.value.filter(item => (item.sourceType || 'department') === 'department')
+    return models.value
   }
   return localResourceModel.value ? [localResourceModel.value] : []
 })
@@ -82,6 +152,29 @@ const findingCounts = computed(() => {
     { label: '中危', count: r.mediumCount, type: '' },
     { label: '低危', count: r.lowCount, type: 'info' },
   ]
+})
+
+const scanProgressGroups = computed(() => buildScanProgressGroups(vulnStore.currentResult))
+
+const historyScanProgressGroups = computed(() => buildScanProgressGroups(vulnStore.selectedHistoryJob))
+
+const scanProgressPercent = computed(() => {
+  if (vulnStore.currentResult) return 100
+  if (vulnStore.scanning) {
+    const streamCount = vulnStore.scanProgress.length
+    if (streamCount > 0) {
+      return Math.min(99, Math.max(5, Math.round((streamCount / 25) * 100)))
+    }
+    const done = scanProgressGroups.value.filter(group => group.status === 'done').length
+    const running = scanProgressGroups.value.some(group => group.status === 'running') ? 0.5 : 0
+    return Math.min(99, Math.max(5, Math.round(((done + running) / scanSteps.length) * 100)))
+  }
+  return 0
+})
+
+const currentScanTarget = computed(() => {
+  if (vulnStore.currentResult?.target) return vulnStore.currentResult.target
+  return activeTab.value === 'url' ? urlInput.value.trim() : dirInput.value.trim()
 })
 
 function severityType(severity: string): string {
@@ -113,6 +206,7 @@ async function handleUrlScan() {
     ElMessage.warning('请输入网址')
     return
   }
+  if (!await validateEvaluationModel()) return
   scanStep.value = 1
   scanStep.value = 2
 
@@ -126,16 +220,32 @@ async function handleUrlScan() {
     )
     vulnStore.currentResult = result
   } else {
-    result = await vulnStore.runUrlScan(urlInput.value.trim(), { modelType: modelType.value, modelId: modelId.value })
+    result = await vulnStore.runUrlScanStream(urlInput.value.trim(), {
+      modelType: modelType.value,
+      modelId: modelId.value,
+      cookie: urlCookie.value.trim() || undefined,
+      authorization: urlAuthorization.value.trim() || undefined,
+      headers: urlHeaders.value.trim() || undefined,
+      scanProfile: scanProfile.value,
+      customPaths: urlCustomPaths.value.trim() || undefined,
+      maxDepth: maxDepth.value,
+      maxPages: maxPages.value,
+      portScanEnabled: portScanEnabled.value,
+      portSpec: portSpec.value.trim() || undefined,
+    })
   }
-
-  if (result && modelType.value === 'personal') {
-    scanStep.value = 4
-    await reviewResultWithLocalModel(result)
-  }
-  scanStep.value = result ? 5 : 0
   if (result) {
-    ElMessage.success(`扫描完成，发现 ${result.totalFindings} 个漏洞`)
+    try {
+      if (modelType.value === 'personal') {
+        scanStep.value = 9
+        await reviewResultWithLocalModel(result)
+      }
+      scanStep.value = scanSteps.length
+      ElMessage.success(`扫描完成，发现 ${result.totalFindings} 个漏洞`)
+    } catch (e) {
+      scanStep.value = scanSteps.length
+      ElMessage.error(getErrorMessage(e))
+    }
   } else if (vulnStore.error) {
     ElMessage.error(vulnStore.error)
   }
@@ -146,22 +256,30 @@ async function handleCodeScan() {
     ElMessage.warning('请选择或输入目录路径')
     return
   }
+  if (!await validateEvaluationModel()) return
   scanStep.value = 1
   scanStep.value = 2
   const result = await vulnStore.runCodeScan(dirInput.value.trim(), { modelType: modelType.value, modelId: modelId.value })
-  if (result && modelType.value === 'personal') {
-    scanStep.value = 4
-    await reviewResultWithLocalModel(result)
-  }
-  scanStep.value = result ? 5 : 0
   if (result) {
-    ElMessage.success(`扫描完成，发现 ${result.totalFindings} 个漏洞`)
+    try {
+      if (modelType.value === 'personal') {
+        scanStep.value = 9
+        await reviewResultWithLocalModel(result)
+      }
+      scanStep.value = scanSteps.length
+      ElMessage.success(`扫描完成，发现 ${result.totalFindings} 个漏洞`)
+    } catch (e) {
+      scanStep.value = scanSteps.length
+      ElMessage.error(getErrorMessage(e))
+    }
   } else if (vulnStore.error) {
     ElMessage.error(vulnStore.error)
   }
 }
 
 async function loadModels() {
+  modelLoading.value = true
+  modelLoadError.value = ''
   try {
     const [departmentModels] = await Promise.all([
       fetchAvailableModels(),
@@ -169,7 +287,13 @@ async function loadModels() {
     ])
     models.value = departmentModels
     if (!modelId.value) modelId.value = filteredModels.value[0]?.id
-  } catch { /* model list should not block basic scan */ }
+  } catch (e) {
+    modelLoadError.value = getErrorMessage(e)
+    models.value = []
+    ElMessage.error(`部门模型加载失败：${modelLoadError.value}`)
+  } finally {
+    modelLoading.value = false
+  }
 }
 
 async function loadLocalResourceModel() {
@@ -186,8 +310,10 @@ async function loadLocalResourceModel() {
     } | null) : null
     if (!data?.enabled || !data.model || !data.base_url) {
       localResourceModel.value = null
+      localLlmConfig.value = null
       return
     }
+    localLlmConfig.value = data as Record<string, unknown>
     localResourceModel.value = {
       id: -1,
       name: '资源与配置的模型配置',
@@ -202,6 +328,7 @@ async function loadLocalResourceModel() {
     }
   } catch {
     localResourceModel.value = null
+    localLlmConfig.value = null
   }
 }
 
@@ -232,6 +359,69 @@ async function reviewResultWithLocalModel(result: VulnScanJob) {
         `建议: ${item.suggestion}`,
       ].join('\n')),
     ].join('\n\n'),
+  }
+  const res = await evaluateShareResource(payload)
+  if (!res.success) {
+    throw new Error(res.error || '资源与配置中的模型复核失败')
+  }
+  const data = res.data as {
+    score?: number
+    securityScore?: number
+    performanceScore?: number
+    summary?: string
+    risks?: string[]
+    suggestions?: string[]
+    requiredChanges?: string[]
+  }
+  const lines = [
+    '10. AI 多角色复核：调用资源与配置的本地模型复核漏洞扫描结果',
+    `AI 复核：综合分 ${data.score ?? '-'}，安全分 ${data.securityScore ?? '-'}，性能分 ${data.performanceScore ?? '-'}`,
+    data.summary ? `AI 复核：${data.summary}` : '',
+    ...(data.risks || []).map(item => `AI 风险：${item}`),
+    ...(data.suggestions || []).map(item => `AI 建议：${item}`),
+    ...(data.requiredChanges || []).map(item => `AI 必改：${item}`),
+  ].filter(Boolean)
+  result.progressText = [result.progressText, ...lines].filter(Boolean).join('\n')
+}
+
+async function validateEvaluationModel(): Promise<boolean> {
+  if (modelType.value === 'department') {
+    const model = filteredModels.value.find(item => item.id === modelId.value)
+    if (!model) {
+      ElMessage.error('请选择部门模型')
+      return false
+    }
+    if (!model.baseUrl || !model.model || !model.apiKeyHash) {
+      ElMessage.error('部门模型配置有问题，请检查部门模型的 Base URL、模型名称和 API-Key')
+      return false
+    }
+    return true
+  }
+
+  await loadLocalResourceModel()
+  if (!localResourceModel.value || !localLlmConfig.value) {
+    ElMessage.error('资源与配置中的模型配置未启用或不完整，请检查模型配置')
+    return false
+  }
+  if (!localResourceModel.value.apiKeyHash) {
+    ElMessage.error('资源与配置中的模型缺少 API-Key，请检查模型配置')
+    return false
+  }
+  const payload = {
+    llm_enabled: true,
+    llm_provider: localLlmConfig.value.provider || 'custom',
+    llm_base_url: localLlmConfig.value.base_url,
+    llm_model: localLlmConfig.value.model,
+    llm_api_key: '',
+    llm_api_format: localLlmConfig.value.api_format || localLlmConfig.value.provider || 'openai',
+  }
+  try {
+    const res = await testLlmConnection(payload)
+    if (!res.success) throw new Error(res.error || '模型连接测试失败')
+    return true
+  } catch (e) {
+    ElMessage.error(`资源与配置中的模型配置有问题：${getErrorMessage(e)}`)
+    return false
   }
 }
 
@@ -277,6 +467,48 @@ async function viewHistoryDetail(job: VulnScanJob) {
 function formatTime(dateStr: string): string {
   if (!dateStr) return '-'
   return dateStr.slice(0, 16).replace('T', ' ')
+}
+
+function progressLines(text?: string): string[] {
+  if (!text) return []
+  return text.split('\n').map(line => line.trim()).filter(Boolean)
+}
+
+function buildScanProgressGroups(result?: VulnScanJob | null) {
+  const lines = progressLines(result?.progressText)
+  const streamLines = vulnStore.scanning ? vulnStore.scanProgress : []
+  const allLines = streamLines.length > 0 ? streamLines : lines
+  const grouped = scanSteps.map((step, index) => {
+    const stepLines = allLines.filter(line => lineBelongsToStep(line, step))
+    const doneByResult = !!result
+      const active = !result && vulnStore.scanning && index === Math.max(scanStep.value - 1, 0)
+    return {
+      step,
+      index,
+      description: scanStepDescriptions[step],
+      lines: stepLines,
+      status: doneByResult ? 'done' : active ? 'running' : index < scanStep.value ? 'done' : 'pending',
+    }
+  })
+
+  const matched = new Set(grouped.flatMap(group => group.lines))
+  const unmatched = allLines.filter(line => !matched.has(line))
+  if (unmatched.length) {
+    grouped.push({
+      step: '其他执行记录',
+      index: grouped.length,
+      description: '后端返回但无法归类到固定阶段的执行记录。',
+      lines: unmatched,
+      status: 'done',
+    })
+  }
+  return grouped
+}
+
+function lineBelongsToStep(line: string, step: string): boolean {
+  const normalized = line.replace(/^\d+[.、]\s*/, '')
+  if (normalized.startsWith(step)) return true
+  return (scanStepKeywords[step] || []).some(keyword => normalized.includes(keyword))
 }
 
 // Dep monitor handlers
@@ -342,10 +574,15 @@ onMounted(() => {
         <el-button @click="toggleHistory">
           {{ showHistory ? '返回扫描' : '扫描历史' }}
         </el-button>
-        <el-button v-if="vulnStore.currentResult" @click="vulnStore.clearResult()">
-          新建扫描
-        </el-button>
       </div>
+    </div>
+
+    <div v-if="vulnStore.offline" class="offline-banner">
+      <span class="offline-icon">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9s3.36 7.5 7.5 7.5 7.5-3.36 7.5-7.5S13.14 1.5 9 1.5zM9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </span>
+      离线模式 — 无法连接到服务器，请确认服务已启动。接口恢复后页面将自动重试。
+      <el-button size="small" @click="vulnStore.loadHistory()">重试</el-button>
     </div>
 
     <template v-if="!store.isAuthenticated">
@@ -400,6 +637,43 @@ onMounted(() => {
                     <span class="badge-label">低危</span>
                   </div>
                 </div>
+              </div>
+            </div>
+            <div class="history-progress-panel">
+              <div class="scan-progress-header">
+                <div>
+                  <h3>执行记录</h3>
+                  <p>{{ vulnStore.selectedHistoryJob.target }}</p>
+                </div>
+                <el-tag type="success" effect="light">已入库</el-tag>
+              </div>
+              <div class="scan-progress-grid">
+                <section
+                  v-for="group in historyScanProgressGroups"
+                  :key="group.step"
+                  class="scan-step-card"
+                  :class="`scan-step-${group.status}`"
+                >
+                  <div class="scan-step-head">
+                    <span class="scan-step-index">{{ group.index + 1 }}</span>
+                    <div>
+                      <h4>{{ group.step }}</h4>
+                      <p>{{ group.description }}</p>
+                    </div>
+                    <el-tag size="small" type="success">完成</el-tag>
+                  </div>
+                  <div class="scan-step-lines">
+                    <div v-if="group.lines.length === 0" class="scan-step-empty">该步骤未返回明细</div>
+                    <div
+                      v-for="(line, lineIndex) in group.lines"
+                      :key="`${group.step}-${lineIndex}-${line}`"
+                      class="scan-step-line"
+                    >
+                      <span class="scan-step-dot"></span>
+                      <span>{{ line }}</span>
+                    </div>
+                  </div>
+                </section>
               </div>
             </div>
             <div v-if="vulnStore.selectedHistoryJob.findings.length === 0" class="empty-state safe-state">
@@ -485,6 +759,10 @@ onMounted(() => {
           <el-select v-model="modelId" placeholder="选择评估模型" style="width: 280px">
             <el-option v-for="model in filteredModels" :key="model.id" :label="`${model.name} / ${model.model}`" :value="model.id" />
           </el-select>
+          <el-button size="small" :loading="modelLoading" @click="loadModels">刷新模型</el-button>
+          <span v-if="modelType === 'department' && !modelLoading && filteredModels.length === 0" class="model-warning">
+            {{ modelLoadError ? `部门模型加载失败：${modelLoadError}` : '未查询到可用部门模型' }}
+          </span>
         </div>
 
         <el-tabs v-model="activeTab" class="scan-tabs">
@@ -534,6 +812,53 @@ onMounted(() => {
                 <el-button @click="removeCredential(idx)" size="small" type="danger" circle>×</el-button>
               </div>
             </div>
+            <div class="url-scan-options">
+              <div class="scan-mode-row">
+                <div class="scan-mode-select">
+                  <span class="option-label">扫描模式</span>
+                  <el-select v-model="scanProfile" style="width: 100%" popper-class="scan-mode-select-dropdown">
+                    <el-option
+                      v-for="option in scanProfileOptions"
+                      :key="option.value"
+                      :label="option.title"
+                      :value="option.value"
+                    >
+                      <div class="scan-mode-option">
+                        <strong>{{ option.title }}</strong>
+                        <span>{{ option.description }}</span>
+                      </div>
+                    </el-option>
+                  </el-select>
+                  <p class="scan-mode-desc">{{ selectedScanProfile.description }}</p>
+                </div>
+                <label class="number-field">
+                  <span>最大深度</span>
+                  <el-input-number v-model="maxDepth" :min="0" :max="4" size="small" controls-position="right" />
+                </label>
+                <label class="number-field">
+                  <span>最多页面</span>
+                  <el-input-number v-model="maxPages" :min="1" :max="80" size="small" controls-position="right" />
+                </label>
+              </div>
+              <div class="auth-grid">
+                <el-input v-model="urlCookie" type="textarea" :rows="2" placeholder="登录态 Cookie，可选，例如 JSESSIONID=...; token=..." />
+                <el-input v-model="urlAuthorization" placeholder="Authorization，可选，例如 Bearer eyJ..." clearable />
+              </div>
+              <div class="auth-grid">
+                <el-input v-model="urlHeaders" type="textarea" :rows="2" placeholder="自定义请求头，每行一个：X-Token: xxx" />
+                <el-input v-model="urlCustomPaths" type="textarea" :rows="2" placeholder="自定义敏感路径，每行一个：/actuator/heapdump" />
+              </div>
+              <div class="port-scan-row">
+                <el-checkbox v-model="portScanEnabled">如果目标是公网 IP，同时扫描服务器开放端口</el-checkbox>
+                <el-input
+                  v-model="portSpec"
+                  :disabled="!portScanEnabled"
+                  placeholder="端口范围，可选：22,80,443,3306 或 1-1024，最多 80 个"
+                  clearable
+                />
+              </div>
+            </div>
+            <p class="scan-hint">系统会携带登录态爬取同源页面，执行 SQL/XSS/SSRF/NoSQL/SSTI/LFI 注入检测、HTTP 方法/CRLF/Host头/默认凭据/源码泄露等系统漏洞检测、TLS 证书检查、IP 端口扫描，并调用 AI 大模型 6 角色并行发现与复核。</p>
           </el-tab-pane>
 
           <el-tab-pane label="代码扫描" name="code">
@@ -560,7 +885,7 @@ onMounted(() => {
                 {{ vulnStore.scanning ? '扫描中...' : '开始扫描' }}
               </el-button>
             </div>
-            <p class="scan-hint">系统会扫描目录下的源代码文件，检测硬编码密钥、SQL 注入、XSS、命令注入、路径遍历、不安全加密等漏洞。</p>
+            <p class="scan-hint">系统会扫描目录下的源代码文件，检测硬编码密钥、SQL 注入、XSS、命令注入、路径遍历、不安全加密、XXE、反序列化、JWT 安全、原型污染、LDAP/XPath 注入等漏洞。</p>
           </el-tab-pane>
 
           <el-tab-pane label="漏洞列表" name="intel">
@@ -726,23 +1051,60 @@ onMounted(() => {
           </el-tab-pane>
         </el-tabs>
 
-        <div v-if="activeTab !== 'intel' && activeTab !== 'monitor'" class="scan-progress">
-          <el-steps :active="scanStep" finish-status="success" simple>
-            <el-step v-for="step in scanSteps" :key="step" :title="step" />
-          </el-steps>
-        </div>
-      </div>
+        <div v-if="activeTab !== 'intel' && activeTab !== 'monitor'" class="scan-progress-panel">
+          <div class="scan-progress-header">
+            <div>
+              <h3>扫描过程</h3>
+              <p>{{ currentScanTarget || '等待输入目标' }}</p>
+            </div>
+            <el-tag v-if="vulnStore.scanning" type="warning" effect="light">执行中</el-tag>
+            <el-tag v-else-if="vulnStore.currentResult" type="success" effect="light">已完成</el-tag>
+            <el-tag v-else type="info" effect="light">未开始</el-tag>
+          </div>
 
-      <div v-if="vulnStore.offline" class="offline-banner">
-        <span class="offline-icon">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9s3.36 7.5 7.5 7.5 7.5-3.36 7.5-7.5S13.14 1.5 9 1.5zM9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        </span>
-        离线模式 — 无法连接到服务器，请确认服务已启动。接口恢复后页面将自动重试。
-        <el-button size="small" @click="vulnStore.loadHistory()">重试</el-button>
-      </div>
-      <div v-else-if="vulnStore.error" class="error-banner">
-        <span class="error-icon">!</span>
-        {{ vulnStore.error }}
+          <div class="scan-progress-bar">
+            <el-progress
+              :percentage="scanProgressPercent"
+              :status="vulnStore.currentResult ? 'success' : undefined"
+              :stroke-width="10"
+              striped
+              striped-flow
+            />
+          </div>
+
+          <div class="scan-progress-grid">
+            <section
+              v-for="group in scanProgressGroups"
+              :key="group.step"
+              class="scan-step-card"
+              :class="`scan-step-${group.status}`"
+            >
+              <div class="scan-step-head">
+                <span class="scan-step-index">{{ group.index + 1 }}</span>
+                <div>
+                  <h4>{{ group.step }}</h4>
+                  <p>{{ group.description }}</p>
+                </div>
+                <el-tag size="small" :type="group.status === 'done' ? 'success' : group.status === 'running' ? 'warning' : 'info'">
+                  {{ group.status === 'done' ? '完成' : group.status === 'running' ? '执行中' : '等待' }}
+                </el-tag>
+              </div>
+              <div class="scan-step-lines">
+                <div v-if="group.lines.length === 0" class="scan-step-empty">
+                  {{ group.status === 'pending' ? '等待后端执行' : group.status === 'running' ? '正在等待后端返回该步骤明细' : '该步骤未返回明细' }}
+                </div>
+                <div
+                  v-for="(line, lineIndex) in group.lines"
+                  :key="`${group.step}-${lineIndex}-${line}`"
+                  class="scan-step-line"
+                >
+                  <span class="scan-step-dot"></span>
+                  <span>{{ line }}</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
       </div>
 
       <div v-if="vulnStore.currentResult" class="result-section">
@@ -890,6 +1252,12 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.model-warning {
+  color: #d98612;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .scan-tabs {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -924,8 +1292,258 @@ onMounted(() => {
   line-height: 1.5;
 }
 
-.scan-progress {
+.url-scan-options {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.scan-mode-row,
+.auth-grid {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) 148px 148px;
+  gap: 16px;
+  align-items: center;
+}
+
+.scan-mode-row {
+  grid-template-columns: minmax(0, 2fr) 130px 130px;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.scan-mode-select,
+.number-field {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(226, 232, 240, .9);
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.number-field {
+  display: grid;
+  align-content: start;
+}
+
+.number-field :deep(.el-input-number) {
+  width: 100%;
+}
+
+.number-field {
+  padding: 10px 14px;
+}
+
+.option-label,
+.number-field span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.scan-mode-desc {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scan-mode-option {
+  display: grid;
+  gap: 3px;
+  padding: 4px 0;
+  line-height: 1.35;
+}
+
+.scan-mode-option strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.scan-mode-option span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+:global(.scan-mode-select-dropdown .el-select-dropdown__item) {
+  height: auto;
+  min-height: 58px;
+  padding: 8px 12px;
+  line-height: normal;
+}
+
+:global(.scan-mode-select-dropdown .el-select-dropdown__item.is-selected) {
+  font-weight: 400;
+}
+
+.auth-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.port-scan-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(226, 232, 240, .9);
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.scan-progress-panel {
   margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcff;
+  overflow: hidden;
+}
+
+.history-progress-panel {
+  margin: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcff;
+  overflow: hidden;
+}
+
+.scan-progress-header {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.scan-progress-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.scan-progress-header p {
+  margin: 5px 0 0;
+  max-width: 760px;
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.scan-progress-bar {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.scan-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.scan-step-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.scan-step-card.scan-step-running {
+  border-color: rgba(217, 134, 18, .42);
+  box-shadow: 0 0 0 3px rgba(217, 134, 18, .08);
+}
+
+.scan-step-card.scan-step-done {
+  border-color: rgba(34, 197, 94, .24);
+}
+
+.scan-step-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border-bottom: 1px solid rgba(226, 232, 240, .78);
+}
+
+.scan-step-index {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scan-step-done .scan-step-index {
+  background: rgba(34, 197, 94, .12);
+  color: #15803d;
+}
+
+.scan-step-running .scan-step-index {
+  background: rgba(217, 134, 18, .14);
+  color: #b45309;
+}
+
+.scan-step-head h4 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.25;
+  color: var(--ink);
+}
+
+.scan-step-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scan-step-lines {
+  min-height: 72px;
+  max-height: 180px;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+}
+
+.scan-step-empty {
+  padding: 14px 14px 16px 50px;
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+.scan-step-line {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(226, 232, 240, .62);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.scan-step-line:last-child {
+  border-bottom: 0;
+}
+
+.scan-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  margin-top: 7px;
+  background: #667085;
 }
 
 .intel-panel {
@@ -1025,32 +1643,6 @@ onMounted(() => {
 .offline-icon {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
-}
-
-.error-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  margin-bottom: 16px;
-  background: rgba(214, 79, 79, .08);
-  border: 1px solid rgba(214, 79, 79, .28);
-  border-radius: 8px;
-  color: #d64f4f;
-  font-size: 13px;
-}
-
-.error-icon {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #d64f4f;
-  color: #fff;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  font-weight: 700;
   flex-shrink: 0;
 }
 
@@ -1318,6 +1910,21 @@ onMounted(() => {
   .scan-input-row {
     flex-direction: column;
     align-items: stretch;
+  }
+  .scan-mode-row,
+  .auth-grid,
+  .port-scan-row {
+    grid-template-columns: 1fr;
+  }
+  .scan-progress-grid {
+    grid-template-columns: 1fr;
+  }
+  .scan-step-head {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+  .scan-step-head .el-tag {
+    grid-column: 2;
+    justify-self: start;
   }
   .result-header {
     flex-direction: column;

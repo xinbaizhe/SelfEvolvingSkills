@@ -49,6 +49,14 @@ export function testLlmConnection(payload: Record<string, unknown>) {
   return api<ApiResponse<{ message: string }>>('POST', '/admin/config/llm/test', null, payload)
 }
 
+export function evaluateShareResource(payload: Record<string, unknown>) {
+  return api<ApiResponse<unknown>>('POST', '/admin/config/llm/evaluate-share', null, payload)
+}
+
+export function evaluateSkillDirectory(payload: Record<string, unknown>) {
+  return api<ApiResponse<unknown>>('POST', '/admin/config/llm/evaluate-directory', null, payload)
+}
+
 export function exportJson(resource: string) {
   return api<ApiResponse<string>>('GET', `/export/${resource}`)
 }

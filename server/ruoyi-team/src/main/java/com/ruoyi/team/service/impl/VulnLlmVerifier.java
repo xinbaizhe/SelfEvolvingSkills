@@ -8,6 +8,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -58,6 +59,23 @@ public class VulnLlmVerifier {
     public String getModel() { return model; }
     public String getApiKey() { return apiKey; }
 
+    public void validateConfig() {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalArgumentException("部门模型配置有问题：Base URL 为空");
+        }
+        if (model == null || model.isBlank()) {
+            throw new IllegalArgumentException("部门模型配置有问题：模型名称为空");
+        }
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalArgumentException("部门模型配置有问题：API-Key 为空");
+        }
+    }
+
+    public void testConnection() throws IOException, InterruptedException {
+        validateConfig();
+        sendRequest("请回复严格 JSON：{\"verdict\":\"REAL\",\"severity\":\"LOW\",\"description\":\"连接正常\",\"suggestion\":\"无\"}");
+    }
+
     /**
      * Verify a batch of regex-detected findings through LLM semantic analysis.
      * Each finding is individually evaluated; those confirmed as real
@@ -79,7 +97,9 @@ public class VulnLlmVerifier {
             try {
                 String response = callLlm(finding, truncatedContext);
                 VulnFinding enriched = parseResponse(response, finding);
-                verified.add(enriched);
+                if (enriched != null) {
+                    verified.add(enriched);
+                }
             } catch (Exception e) {
                 log.warn("LLM verification failed for {} at {}: {}",
                         finding.getType(), finding.getLocation(), e.getMessage());
@@ -269,5 +289,136 @@ public class VulnLlmVerifier {
     private static String truncate(String s, int maxLen) {
         if (s == null) return "";
         return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
+    }
+
+    /**
+     * Multi-role discovery: 6 specialized security personas independently
+     * analyze the HTTP response from different angles, then aggregate findings.
+     */
+    public List<VulnFinding> multiRoleDiscover(String url, String responseBody,
+                                                Map<String, List<String>> headers) {
+        MultiRoleAnalyzer analyzer = new MultiRoleAnalyzer(baseUrl, model, apiKey, httpClient);
+        return analyzer.multiRoleDiscover(url, responseBody, headers);
+    }
+
+    /**
+     * Multi-role verification: filter candidates by role domain, each role
+     * independently validates relevant findings in parallel.
+     */
+    public List<VulnFinding> multiRoleVerify(List<VulnFinding> candidates, String codeContext) {
+        MultiRoleAnalyzer analyzer = new MultiRoleAnalyzer(baseUrl, model, apiKey, httpClient);
+        return analyzer.multiRoleVerify(candidates, codeContext);
+    }
+
+    /**
+     * LLM-driven vulnerability discovery: analyze raw HTTP response body
+     * to find security issues that rule-based scanning may miss, such as
+     * error stack traces, debug info, configuration leaks, and subtle injection patterns.
+     */
+    public List<VulnFinding> discover(String url, String responseBody, Map<String, List<String>> headers) {
+        if (responseBody == null || responseBody.isBlank()) return List.of();
+        String truncatedBody = truncate(responseBody, 3000);
+        StringBuilder headerStr = new StringBuilder();
+        if (headers != null) {
+            headers.forEach((k, v) -> headerStr.append(k).append(": ").append(String.join(",", v)).append("\n"));
+        }
+        try {
+            String prompt = buildDiscoveryPrompt(url, truncatedBody, headerStr.toString());
+            String llmResponse = sendRequestDiscovery(prompt);
+            return parseDiscoveryResponse(llmResponse);
+        } catch (Exception e) {
+            log.warn("LLM discovery failed for {}: {}", url, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private String buildDiscoveryPrompt(String url, String body, String headers) {
+        return String.format("""
+                You are a security expert. Analyze this HTTP response for security vulnerabilities.
+
+                URL: %s
+
+                RESPONSE HEADERS:
+                ```
+                %s
+                ```
+
+                RESPONSE BODY:
+                ```
+                %s
+                ```
+
+                Look for:
+                1. Error messages leaking stack traces, file paths, SQL queries, or internal IPs
+                2. Debug endpoints or debug mode indicators (debug=true, X-Debug-Token, Symfony profiler, etc.)
+                3. Exposed configuration values (database URLs, API keys, secrets in responses)
+                4. Version disclosure (server, framework, library versions in headers or body)
+                5. Unusual error responses that suggest backend behavior (NullPointer, TypeError, etc.)
+                6. Missing security headers that should be present
+                7. Any other suspicious patterns or information leaks
+
+                If you find vulnerabilities, respond in JSON:
+                {"findings": [{"severity": "CRITICAL|HIGH|MEDIUM|LOW", "type": "...", "description": "...", "suggestion": "..."}]}
+
+                If no issues found, respond: {"findings": []}
+                """, url, headers, body);
+    }
+
+    private String sendRequestDiscovery(String prompt) throws IOException, InterruptedException {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("model", model);
+        body.put("temperature", 0.1);
+        body.put("max_tokens", 1200);
+
+        ArrayNode messages = mapper.createArrayNode();
+        ObjectNode systemMsg = mapper.createObjectNode();
+        systemMsg.put("role", "system");
+        systemMsg.put("content", "You are a security expert. Respond with JSON only.");
+        messages.add(systemMsg);
+
+        ObjectNode userMsg = mapper.createObjectNode();
+        userMsg.put("role", "user");
+        userMsg.put("content", prompt);
+        messages.add(userMsg);
+
+        body.set("messages", messages);
+
+        String endpoint = baseUrl + (baseUrl.endsWith("/") ? "" : "/") + "chat/completions";
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(endpoint))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + apiKey)
+                .timeout(REQUEST_TIMEOUT)
+                .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IOException("LLM API returned " + response.statusCode());
+        }
+        JsonNode root = mapper.readTree(response.body());
+        return root.path("choices").get(0).path("message").path("content").asText();
+    }
+
+    private List<VulnFinding> parseDiscoveryResponse(String llmResponse) {
+        List<VulnFinding> findings = new ArrayList<>();
+        try {
+            JsonNode root = mapper.readTree(llmResponse);
+            JsonNode findingsNode = root.path("findings");
+            if (!findingsNode.isArray()) return findings;
+            for (JsonNode f : findingsNode) {
+                VulnFinding finding = new VulnFinding();
+                finding.setType(f.path("type").asText("LLM发现"));
+                finding.setSeverity(f.path("severity").asText("MEDIUM"));
+                finding.setDescription(f.path("description").asText(""));
+                finding.setSuggestion(f.path("suggestion").asText(""));
+                if (!finding.getDescription().isEmpty()) {
+                    findings.add(finding);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse LLM discovery response: {}", e.getMessage());
+        }
+        return findings;
     }
 }

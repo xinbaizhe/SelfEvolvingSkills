@@ -4,7 +4,8 @@
 ALTER TABLE vuln_scan_jobs ADD COLUMN model_type VARCHAR(20) COMMENT 'department/personal' AFTER low_count;
 ALTER TABLE vuln_scan_jobs ADD COLUMN model_id BIGINT COMMENT 'department model id' AFTER model_type;
 ALTER TABLE vuln_scan_jobs ADD COLUMN progress_step VARCHAR(50) COMMENT 'current scan step' AFTER model_id;
-ALTER TABLE vuln_scan_jobs ADD COLUMN progress_text VARCHAR(500) COMMENT 'current scan progress text' AFTER progress_step;
+ALTER TABLE vuln_scan_jobs ADD COLUMN progress_text LONGTEXT COMMENT 'scan execution records' AFTER progress_step;
+ALTER TABLE vuln_scan_jobs MODIFY COLUMN progress_text LONGTEXT COMMENT 'scan execution records';
 
 CREATE TABLE IF NOT EXISTS vuln_intel (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,

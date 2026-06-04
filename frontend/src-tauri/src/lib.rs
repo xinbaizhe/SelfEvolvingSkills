@@ -5,6 +5,7 @@ mod services;
 mod utils;
 
 use anyhow::{Context, Result};
+use base64::Engine;
 use chrono::{DateTime, Local, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -217,6 +218,7 @@ pub fn run() {
             configure_claude_code_model,
             api_request,
             select_directory,
+            save_file_base64,
             start_watchers,
             services::team_service::login_team,
             services::team_service::logout_team,
@@ -225,6 +227,8 @@ pub fn run() {
             services::team_service::team_api_post,
             services::team_service::team_api_put,
             services::team_service::team_api_delete,
+            services::team_service::team_api_download,
+            services::team_service::scan_url_stream,
             services::team_service::check_team_connection,
             services::team_service::cache_team_skills,
             services::team_service::get_cached_team_skills,
@@ -363,6 +367,39 @@ async fn select_directory(app: AppHandle) -> AppResult<Option<String>> {
         let _ = tx.send(selected);
     });
     rx.await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_file_base64(
+    app: AppHandle,
+    filename: String,
+    content_base64: String,
+) -> AppResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let default_name = if filename.trim().is_empty() {
+        "skill.zip"
+    } else {
+        filename.trim()
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(content_base64.trim())
+        .map_err(|err| err.to_string())?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(default_name)
+        .save_file(move |path| {
+            let result = path
+                .map(|target| {
+                    let target_path = target.as_path().ok_or_else(|| "无效的保存路径".to_string())?;
+                    fs::write(target_path, &bytes).map_err(|err| err.to_string())?;
+                    Ok::<_, String>(target_path.to_string_lossy().to_string())
+                })
+                .transpose();
+            let _ = tx.send(result);
+        });
+    rx.await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
