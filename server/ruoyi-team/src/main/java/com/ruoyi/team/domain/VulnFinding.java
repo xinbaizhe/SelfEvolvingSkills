@@ -8,6 +8,7 @@ public class VulnFinding {
     private String location;
     private String description;
     private String suggestion;
+    private Integer confidence;
 
     public VulnFinding() {}
 
@@ -18,6 +19,16 @@ public class VulnFinding {
         this.location = location;
         this.description = description;
         this.suggestion = suggestion;
+    }
+
+    public VulnFinding(Long jobId, String severity, String type, String location, String description, String suggestion, Integer confidence) {
+        this.jobId = jobId;
+        this.severity = severity;
+        this.type = type;
+        this.location = location;
+        this.description = description;
+        this.suggestion = suggestion;
+        this.confidence = confidence;
     }
 
     public Long getId() { return id; }
@@ -34,4 +45,6 @@ public class VulnFinding {
     public void setDescription(String description) { this.description = description; }
     public String getSuggestion() { return suggestion; }
     public void setSuggestion(String suggestion) { this.suggestion = suggestion; }
+    public Integer getConfidence() { return confidence; }
+    public void setConfidence(Integer confidence) { this.confidence = confidence; }
 }

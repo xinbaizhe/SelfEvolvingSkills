@@ -6,11 +6,11 @@ use crate::{open_conn, parse_scope_payload, ApiResponse, SourceUpdate};
 
 fn configured_llm_tuple(conn: &rusqlite::Connection) -> anyhow::Result<(String, String, String, String)> {
     if !services::admin_service::get_config_bool(conn, "llm_enabled", false)? {
-        return Err(anyhow!("大模型未启用，请先到资源与配置中启用模型配置"));
+        return Err(anyhow!("大模型未启用，请先到\"资源与配置\"页面启用模型配置"));
     }
     let api_key = services::admin_service::get_config(conn, "llm_api_key")?
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("大模型未配置 API Key"))?;
+        .ok_or_else(|| anyhow!("大模型未配置 API Key，请先在\"资源与配置\"页面设置 API 密钥"))?;
     let base_url = services::admin_service::get_config(conn, "llm_base_url")?
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
         .trim_end_matches('/')
@@ -294,6 +294,77 @@ pub(crate) async fn dispatch_api(
             .map(|value| json!(ApiResponse::ok(value)));
     }
 
+    // Pet chat — lightweight LLM call with pet persona
+    if matches!(
+        (method, clean_path),
+        ("POST", "/admin/pet/chat") | ("POST", "admin/pet/chat")
+    ) {
+        let (base_url, api_key, model, api_format) = {
+            let conn = open_conn(&state.db_path)?;
+            configured_llm_tuple(&conn)?
+        };
+        let message = body
+            .as_ref()
+            .and_then(|v| v.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("喵~")
+            .to_string();
+        let pet_type = body
+            .as_ref()
+            .and_then(|v| v.get("pet_type"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("cat")
+            .to_string();
+        let pet_name = body
+            .as_ref()
+            .and_then(|v| v.get("pet_name"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("小宠物")
+            .to_string();
+        return services::daily_report::pet_chat(
+            base_url, api_key, model, api_format, &pet_type, &pet_name, &message,
+        )
+        .await
+        .map(|reply| json!(ApiResponse::ok(json!({ "reply": reply }))));
+    }
+
+    // Daily report generation — starts async background task, returns immediately
+    if matches!(
+        (method, clean_path),
+        ("POST", "/admin/daily-report") | ("POST", "admin/daily-report")
+    ) {
+        let (base_url, api_key, model, api_format) = {
+            let conn = open_conn(&state.db_path)?;
+            configured_llm_tuple(&conn)?
+        };
+        let date = body
+            .as_ref()
+            .and_then(|v| v.get("date"))
+            .and_then(serde_json::Value::as_str)
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+        return Ok(json!(ApiResponse::ok(
+            services::daily_report::start_generation(
+                state.db_path.clone(),
+                base_url,
+                api_key,
+                model,
+                api_format,
+                date,
+            )?
+        )));
+    }
+
+    // Daily report generation status check
+    if matches!(
+        (method, clean_path),
+        ("GET", "/admin/daily-report/status") | ("GET", "admin/daily-report/status")
+    ) {
+        return Ok(json!(ApiResponse::ok(
+            services::daily_report::get_generation_status()
+        )));
+    }
+
     let conn = open_conn(&state.db_path)?;
 
     match (method, clean_path) {
@@ -421,6 +492,21 @@ pub(crate) async fn dispatch_api(
                 crate::url_decode(p.trim_start_matches('/').trim_start_matches("sessions/"));
             super::helpers::get_session(&conn, &session_id)
                 .map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("GET", "/admin/daily-report/history") | ("GET", "admin/daily-report/history") => {
+            let limit = query.limit.unwrap_or(30);
+            services::daily_report::get_report_history(&conn, limit)
+                .map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("GET", "/admin/daily-report") | ("GET", "admin/daily-report") => {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let date = query
+                .search
+                .as_deref()
+                .unwrap_or(&today);
+            Ok(json!(ApiResponse::ok(
+                services::daily_report::get_report(&conn, date)?
+            )))
         }
         ("GET", "/admin/system") | ("GET", "admin/system") => {
             services::scan::sync_source_configs(&conn)?;
@@ -568,6 +654,33 @@ pub(crate) async fn dispatch_api(
         ("GET", "/system/database") | ("GET", "system/database") => Ok(json!(ApiResponse::ok(
             services::system::get_database_info(&state.db_path, &conn)
         ))),
+        ("GET", "/system/database/table") | ("GET", "system/database/table") => {
+            let table = query.table.as_deref().unwrap_or("");
+            let search = query.search.as_deref().unwrap_or("");
+            let page = query.page.unwrap_or(1).max(1) as u32;
+            let size = query.size.unwrap_or(10).min(100) as u32;
+            services::system::get_table_detail(&conn, table, search, page, size)
+                .map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("POST", "/system/database/table") | ("POST", "system/database/table") => {
+            let table = body.as_ref().and_then(|v| v.get("table")).and_then(serde_json::Value::as_str).unwrap_or("");
+            let data = body.as_ref().and_then(|v| v.get("data")).unwrap_or(&serde_json::Value::Null);
+            services::system::insert_row(&conn, table, data)
+                .map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("PUT", "/system/database/table") | ("PUT", "system/database/table") => {
+            let table = body.as_ref().and_then(|v| v.get("table")).and_then(serde_json::Value::as_str).unwrap_or("");
+            let rowid = body.as_ref().and_then(|v| v.get("rowid")).and_then(serde_json::Value::as_i64).unwrap_or(0);
+            let data = body.as_ref().and_then(|v| v.get("data")).unwrap_or(&serde_json::Value::Null);
+            services::system::update_row(&conn, table, rowid, data)
+                .map(|value| json!(ApiResponse::ok(value)))
+        }
+        ("DELETE", "/system/database/table") | ("DELETE", "system/database/table") => {
+            let table = query.table.as_deref().unwrap_or("");
+            let rowid = query.rowid.as_deref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            services::system::delete_row(&conn, table, rowid)
+                .map(|value| json!(ApiResponse::ok(value)))
+        }
         ("GET", "/system/disk-cleanup/scan") | ("GET", "system/disk-cleanup/scan") => Ok(json!(
             ApiResponse::ok(services::system::scan_system_disk_cleanup())
         )),

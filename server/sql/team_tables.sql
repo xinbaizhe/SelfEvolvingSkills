@@ -99,8 +99,12 @@ CREATE TABLE vuln_scan_findings (
     location    VARCHAR(1000),
     description TEXT,
     suggestion  TEXT,
+    confidence  INT DEFAULT NULL COMMENT '置信度0-100，NULL表示未评估',
     INDEX idx_vuln_findings_job (job_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='漏洞发现明细';
+
+-- ALTER TABLE for confidence column migration (existing databases)
+-- ALTER TABLE vuln_scan_findings ADD COLUMN confidence INT DEFAULT NULL COMMENT '置信度0-100' AFTER suggestion;
 
 -- 模型配置
 DROP TABLE IF EXISTS team_model_configs;

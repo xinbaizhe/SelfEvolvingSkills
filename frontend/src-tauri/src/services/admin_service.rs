@@ -1,8 +1,8 @@
 use crate::{hash_bytes, now_string};
 use anyhow::{anyhow, Result};
 use base64::Engine;
-use reqwest::header;
 use rusqlite::{params, Connection, OptionalExtension};
+use super::llm_utils::{call_llm, LlmCallParams};
 use serde_json::{json, Value};
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
@@ -236,174 +236,6 @@ fn extract_json_object(text: &str) -> Result<String> {
     Ok(stripped[start..=end].to_string())
 }
 
-fn extract_text_from_content(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) if !text.trim().is_empty() => Some(text.to_string()),
-        Value::Array(items) => {
-            let parts = items
-                .iter()
-                .filter_map(|item| {
-                    item.as_str()
-                        .map(ToString::to_string)
-                        .or_else(|| item.get("text").and_then(Value::as_str).map(ToString::to_string))
-                        .or_else(|| item.get("content").and_then(extract_text_from_content))
-                })
-                .filter(|text| !text.trim().is_empty())
-                .collect::<Vec<_>>();
-            if parts.is_empty() {
-                None
-            } else {
-                Some(parts.join("\n"))
-            }
-        }
-        Value::Object(map) => map
-            .get("text")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .or_else(|| map.get("content").and_then(extract_text_from_content)),
-        _ => None,
-    }
-}
-
-fn extract_llm_text(value: &Value, is_anthropic: bool) -> Option<String> {
-    if let Some(text) = value.get("output_text").and_then(Value::as_str) {
-        if !text.trim().is_empty() {
-            return Some(text.to_string());
-        }
-    }
-    if let Some(text) = value.get("text").and_then(Value::as_str) {
-        if !text.trim().is_empty() {
-            return Some(text.to_string());
-        }
-    }
-    if is_anthropic {
-        if let Some(text) = value.get("content").and_then(extract_text_from_content) {
-            return Some(text);
-        }
-    }
-    value
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| {
-            choice
-                .get("message")
-                .and_then(|message| {
-                    message
-                        .get("content")
-                        .and_then(extract_text_from_content)
-                        .or_else(|| {
-                            message
-                                .get("reasoning_content")
-                                .and_then(Value::as_str)
-                                .map(ToString::to_string)
-                        })
-                })
-                .or_else(|| choice.get("text").and_then(Value::as_str).map(ToString::to_string))
-        })
-        .or_else(|| {
-            value
-                .get("output")
-                .and_then(Value::as_array)
-                .and_then(|items| {
-                    items
-                        .iter()
-                        .find_map(|item| item.get("content").and_then(extract_text_from_content))
-                })
-        })
-}
-
-fn response_shape(value: &Value) -> String {
-    match value {
-        Value::Object(map) => format!(
-            "top-level keys: {}",
-            map.keys().cloned().collect::<Vec<_>>().join(", ")
-        ),
-        other => format!("top-level type: {}", other),
-    }
-}
-
-async fn call_configured_llm(
-    base_url: String,
-    api_key: String,
-    model: String,
-    api_format: String,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<String> {
-    let is_anthropic = api_format == "anthropic";
-    let url = if is_anthropic {
-        format!("{}/v1/messages", base_url)
-    } else {
-        format!("{}/chat/completions", base_url)
-    };
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
-
-    let mut req = client
-        .post(&url)
-        .header("Accept", "application/json")
-        .header("Content-Type", "application/json");
-
-    if is_anthropic {
-        req = req
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&json!({
-                "model": model,
-                "max_tokens": 2048,
-                "system": system_prompt,
-                "messages": [
-                    { "role": "user", "content": user_prompt }
-                ],
-                "temperature": 0.1
-            }));
-    } else {
-        req = req.bearer_auth(api_key).json(&json!({
-            "model": model,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": user_prompt }
-            ],
-            "max_tokens": 2048,
-            "temperature": 0.1
-        }));
-    }
-
-    let response = req.send().await?;
-    let status = response.status();
-    let content_type = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    let text = response
-        .text()
-        .await
-        .unwrap_or_else(|err| format!("[Failed to read response body: {err}]"));
-    if !status.is_success() {
-        let preview = text.chars().take(500).collect::<String>();
-        return Err(anyhow!(
-            "大模型评估请求失败：HTTP {} {} {}",
-            status.as_u16(),
-            content_type,
-            preview
-        ));
-    }
-
-    let value: Value = serde_json::from_str(&text)?;
-    extract_llm_text(&value, is_anthropic).ok_or_else(|| {
-        anyhow!(
-            "大模型响应缺少文本内容（{}）。原始响应预览：{}",
-            response_shape(&value),
-            text.chars().take(500).collect::<String>()
-        )
-    })
-}
-
 fn clamp_score(value: Option<i64>, default: i64) -> i64 {
     value.unwrap_or(default).clamp(0, 100)
 }
@@ -543,7 +375,7 @@ pub(crate) async fn evaluate_share_resource_with_llm(
         serde_json::to_string_pretty(&zip_scan.clone().unwrap_or_else(|| json!(null)))?
     );
 
-    let raw = call_configured_llm(base_url, api_key, model, api_format, system_prompt, &user_prompt)
+    let raw = call_llm(LlmCallParams::new(base_url, api_key, model, api_format, system_prompt, &user_prompt).error_label("大模型评估请求失败"))
         .await?;
     let parsed: Value = serde_json::from_str(&extract_json_object(&raw)?)?;
     let llm_score = clamp_score(parsed.get("score").and_then(Value::as_i64), 0);
@@ -767,7 +599,7 @@ pub(crate) async fn evaluate_directory_skills_with_llm(
         serde_json::to_string_pretty(&scan)?
     );
 
-    let raw = call_configured_llm(base_url, api_key, model, api_format, system_prompt, &user_prompt)
+    let raw = call_llm(LlmCallParams::new(base_url, api_key, model, api_format, system_prompt, &user_prompt).error_label("大模型评估请求失败"))
         .await?;
     let parsed: Value = serde_json::from_str(&extract_json_object(&raw)?)?;
     let llm_score = clamp_score(parsed.get("score").and_then(Value::as_i64), 0);
@@ -800,6 +632,7 @@ pub(crate) fn system_info(conn: &Connection) -> Result<Value> {
     Ok(json!({
         "runtime": "tauri-rust",
         "database": "sqlite",
+        "start_time": crate::process_start_time(),
         "total_skills": total_skills,
         "total_agents": total_agents,
         "total_sessions": total_sessions,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 import { useTeamStore } from '../stores/useTeamStore'
 import { useVulnStore } from '../stores/useVulnStore'
@@ -7,6 +8,9 @@ import { getErrorMessage } from '../utils/error'
 import { evaluateShareResource, fetchLlmConfig, testLlmConnection } from '../api/admin'
 import { fetchAvailableModels, type TeamModelConfig } from '../api/team'
 import LoginDialog from '../components/team/LoginDialog.vue'
+import UrlScanForm from '../components/vuln/UrlScanForm.vue'
+import ScanProgressPanel from '../components/vuln/ScanProgressPanel.vue'
+import ScanResultPanel from '../components/vuln/ScanResultPanel.vue'
 import type { VulnScanJob, VulnFinding, AgentCredential } from '../api/vuln'
 
 const store = useTeamStore()
@@ -130,7 +134,7 @@ const scanStepKeywords: Record<string, string[]> = {
   'SQL/XSS/SSRF等注入检测': ['SQL 注入', 'XSS', 'CSRF', 'SSRF', 'NoSQL', 'SSTI', 'LFI', 'SQL错误', '布尔盲注', '反射型', '模板注入', '文件包含', '目录穿越'],
   '敏感路径/端口检测': ['敏感路径', 'heapdump', 'swagger', 'api-docs', 'actuator', '端口扫描', '开放端口', 'TCP'],
   'TLS/证书检查': ['TLS 检查', 'HTTPS', '证书', 'SSL'],
-  '系统漏洞检测': ['系统漏洞检测', 'HTTP 方法', 'CRLF', 'Host 头', '默认凭据', '源码泄露', '方法探测'],
+  '系统漏洞检测': ['系统漏洞检测', 'HTTP 方法', 'CRLF', 'Host头', 'Host 头', '默认凭据', '源码泄露', '方法探测', '误报控制'],
   'AI 多角色智能发现': ['AI 智能发现', '6角色并行分析', '大模型额外发现'],
   'AI 多角色复核': ['AI 复核', '6角色并行复核', '模型复核'],
   保存结果: ['保存结果', '保存扫描结果', '扫描完成'],
@@ -143,39 +147,7 @@ const filteredModels = computed(() => {
   return localResourceModel.value ? [localResourceModel.value] : []
 })
 
-const findingCounts = computed(() => {
-  const r = vulnStore.currentResult
-  if (!r) return null
-  return [
-    { label: '严重', count: r.criticalCount, type: 'danger' },
-    { label: '高危', count: r.highCount, type: 'warning' },
-    { label: '中危', count: r.mediumCount, type: '' },
-    { label: '低危', count: r.lowCount, type: 'info' },
-  ]
-})
-
-const scanProgressGroups = computed(() => buildScanProgressGroups(vulnStore.currentResult))
-
 const historyScanProgressGroups = computed(() => buildScanProgressGroups(vulnStore.selectedHistoryJob))
-
-const scanProgressPercent = computed(() => {
-  if (vulnStore.currentResult) return 100
-  if (vulnStore.scanning) {
-    const streamCount = vulnStore.scanProgress.length
-    if (streamCount > 0) {
-      return Math.min(99, Math.max(5, Math.round((streamCount / 25) * 100)))
-    }
-    const done = scanProgressGroups.value.filter(group => group.status === 'done').length
-    const running = scanProgressGroups.value.some(group => group.status === 'running') ? 0.5 : 0
-    return Math.min(99, Math.max(5, Math.round(((done + running) / scanSteps.length) * 100)))
-  }
-  return 0
-})
-
-const currentScanTarget = computed(() => {
-  if (vulnStore.currentResult?.target) return vulnStore.currentResult.target
-  return activeTab.value === 'url' ? urlInput.value.trim() : dirInput.value.trim()
-})
 
 function severityType(severity: string): string {
   const map: Record<string, string> = {
@@ -197,6 +169,12 @@ function severityLabel(severity: string): string {
   return map[severity] || severity
 }
 
+function confidenceClass(confidence: number): string {
+  if (confidence >= 80) return 'conf-high'
+  if (confidence >= 60) return 'conf-mid'
+  return 'conf-low'
+}
+
 function scanTypeLabel(type: string): string {
   return type === 'url' ? '网址扫描' : '代码扫描'
 }
@@ -212,13 +190,11 @@ async function handleUrlScan() {
 
   let result: VulnScanJob | null
   if (useAgent.value) {
-    const { scanUrlWithAgent } = await import('../api/vuln')
-    result = await scanUrlWithAgent(
-      urlInput.value.trim(),
-      { modelType: modelType.value, modelId: modelId.value },
-      agentCredentials.value,
-    )
-    vulnStore.currentResult = result
+    result = await vulnStore.runUrlAgentStream(urlInput.value.trim(), {
+      modelType: modelType.value,
+      modelId: modelId.value,
+      agentCredentials: agentCredentials.value,
+    })
   } else {
     result = await vulnStore.runUrlScanStream(urlInput.value.trim(), {
       modelType: modelType.value,
@@ -250,6 +226,22 @@ async function handleUrlScan() {
     ElMessage.error(vulnStore.error)
   }
 }
+
+// Auto-advance scanStep based on SSE progress keywords
+const { scanProgress: progressRef } = storeToRefs(vulnStore)
+watch(progressRef, (messages) => {
+  if (!vulnStore.scanning || !messages || messages.length === 0) return
+  let bestIdx = scanStep.value - 1
+  for (let i = 0; i < scanSteps.length; i++) {
+    const keywords = scanStepKeywords[scanSteps[i]] || []
+    if (messages.some(msg => keywords.some(kw => msg.includes(kw)))) {
+      bestIdx = i
+    }
+  }
+  if (bestIdx + 1 > scanStep.value) {
+    scanStep.value = bestIdx + 1
+  }
+})
 
 async function handleCodeScan() {
   if (!dirInput.value.trim()) {
@@ -688,6 +680,7 @@ onMounted(() => {
                     <th style="width:180px">位置</th>
                     <th>描述</th>
                     <th>修复建议</th>
+                    <th style="width:72px">置信度</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -697,6 +690,12 @@ onMounted(() => {
                     <td><code class="finding-location">{{ f.location }}</code></td>
                     <td class="finding-desc">{{ f.description }}</td>
                     <td class="finding-suggestion">{{ f.suggestion }}</td>
+                    <td>
+                      <span v-if="f.confidence != null" class="confidence-badge" :class="confidenceClass(f.confidence)">
+                        {{ f.confidence }}%
+                      </span>
+                      <span v-else class="confidence-na">-</span>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -767,98 +766,24 @@ onMounted(() => {
 
         <el-tabs v-model="activeTab" class="scan-tabs">
           <el-tab-pane label="网址扫描" name="url">
-            <div class="scan-input-row">
-              <el-input
-                v-model="urlInput"
-                placeholder="输入网址，例如 https://example.com"
-                size="large"
-                clearable
-                @keyup.enter="handleUrlScan"
-              >
-                <template #prefix>
-                  <span class="input-prefix-icon">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M2 8h12M8 2c1.66 2 1.66 10 0 12M8 2c-1.66 2-1.66 10 0 12" stroke="currentColor" stroke-width="1.2"/></svg>
-                  </span>
-                </template>
-              </el-input>
-              <el-button
-                type="primary"
-                size="large"
-                :loading="vulnStore.scanning"
-                @click="handleUrlScan"
-              >
-                {{ vulnStore.scanning ? '扫描中...' : '开始扫描' }}
-              </el-button>
-            </div>
-            <p class="scan-hint">系统会爬取同源页面并检测 SQL 注入、XSS、CSRF、信息泄露、安全响应头缺失等常见漏洞。</p>
-            <el-checkbox v-model="useAgent" class="agent-toggle" style="margin-top:12px">
-              启用 AI 自主渗透测试 Agent（需配置LLM模型，扫描耗时 30-60 分钟）
-            </el-checkbox>
-            <div v-if="useAgent" class="credential-section" style="margin-top:12px">
-              <div class="cred-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <span style="font-size:14px;font-weight:500">多角色凭据（Agent 多角色越权测试用）</span>
-                <el-button size="small" @click="addCredential">+ 添加凭据</el-button>
-              </div>
-              <div
-                v-for="(cred, idx) in agentCredentials"
-                :key="idx"
-                class="cred-row"
-                style="display:flex;gap:8px;margin-bottom:6px;align-items:center"
-              >
-                <el-input v-model="cred.username" placeholder="用户名" size="small" style="width:100px" />
-                <el-input v-model="cred.role" placeholder="角色(admin/user)" size="small" style="width:120px" />
-                <el-input v-model="cred.cookie" placeholder="Cookie" size="small" style="width:160px" />
-                <el-input v-model="cred.authorization" placeholder="Authorization" size="small" style="width:160px" />
-                <el-button @click="removeCredential(idx)" size="small" type="danger" circle>×</el-button>
-              </div>
-            </div>
-            <div class="url-scan-options">
-              <div class="scan-mode-row">
-                <div class="scan-mode-select">
-                  <span class="option-label">扫描模式</span>
-                  <el-select v-model="scanProfile" style="width: 100%" popper-class="scan-mode-select-dropdown">
-                    <el-option
-                      v-for="option in scanProfileOptions"
-                      :key="option.value"
-                      :label="option.title"
-                      :value="option.value"
-                    >
-                      <div class="scan-mode-option">
-                        <strong>{{ option.title }}</strong>
-                        <span>{{ option.description }}</span>
-                      </div>
-                    </el-option>
-                  </el-select>
-                  <p class="scan-mode-desc">{{ selectedScanProfile.description }}</p>
-                </div>
-                <label class="number-field">
-                  <span>最大深度</span>
-                  <el-input-number v-model="maxDepth" :min="0" :max="4" size="small" controls-position="right" />
-                </label>
-                <label class="number-field">
-                  <span>最多页面</span>
-                  <el-input-number v-model="maxPages" :min="1" :max="80" size="small" controls-position="right" />
-                </label>
-              </div>
-              <div class="auth-grid">
-                <el-input v-model="urlCookie" type="textarea" :rows="2" placeholder="登录态 Cookie，可选，例如 JSESSIONID=...; token=..." />
-                <el-input v-model="urlAuthorization" placeholder="Authorization，可选，例如 Bearer eyJ..." clearable />
-              </div>
-              <div class="auth-grid">
-                <el-input v-model="urlHeaders" type="textarea" :rows="2" placeholder="自定义请求头，每行一个：X-Token: xxx" />
-                <el-input v-model="urlCustomPaths" type="textarea" :rows="2" placeholder="自定义敏感路径，每行一个：/actuator/heapdump" />
-              </div>
-              <div class="port-scan-row">
-                <el-checkbox v-model="portScanEnabled">如果目标是公网 IP，同时扫描服务器开放端口</el-checkbox>
-                <el-input
-                  v-model="portSpec"
-                  :disabled="!portScanEnabled"
-                  placeholder="端口范围，可选：22,80,443,3306 或 1-1024，最多 80 个"
-                  clearable
-                />
-              </div>
-            </div>
-            <p class="scan-hint">系统会携带登录态爬取同源页面，执行 SQL/XSS/SSRF/NoSQL/SSTI/LFI 注入检测、HTTP 方法/CRLF/Host头/默认凭据/源码泄露等系统漏洞检测、TLS 证书检查、IP 端口扫描，并调用 AI 大模型 6 角色并行发现与复核。</p>
+            <UrlScanForm
+              v-model="urlInput"
+              :scanning="vulnStore.scanning"
+              v-model:cookie="urlCookie"
+              v-model:authorization="urlAuthorization"
+              v-model:headers="urlHeaders"
+              v-model:custom-paths="urlCustomPaths"
+              v-model:port-scan-enabled="portScanEnabled"
+              v-model:port-spec="portSpec"
+              v-model:scan-profile="scanProfile"
+              v-model:max-depth="maxDepth"
+              v-model:max-pages="maxPages"
+              v-model:use-agent="useAgent"
+              v-model:agent-credentials="agentCredentials"
+              @scan="handleUrlScan"
+              @add-credential="addCredential"
+              @remove-credential="removeCredential"
+            />
           </el-tab-pane>
 
           <el-tab-pane label="代码扫描" name="code">
@@ -1051,130 +976,15 @@ onMounted(() => {
           </el-tab-pane>
         </el-tabs>
 
-        <div v-if="activeTab !== 'intel' && activeTab !== 'monitor'" class="scan-progress-panel">
-          <div class="scan-progress-header">
-            <div>
-              <h3>扫描过程</h3>
-              <p>{{ currentScanTarget || '等待输入目标' }}</p>
-            </div>
-            <el-tag v-if="vulnStore.scanning" type="warning" effect="light">执行中</el-tag>
-            <el-tag v-else-if="vulnStore.currentResult" type="success" effect="light">已完成</el-tag>
-            <el-tag v-else type="info" effect="light">未开始</el-tag>
-          </div>
-
-          <div class="scan-progress-bar">
-            <el-progress
-              :percentage="scanProgressPercent"
-              :status="vulnStore.currentResult ? 'success' : undefined"
-              :stroke-width="10"
-              striped
-              striped-flow
-            />
-          </div>
-
-          <div class="scan-progress-grid">
-            <section
-              v-for="group in scanProgressGroups"
-              :key="group.step"
-              class="scan-step-card"
-              :class="`scan-step-${group.status}`"
-            >
-              <div class="scan-step-head">
-                <span class="scan-step-index">{{ group.index + 1 }}</span>
-                <div>
-                  <h4>{{ group.step }}</h4>
-                  <p>{{ group.description }}</p>
-                </div>
-                <el-tag size="small" :type="group.status === 'done' ? 'success' : group.status === 'running' ? 'warning' : 'info'">
-                  {{ group.status === 'done' ? '完成' : group.status === 'running' ? '执行中' : '等待' }}
-                </el-tag>
-              </div>
-              <div class="scan-step-lines">
-                <div v-if="group.lines.length === 0" class="scan-step-empty">
-                  {{ group.status === 'pending' ? '等待后端执行' : group.status === 'running' ? '正在等待后端返回该步骤明细' : '该步骤未返回明细' }}
-                </div>
-                <div
-                  v-for="(line, lineIndex) in group.lines"
-                  :key="`${group.step}-${lineIndex}-${line}`"
-                  class="scan-step-line"
-                >
-                  <span class="scan-step-dot"></span>
-                  <span>{{ line }}</span>
-                </div>
-              </div>
-            </section>
-          </div>
-        </div>
+        <ScanProgressPanel
+          v-if="activeTab !== 'intel' && activeTab !== 'monitor'"
+          :scanning="vulnStore.scanning"
+          :result="vulnStore.currentResult"
+          :progress-messages="vulnStore.scanProgress"
+        />
       </div>
 
-      <div v-if="vulnStore.currentResult" class="result-section">
-        <div class="result-header">
-          <div>
-            <h3>扫描结果</h3>
-            <p class="result-target">
-              <el-tag size="small" :type="vulnStore.currentResult.scanType === 'url' ? 'primary' : 'success'">
-                {{ scanTypeLabel(vulnStore.currentResult.scanType) }}
-              </el-tag>
-              {{ vulnStore.currentResult.target }}
-            </p>
-          </div>
-          <div class="result-summary">
-            <div v-if="findingCounts" class="finding-counts">
-              <div
-                v-for="fc in findingCounts"
-                :key="fc.label"
-                class="finding-badge"
-                :class="`badge-${fc.type}`"
-              >
-                <span class="badge-count">{{ fc.count }}</span>
-                <span class="badge-label">{{ fc.label }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="vulnStore.currentResult.findings.length === 0" class="empty-state safe-state">
-          <div class="safe-icon">
-            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-              <circle cx="24" cy="24" r="20" stroke="#22c55e" stroke-width="2.5"/>
-              <path d="M16 24l6 5 10-10" stroke="#22c55e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <p class="safe-text">未发现安全漏洞</p>
-          <p class="safe-hint">扫描未检测到已知的安全漏洞模式</p>
-        </div>
-
-        <div v-else class="findings-table-wrapper">
-          <table class="findings-table">
-            <thead>
-              <tr>
-                <th style="width: 72px">严重程度</th>
-                <th style="width: 110px">类型</th>
-                <th style="width: 180px">位置</th>
-                <th>描述</th>
-                <th>修复建议</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(f, idx) in vulnStore.currentResult.findings" :key="idx">
-                <td>
-                  <el-tag :type="severityType(f.severity)" size="small" effect="dark">
-                    {{ severityLabel(f.severity) }}
-                  </el-tag>
-                </td>
-                <td>
-                  <span class="finding-type">{{ f.type }}</span>
-                </td>
-                <td>
-                  <code class="finding-location">{{ f.location }}</code>
-                </td>
-                <td class="finding-desc">{{ f.description }}</td>
-                <td class="finding-suggestion">{{ f.suggestion }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <ScanResultPanel v-if="vulnStore.currentResult" :result="vulnStore.currentResult" />
     </template>
 
     <LoginDialog ref="loginDialog" @logged-in="() => { vulnStore.loadHistory() }" />
@@ -1757,6 +1567,18 @@ onMounted(() => {
   background: #fafbfe;
   white-space: nowrap;
 }
+
+.confidence-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.conf-high { background: #dcfce7; color: #16a34a; }
+.conf-mid  { background: #fef3c7; color: #d97706; }
+.conf-low  { background: #fee2e2; color: #dc2626; }
+.confidence-na { color: var(--muted); font-size: 12px; }
 
 .findings-table td {
   padding: 13px 16px;

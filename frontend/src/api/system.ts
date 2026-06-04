@@ -129,6 +129,25 @@ export function getDatabaseInfo() {
   return api<ApiResponse<DatabaseInfo>>('GET', '/system/database')
 }
 
+export interface TableDetail {
+  table: string
+  columns: TableColumn[]
+  rows: Record<string, unknown>[]
+  total: number
+  page: number
+  size: number
+}
+
+export interface TableColumn {
+  cid: number
+  name: string
+  type: string
+}
+
+export function getTableDetail(table: string, search?: string, page?: number, size?: number) {
+  return api<ApiResponse<TableDetail>>('GET', '/system/database/table', { table, search: search || '', page: page || 1, size: size || 10 })
+}
+
 export function scanDiskCleanup() {
   return api<ApiResponse<DiskCleanupScanResult>>('GET', '/system/disk-cleanup/scan')
 }
@@ -167,4 +186,16 @@ export function clearLogs() {
 
 export function initializeDatabase() {
   return api<ApiResponse<{ cleared_tables: string[]; message: string }>>('POST', '/system/initialize-database')
+}
+
+export function createTableRow(table: string, data: Record<string, unknown>) {
+  return api<ApiResponse<{ rowid: number; message: string }>>('POST', '/system/database/table', null, { table, data })
+}
+
+export function updateTableRow(table: string, rowid: number, data: Record<string, unknown>) {
+  return api<ApiResponse<{ affected: number; message: string }>>('PUT', '/system/database/table', null, { table, rowid, data })
+}
+
+export function deleteTableRow(table: string, rowid: number) {
+  return api<ApiResponse<{ affected: number; message: string }>>('DELETE', '/system/database/table', { table, rowid: String(rowid) })
 }

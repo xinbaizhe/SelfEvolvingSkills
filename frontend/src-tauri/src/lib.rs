@@ -101,6 +101,8 @@ pub(crate) struct PageQuery {
     pub(crate) limit: Option<i64>,
     pub(crate) format: Option<String>,
     pub(crate) source_type: Option<String>,
+    pub(crate) table: Option<String>,
+    pub(crate) rowid: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -229,6 +231,7 @@ pub fn run() {
             services::team_service::team_api_delete,
             services::team_service::team_api_download,
             services::team_service::scan_url_stream,
+            services::team_service::scan_url_agent_stream,
             services::team_service::check_team_connection,
             services::team_service::cache_team_skills,
             services::team_service::get_cached_team_skills,
@@ -241,9 +244,18 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+use std::sync::OnceLock;
+static PROCESS_START_TIME: OnceLock<String> = OnceLock::new();
+
+pub(crate) fn process_start_time() -> &'static str {
+    PROCESS_START_TIME.get_or_init(|| {
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    })
+}
+
 #[tauri::command]
 fn health() -> ApiResponse<Value> {
-    ApiResponse::ok(json!({ "status": "ok", "runtime": "tauri-rust" }))
+    ApiResponse::ok(json!({ "status": "ok", "runtime": "tauri-rust", "start_time": process_start_time() }))
 }
 
 #[tauri::command]

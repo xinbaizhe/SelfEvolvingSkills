@@ -46,7 +46,7 @@ public class VulnIntelServiceImpl implements IVulnIntelService {
     }
 
     @Override
-    @Scheduled(initialDelay = 60_000, fixedDelay = 1_800_000)
+//    @Scheduled(initialDelay = 60_000, fixedDelay = 1_800_000)
     public int syncPublicIntel() {
         int count = 0;
         count += syncCisaKev();

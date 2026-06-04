@@ -10,27 +10,36 @@ pub(crate) fn clear_all_data(conn: &Connection) -> Value {
         "skill_usage",
         "scan_jobs",
         "evolution_jobs",
+        "evolution_runs",
+        "evolution_steps",
+        "evolution_artifacts",
         "workflow_clusters",
+        "workflow_recommendations",
     ];
     let cleared = clear_tables(conn, &tables);
     json!({
         "cleared_tables": cleared,
-        "message": "所有扫描数据、会话记录、进化作业和工作流聚类已清空。配置和社区 Skills 已保留。"
+        "message": "所有扫描数据、会话记录、进化作业、工作流聚类已清空。配置、管理员、社区 Skills 和日报已保留。"
     })
 }
 
+/// Clear scan history, evolution records, clusters, and usage logs.
+/// BUSINESS DATA IS PRESERVED: skills, agents, sessions, memories, daily_reports.
 pub(crate) fn clear_logs(conn: &Connection) -> Value {
     let tables = [
         "scan_jobs",
         "evolution_jobs",
+        "evolution_runs",
+        "evolution_steps",
+        "evolution_artifacts",
         "workflow_clusters",
-        "memories",
+        "workflow_recommendations",
         "skill_usage",
     ];
     let cleared = clear_tables(conn, &tables);
     json!({
         "cleared_tables": cleared,
-        "message": "扫描历史、进化管道记录、工作流聚类、记忆数据和使用记录已清空。Skills、Agents、会话、社区缓存和所有配置已保留。"
+        "message": "扫描历史、进化记录、工作流聚类、使用记录已清空。Skills、Agents、会话、记忆、日报、社区缓存和所有配置已保留。"
     })
 }
 
@@ -43,8 +52,17 @@ pub(crate) fn initialize_database(conn: &Connection) -> Value {
         "skill_usage",
         "scan_jobs",
         "evolution_jobs",
+        "evolution_runs",
+        "evolution_steps",
+        "evolution_artifacts",
         "workflow_clusters",
+        "workflow_recommendations",
         "community_skills",
+        "community_candidates",
+        "skill_variants",
+        "skill_iterations",
+        "team_skills_cache",
+        "daily_reports",
     ];
     let cleared = clear_tables(conn, &tables);
 
@@ -57,7 +75,7 @@ pub(crate) fn initialize_database(conn: &Connection) -> Value {
 
     json!({
         "cleared_tables": cleared,
-        "message": "数据库已初始化。已保留管理员、系统配置和数据源配置，扫描数据、会话、Skills、Agents、社区缓存与历史记录已清空。"
+        "message": "数据库已初始化。已保留管理员、系统配置和数据源配置。业务数据、Skills、Agents、会话、记忆、社区缓存与历史记录已清空。"
     })
 }
 

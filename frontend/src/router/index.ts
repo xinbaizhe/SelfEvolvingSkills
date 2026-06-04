@@ -24,6 +24,7 @@ const router = createRouter({
     { path: '/admin', name: 'adminDashboard', component: () => import('../views/admin/AdminDashboard.vue') },
     { path: '/admin/users', name: 'adminUsers', component: () => import('../views/admin/AdminUsers.vue') },
     { path: '/admin/config', name: 'adminConfig', component: () => import('../views/admin/AdminConfig.vue') },
+    { path: '/admin/daily-report', name: 'adminDailyReport', component: () => import('../views/admin/AdminDailyReport.vue') },
   ],
 })
 

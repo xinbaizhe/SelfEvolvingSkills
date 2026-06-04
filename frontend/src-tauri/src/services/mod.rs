@@ -1,4 +1,6 @@
 pub(crate) mod admin_service;
+pub(crate) mod daily_report;
+pub(crate) mod llm_utils;
 pub(crate) mod agents_crud;
 pub(crate) mod community;
 pub(crate) mod evolution;

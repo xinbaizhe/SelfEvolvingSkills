@@ -367,6 +367,15 @@ pub(crate) fn init_db(db_path: &Path) -> Result<()> {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS daily_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_date TEXT NOT NULL UNIQUE,
+            content TEXT NOT NULL,
+            source_count INTEGER DEFAULT 0,
+            generated_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         "#,
     )?;
     let _ = conn.execute(

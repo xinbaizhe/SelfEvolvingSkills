@@ -7,6 +7,7 @@ export interface VulnFinding {
   location: string
   description: string
   suggestion: string
+  confidence?: number
 }
 
 export interface VulnScanJob {
@@ -110,7 +111,7 @@ export async function scanUrlWithAgent(
     {
       url,
       modelType: options.modelType,
-      modelId: options.modelId ? String(options.modelId) : undefined,
+      modelId: options.modelId != null ? String(options.modelId) : undefined,
       agentCredentials: credentials,
     },
   )
@@ -124,15 +125,15 @@ export async function scanUrl(url: string, options: VulnScanOptions = {}): Promi
     {
       url,
       modelType: options.modelType,
-      modelId: options.modelId ? String(options.modelId) : undefined,
+      modelId: options.modelId != null ? String(options.modelId) : undefined,
       cookie: options.cookie,
       authorization: options.authorization,
       headers: options.headers,
       scanProfile: options.scanProfile,
       customPaths: options.customPaths,
-      maxDepth: options.maxDepth == null ? undefined : String(options.maxDepth),
-      maxPages: options.maxPages == null ? undefined : String(options.maxPages),
-      portScanEnabled: options.portScanEnabled ? 'true' : undefined,
+      maxDepth: options.maxDepth != null ? String(options.maxDepth) : undefined,
+      maxPages: options.maxPages != null ? String(options.maxPages) : undefined,
+      portScanEnabled: options.portScanEnabled != null ? String(options.portScanEnabled) : undefined,
       portSpec: options.portSpec,
     },
   )
@@ -167,6 +168,20 @@ export async function scanUrlStream(options: {
     maxPages: options.maxPages,
     portScanEnabled: options.portScanEnabled,
     portSpec: options.portSpec,
+  })
+}
+
+export async function scanUrlAgentStream(options: {
+  url: string
+  modelType?: string
+  modelId?: string
+  agentCredentials?: AgentCredential[]
+}): Promise<VulnScanJob> {
+  return invoke<VulnScanJob>('scan_url_agent_stream', {
+    url: options.url,
+    modelType: options.modelType,
+    modelId: options.modelId,
+    agentCredentials: options.agentCredentials || undefined,
   })
 }
 

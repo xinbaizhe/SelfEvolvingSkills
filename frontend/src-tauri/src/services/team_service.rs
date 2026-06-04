@@ -560,33 +560,96 @@ pub(crate) async fn scan_url_stream(
             buffer = buffer[line_end + 1..].to_string();
 
             if line.is_empty() {
-                // Empty line = end of event
-                if !current_data.is_empty() {
-                    match current_event.as_str() {
-                        "progress" => {
-                            let _ = app.emit("scan-progress", &current_data);
-                        }
-                        "complete" => {
-                            if let Ok(parsed) = serde_json::from_str::<Value>(&current_data) {
-                                final_result = Some(parsed);
-                            }
-                        }
-                        "error" => {
-                            return Err(current_data);
-                        }
-                        _ => {}
-                    }
-                }
+                flush_sse_event(&app, &current_event, &current_data, &mut final_result)?;
                 current_event.clear();
                 current_data.clear();
             } else if let Some(data) = line.strip_prefix("event: ") {
                 current_event = data.to_string();
+            } else if let Some(data) = line.strip_prefix("event:") {
+                current_event = data.trim().to_string();
             } else if let Some(data) = line.strip_prefix("data: ") {
                 current_data = data.to_string();
             } else if let Some(data) = line.strip_prefix("data:") {
                 current_data = data.trim().to_string();
             }
         }
+        // Flush final event if stream ends without trailing blank line
+        flush_sse_event(&app, &current_event, &current_data, &mut final_result)?;
+    }
+
+    match final_result {
+        Some(result) => Ok(result),
+        None => Err("SSE 流未返回完整结果".to_string()),
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn scan_url_agent_stream(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, TeamState>,
+    url: String,
+    model_type: Option<String>,
+    model_id: Option<String>,
+    agent_credentials: Option<Vec<Value>>,
+) -> Result<Value, String> {
+    let (server_url, token) = {
+        let session = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session.as_ref().ok_or("未登录")?;
+        (session.server_url.clone(), format!("Bearer {}", session.access_token))
+    };
+
+    let mut body_map = serde_json::Map::new();
+    body_map.insert("url".to_string(), Value::String(url));
+    if let Some(v) = model_type { body_map.insert("modelType".to_string(), Value::String(v)); }
+    if let Some(v) = model_id { body_map.insert("modelId".to_string(), Value::String(v)); }
+    if let Some(v) = agent_credentials {
+        body_map.insert("agentCredentials".to_string(), Value::Array(v));
+    }
+
+    let mut resp = state
+        .http_client
+        .post(format!("{}/api/vuln/scan-url/agent/stream", server_url))
+        .header(AUTHORIZATION, &token)
+        .header(CONTENT_TYPE, "application/json")
+        .json(&Value::Object(body_map))
+        .send()
+        .await
+        .map_err(|e| format!("Agent SSE 请求失败: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("[HTTP {}] {}", status, body));
+    }
+
+    let mut buffer = String::new();
+    let mut current_event = String::new();
+    let mut current_data = String::new();
+    let mut final_result: Option<Value> = None;
+
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("读取流失败: {}", e))? {
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(line_end) = buffer.find('\n') {
+            let line = buffer[..line_end].trim().to_string();
+            buffer = buffer[line_end + 1..].to_string();
+
+            if line.is_empty() {
+                flush_sse_event(&app, &current_event, &current_data, &mut final_result)?;
+                current_event.clear();
+                current_data.clear();
+            } else if let Some(data) = line.strip_prefix("event: ") {
+                current_event = data.to_string();
+            } else if let Some(data) = line.strip_prefix("event:") {
+                current_event = data.trim().to_string();
+            } else if let Some(data) = line.strip_prefix("data: ") {
+                current_data = data.to_string();
+            } else if let Some(data) = line.strip_prefix("data:") {
+                current_data = data.trim().to_string();
+            }
+        }
+        // Flush final event if stream ends without trailing blank line
+        flush_sse_event(&app, &current_event, &current_data, &mut final_result)?;
     }
 
     match final_result {
@@ -691,4 +754,32 @@ pub(crate) fn queue_team_operation(
         body.as_ref(),
     )?;
     Ok(serde_json::json!({ "id": id }))
+}
+
+// ---- SSE helpers ----
+
+fn flush_sse_event(
+    app: &tauri::AppHandle,
+    event: &str,
+    data: &str,
+    final_result: &mut Option<serde_json::Value>,
+) -> Result<(), String> {
+    if data.is_empty() {
+        return Ok(());
+    }
+    match event {
+        "progress" => {
+            let _ = app.emit("scan-progress", data);
+        }
+        "complete" => {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                *final_result = Some(parsed);
+            }
+        }
+        "error" => {
+            return Err(data.to_string());
+        }
+        _ => {}
+    }
+    Ok(())
 }

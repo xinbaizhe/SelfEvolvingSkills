@@ -10,6 +10,7 @@ const teamStore = useTeamStore()
 
 const baseMenuItems = [
   { path: '/admin', title: '系统管理', match: ['/admin', '/admin/login', '/admin/users'] },
+  { path: '/admin/daily-report', title: '日报', match: ['/admin/daily-report'] },
   { path: '/workbench', title: 'Skills 工作台', match: ['/workbench', '/workflows', '/drafts', '/garden'] },
   { path: '/skills', title: '已有 Skills', match: ['/skills'] },
   { path: '/agents', title: 'Agent 列表', match: ['/agents'] },

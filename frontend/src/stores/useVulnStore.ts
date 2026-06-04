@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   scanUrl,
   scanUrlStream,
+  scanUrlAgentStream,
   scanCode,
   fetchScanHistory,
   fetchScanResult,
@@ -17,6 +18,7 @@ import {
   type VulnScanJob,
   type VulnIntel,
   type VulnScanOptions,
+  type AgentCredential,
   type DepSnapshot,
   type DepFinding,
   type UploadManifestResult,
@@ -86,7 +88,7 @@ export const useVulnStore = defineStore('vuln', () => {
       const job = await scanUrlStream({
         url,
         modelType: options.modelType,
-        modelId: options.modelId ? String(options.modelId) : undefined,
+        modelId: options.modelId != null ? String(options.modelId) : undefined,
         cookie: options.cookie,
         authorization: options.authorization,
         headers: options.headers,
@@ -94,8 +96,45 @@ export const useVulnStore = defineStore('vuln', () => {
         customPaths: options.customPaths,
         maxDepth: options.maxDepth != null ? String(options.maxDepth) : undefined,
         maxPages: options.maxPages != null ? String(options.maxPages) : undefined,
-        portScanEnabled: options.portScanEnabled ? 'true' : undefined,
+        portScanEnabled: options.portScanEnabled != null ? String(options.portScanEnabled) : undefined,
         portSpec: options.portSpec,
+      })
+      currentResult.value = job
+      return job
+    } catch (e: unknown) {
+      if (isConnectionError(e)) {
+        offline.value = true
+      } else {
+        error.value = e instanceof Error ? e.message : String(e)
+      }
+      return null
+    } finally {
+      scanning.value = false
+      if (unlisten) unlisten()
+    }
+  }
+
+  async function runUrlAgentStream(
+    url: string,
+    options: { modelType?: string; modelId?: number; agentCredentials?: AgentCredential[] } = {}
+  ): Promise<VulnScanJob | null> {
+    scanning.value = true
+    error.value = ''
+    offline.value = false
+    currentResult.value = null
+    scanProgress.value = []
+
+    let unlisten: UnlistenFn | null = null
+    try {
+      unlisten = await listen<string>('scan-progress', (event) => {
+        scanProgress.value = [...scanProgress.value, event.payload]
+      })
+
+      const job = await scanUrlAgentStream({
+        url,
+        modelType: options.modelType,
+        modelId: options.modelId != null ? String(options.modelId) : undefined,
+        agentCredentials: options.agentCredentials,
       })
       currentResult.value = job
       return job
@@ -276,6 +315,7 @@ export const useVulnStore = defineStore('vuln', () => {
     depLoading,
     runUrlScan,
     runUrlScanStream,
+    runUrlAgentStream,
     runCodeScan,
     loadHistory,
     loadHistoryDetail,

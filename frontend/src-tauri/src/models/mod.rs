@@ -99,6 +99,7 @@ pub(crate) struct PageQuery {
     pub project: Option<String>,
     pub limit: Option<i64>,
     pub format: Option<String>,
+    pub table: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,8 +6,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -36,6 +40,7 @@ import com.ruoyi.team.service.IVulnScanService;
 @RestController
 @RequestMapping("/api/vuln")
 public class VulnScanController extends BaseController {
+    private static final Logger log = LoggerFactory.getLogger(VulnScanController.class);
 
     @Autowired
     private IVulnScanService vulnScanService;
@@ -80,7 +85,6 @@ public class VulnScanController extends BaseController {
         return success(job);
     }
 
-    @SuppressWarnings("unchecked")
     @PostMapping("/scan-url/agent")
     public AjaxResult scanUrlWithAgent(@RequestBody Map<String, Object> body) {
         String url = (String) body.get("url");
@@ -88,26 +92,7 @@ public class VulnScanController extends BaseController {
             return error("URL不能为空");
         }
 
-        List<CredentialState> creds = new ArrayList<>();
-        Object credsObj = body.get("agentCredentials");
-        if (credsObj instanceof List<?> list) {
-            for (Object item : list) {
-                if (item instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> m = (Map<String, Object>) item;
-                    creds.add(new CredentialState(
-                        String.valueOf(m.getOrDefault("credId", "")),
-                        String.valueOf(m.getOrDefault("role", "unknown")),
-                        String.valueOf(m.getOrDefault("username", "")),
-                        String.valueOf(m.getOrDefault("permissions", "")),
-                        !"false".equals(String.valueOf(m.get("sessionValid"))),
-                        String.valueOf(m.getOrDefault("cookie", "")),
-                        String.valueOf(m.getOrDefault("authorization", ""))
-                    ));
-                }
-            }
-        }
-
+        List<CredentialState> creds = parseCredentials(body);
         LoginUser loginUser = SecurityUtils.getLoginUser();
         VulnScanJob job = vulnScanService.scanUrlWithAgent(
             url.trim(),
@@ -120,6 +105,58 @@ public class VulnScanController extends BaseController {
         return success(job);
     }
 
+    @PostMapping(value = "/scan-url/agent/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter scanUrlWithAgentStream(@RequestBody Map<String, Object> body) {
+        String url = (String) body.get("url");
+        if (url == null || url.isBlank()) {
+            throw new IllegalArgumentException("URL不能为空");
+        }
+
+        List<CredentialState> creds = parseCredentials(body);
+        LoginUser loginUser = SecurityUtils.getLoginUser();
+        SseEmitter emitter = new SseEmitter(3600_000L);
+        SecurityContext securityContext = SecurityContextHolder.getContext();
+
+        emitter.onTimeout(() -> {
+            log.warn("Agent SSE stream timeout for url: {}", url);
+            emitter.complete();
+        });
+        emitter.onError(throwable -> {
+            log.error("Agent SSE stream error for url: {}", url, throwable);
+        });
+
+        CompletableFuture.runAsync(() -> {
+            SecurityContextHolder.setContext(securityContext);
+            try {
+                VulnScanJob job = vulnScanService.scanUrlWithAgentStream(
+                    url.trim(),
+                    loginUser.getUser().getUserId(),
+                    loginUser.getUser().getDeptId(),
+                    (String) body.get("modelType"),
+                    parseLong((String) body.get("modelId")),
+                    creds,
+                    msg -> {
+                        try {
+                            emitter.send(SseEmitter.event().name("progress").data(msg));
+                        } catch (Exception ignored) {}
+                    }
+                );
+                emitter.send(SseEmitter.event().name("complete").data(job));
+                emitter.complete();
+            } catch (Exception e) {
+                log.error("Agent SSE scan failed for {}: {}", url, e.getMessage());
+                try {
+                    emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
+                } catch (Exception ignored) {}
+                emitter.complete();
+            } finally {
+                SecurityContextHolder.clearContext();
+            }
+        });
+
+        return emitter;
+    }
+
     @PostMapping(value = "/scan-url/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter scanUrlStream(@RequestBody Map<String, String> body) {
         String url = body.get("url");
@@ -128,9 +165,19 @@ public class VulnScanController extends BaseController {
         }
 
         LoginUser loginUser = SecurityUtils.getLoginUser();
-        SseEmitter emitter = new SseEmitter(300_000L); // 5 minute timeout
+        SseEmitter emitter = new SseEmitter(3600_000L); // 60 minute timeout
+        SecurityContext securityContext = SecurityContextHolder.getContext();
+
+        emitter.onTimeout(() -> {
+            log.warn("SSE stream timeout for url: {}", url);
+            emitter.complete();
+        });
+        emitter.onError(throwable -> {
+            log.error("SSE stream error for url: {}", url, throwable);
+        });
 
         CompletableFuture.runAsync(() -> {
+            SecurityContextHolder.setContext(securityContext);
             try {
                 VulnScanJob job = vulnScanService.scanUrlStream(
                     url.trim(),
@@ -156,12 +203,13 @@ public class VulnScanController extends BaseController {
                 emitter.send(SseEmitter.event().name("complete").data(job));
                 emitter.complete();
             } catch (Exception e) {
+                log.error("SSE scan failed for {}: {}", url, e.getMessage());
                 try {
                     emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
-                    emitter.completeWithError(e);
-                } catch (Exception ignored) {
-                    // client disconnected
-                }
+                } catch (Exception ignored) {}
+                emitter.complete();
+            } finally {
+                SecurityContextHolder.clearContext();
             }
         });
 
@@ -315,5 +363,28 @@ public class VulnScanController extends BaseController {
         if (name == null || name.isBlank() || value == null || value.isBlank()) return;
         if ("Host".equalsIgnoreCase(name) || "Content-Length".equalsIgnoreCase(name)) return;
         headers.put(name, value);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<CredentialState> parseCredentials(Map<String, Object> body) {
+        List<CredentialState> creds = new ArrayList<>();
+        Object credsObj = body.get("agentCredentials");
+        if (credsObj instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map) {
+                    Map<String, Object> m = (Map<String, Object>) item;
+                    creds.add(new CredentialState(
+                        String.valueOf(m.getOrDefault("credId", "")),
+                        String.valueOf(m.getOrDefault("role", "unknown")),
+                        String.valueOf(m.getOrDefault("username", "")),
+                        String.valueOf(m.getOrDefault("permissions", "")),
+                        !"false".equals(String.valueOf(m.get("sessionValid"))),
+                        String.valueOf(m.getOrDefault("cookie", "")),
+                        String.valueOf(m.getOrDefault("authorization", ""))
+                    ));
+                }
+            }
+        }
+        return creds;
     }
 }

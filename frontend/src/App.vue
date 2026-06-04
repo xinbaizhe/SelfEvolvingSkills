@@ -4,13 +4,15 @@ import { useRoute } from 'vue-router'
 import { check } from '@tauri-apps/plugin-updater'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AppSidebar from './components/layout/AppSidebar.vue'
+import SystemPet from './components/pet/SystemPet.vue'
 import TeamSidebar from './components/team/TeamSidebar.vue'
 import LoginDialog from './components/team/LoginDialog.vue'
+import { fetchSystemInfo } from './api/admin'
 import { useTeamStore } from './stores/useTeamStore'
 
 const route = useRoute()
 const sidebarCollapsed = ref(false)
-const appStartedAt = Date.now()
+const appStartedAt = ref(0) // Unix ms from backend, persists across page refreshes
 const runtime = ref('0s')
 let runtimeTimer: ReturnType<typeof setInterval> | null = null
 
@@ -52,12 +54,24 @@ async function checkUpdate() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   checkUpdate()
   const teamStore = useTeamStore()
   teamStore.tryRestoreSession()
+  // Get process start time from backend (persists across page refreshes)
+  try {
+    const res = await fetchSystemInfo()
+    const data = res.data as Record<string, unknown> | null
+    const startTime = data?.start_time as string | undefined
+    if (startTime) {
+      appStartedAt.value = Date.parse(startTime.replace(' ', 'T') + 'Z')
+      if (isNaN(appStartedAt.value)) appStartedAt.value = new Date(startTime).getTime()
+    }
+  } catch { /* fall back to page load time */ }
+  if (!appStartedAt.value) appStartedAt.value = Date.now()
+
   runtimeTimer = setInterval(() => {
-    const diff = Math.floor((Date.now() - appStartedAt) / 1000)
+    const diff = Math.floor((Date.now() - appStartedAt.value) / 1000)
     const h = Math.floor(diff / 3600)
     const m = Math.floor((diff % 3600) / 60)
     const s = diff % 60
@@ -126,6 +140,7 @@ onUnmounted(() => {
     </main>
 
     <LoginDialog ref="loginDialog" />
+    <SystemPet />
   </div>
 </template>
 

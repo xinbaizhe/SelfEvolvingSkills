@@ -22,4 +22,9 @@ public interface IVulnScanService {
     VulnScanJob scanUrlWithAgent(String targetUrl, Long userId, Long deptId,
                                   String modelType, Long modelId,
                                   List<CredentialState> agentCredentials);
+
+    VulnScanJob scanUrlWithAgentStream(String targetUrl, Long userId, Long deptId,
+                                        String modelType, Long modelId,
+                                        List<CredentialState> agentCredentials,
+                                        Consumer<String> progressCallback);
 }

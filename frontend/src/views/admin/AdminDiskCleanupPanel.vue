@@ -401,7 +401,7 @@ defineExpose({ startScan })
         :page-size="resultPageSize"
         :total="usage?.entry_total || 0"
         layout="prev, pager, next"
-        small
+        size="small"
         :disabled="detailLoading"
         @current-change="changeResultPage"
       />

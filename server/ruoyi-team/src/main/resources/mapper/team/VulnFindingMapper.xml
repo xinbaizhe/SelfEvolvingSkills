@@ -11,10 +11,11 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="location"    column="location"    />
         <result property="description" column="description" />
         <result property="suggestion"  column="suggestion"  />
+        <result property="confidence"  column="confidence"  />
     </resultMap>
 
     <select id="selectFindingsByJobId" parameterType="Long" resultMap="VulnFindingResult">
-        select id, severity, type, location, description, suggestion
+        select id, severity, type, location, description, suggestion, confidence
         from vuln_scan_findings
         where job_id = #{jobId}
         order by
@@ -30,17 +31,17 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <insert id="insertVulnFinding" parameterType="com.ruoyi.team.domain.VulnFinding" useGeneratedKeys="true" keyProperty="id">
         insert into vuln_scan_findings (
-            job_id, severity, type, location, description, suggestion
+            job_id, severity, type, location, description, suggestion, confidence
         ) values (
-            #{jobId}, #{severity}, #{type}, #{location}, #{description}, #{suggestion}
+            #{jobId}, #{severity}, #{type}, #{location}, #{description}, #{suggestion}, #{confidence}
         )
     </insert>
 
     <insert id="batchInsertVulnFindings" parameterType="list">
-        insert into vuln_scan_findings (job_id, severity, type, location, description, suggestion)
+        insert into vuln_scan_findings (job_id, severity, type, location, description, suggestion, confidence)
         values
         <foreach collection="list" item="item" separator=",">
-            (#{item.jobId}, #{item.severity}, #{item.type}, #{item.location}, #{item.description}, #{item.suggestion})
+            (#{item.jobId}, #{item.severity}, #{item.type}, #{item.location}, #{item.description}, #{item.suggestion}, #{item.confidence})
         </foreach>
     </insert>
 

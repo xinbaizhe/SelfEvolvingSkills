@@ -1,14 +1,12 @@
 package com.ruoyi.team.service.impl;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.HttpURLConnection;
-import java.net.URI;
 import java.net.Socket;
-import java.net.URL;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,10 +26,15 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -71,6 +74,17 @@ public class VulnScanServiceImpl implements IVulnScanService {
     private static final Pattern REDIRECT_PARAM = Pattern.compile("[?&](?:redirect|url|next|return|returnUrl|goto|target|redir|forward|callback|dest|destination)\\s*=", Pattern.CASE_INSENSITIVE);
     private static final Pattern MIXED_CONTENT = Pattern.compile("(?:src|href)\\s*=\\s*[\"']http://[^\"']+[\"']", Pattern.CASE_INSENSITIVE);
     private static final Pattern COMMENT_LEAK = Pattern.compile("<!--[\\s\\S]{0,500}?(?:todo|fixme|password|secret|token|api[_-]?key|debug)[\\s\\S]{0,500}?-->", Pattern.CASE_INSENSITIVE);
+
+    // Shared HttpClient with connection pooling — replaces HttpURLConnection for better throughput
+    private static final HttpClient SHARED_HTTP = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(10))
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .executor(Executors.newFixedThreadPool(Math.max(8, Runtime.getRuntime().availableProcessors() * 4)))
+        .build();
+
+    // Thread pool for parallel port scanning and injection checks
+    private static final ExecutorService SCAN_EXECUTOR = Executors.newFixedThreadPool(
+        Math.max(16, Runtime.getRuntime().availableProcessors() * 4));
 
     private static final List<String> BASE_SENSITIVE_PATHS = Arrays.asList(
         "/.env", "/.git/config", "/config.php.bak", "/backup.zip", "/backup.tar.gz",
@@ -122,6 +136,58 @@ public class VulnScanServiceImpl implements IVulnScanService {
         new JsonLoginBody("{\"name\":\"admin\",\"pwd\":\"admin\"}", "name", "pwd"),
         new JsonLoginBody("{\"account\":\"admin\",\"password\":\"admin\"}", "account", "password")
     );
+
+    // ── WAF detection patterns ──
+    private static final String[][] WAF_HEADER_SIGNATURES = {
+        {"Server", "cloudflare"}, {"CF-RAY", null}, {"__cf_bm", null}, {"__cfduid", null},
+        {"X-Sucuri-ID", null}, {"X-Sucuri-Cache", null},
+        {"X-Amzn-RequestId", null}, {"X-Amz-Cf-Id", null}, {"X-Amz-Cf-Pop", null},
+        {"Server", "AkamaiGHost"}, {"X-Akamai-Transformed", null},
+        {"Server", "BigIP"}, {"X-Cnection", "close"}, {"X-Waf-Status", null},
+        {"X-Protected-By", null}, {"X-CDN", "Imperva"}, {"X-Iinfo", null},
+        {"X-Firewall", null}, {"X-Proxy", null}, {"X-Security", null},
+        {"Server", "Barracuda"}, {"Server", "FortiWeb"}, {"Server", "Citrix Netscaler"},
+        {"Server", "Mod_Security"}, {"Server", "Varnish"}, {"X-Varnish", null},
+        {"Server", "WAF"}, {"Server", "waf"}, {"Server", "Wallarm"},
+    };
+
+    private static final String[] WAF_BLOCK_PATTERNS = {
+        "access denied", "request blocked", "challenge", "cloudflare",
+        "attention required", "sorry, you have been blocked", "security policy",
+        "your request has been blocked", "ddos protection", "under attack",
+        "checking your browser", "enable javascript", "captcha",
+        "incapsula incident", "sucuri website firewall", "mod_security",
+        "waf rule", "request forbidden", "not acceptable", "blacklisted",
+    };
+
+    private static final int WAF_THROTTLE_MS = 800;
+
+    // ── Technology fingerprinting patterns ──
+    private static final String[][] TECH_HEADER_SIGNATURES = {
+        {"Server", "nginx"}, {"Server", "Apache"}, {"Server", "IIS"}, {"Server", "Caddy"},
+        {"Server", "LiteSpeed"}, {"Server", "Tomcat"}, {"Server", "Gunicorn"},
+        {"X-Powered-By", "PHP"}, {"X-Powered-By", "ASP.NET"}, {"X-Powered-By", "Express"},
+        {"X-Powered-By", "Next.js"}, {"X-Powered-By", "Nuxt"}, {"X-Generator", "Drupal"},
+        {"X-Generator", "Joomla"}, {"X-Drupal-Cache", null}, {"X-Drupal-Dynamic-Cache", null},
+        {"X-Joomla-Request", null}, {"X-Wordpress-", null},
+    };
+
+    private static final String[][] TECH_HTML_PATTERNS = {
+        {"wp-content", "WordPress"}, {"wp-includes", "WordPress"}, {"wp-json", "WordPress"},
+        {"webpack", "Webpack"}, {"vite", "Vite"}, {"next", "Next.js"},
+        {"nuxt", "Nuxt.js"}, {"_nuxt", "Nuxt.js"}, {"__NEXT_DATA__", "Next.js"},
+        {"jquery", "jQuery"}, {"react", "React"}, {"vue", "Vue.js"}, {"angular", "Angular"},
+        {"bootstrap", "Bootstrap"}, {"tailwind", "Tailwind CSS"},
+        {"django", "Django"}, {"flask", "Flask"}, {"laravel", "Laravel"},
+        {"symfony", "Symfony"}, {"spring", "Spring Boot"},
+        {"asp.net", "ASP.NET"}, {"php", "PHP"}, {"node", "Node.js"},
+    };
+
+    private static final String[][] TECH_COOKIE_PATTERNS = {
+        {"JSESSIONID", "Java/Tomcat"}, {"PHPSESSID", "PHP"}, {"ASP.NET_SessionId", "ASP.NET"},
+        {"laravel_session", "Laravel"}, {"XSRF-TOKEN", "Laravel/Express"},
+        {"JSF", "JavaServer Faces"}, {"oauth2", "OAuth"},
+    };
 
     private static final List<Rule> CODE_RULES = Arrays.asList(
         new Rule("硬编码密钥", "CRITICAL", "发现疑似硬编码密钥或凭证", "立即迁移到环境变量或密钥管理服务，并轮换已泄露密钥",
@@ -204,12 +270,49 @@ public class VulnScanServiceImpl implements IVulnScanService {
     static class ScanProgress {
         final List<String> lines = new ArrayList<>();
         Consumer<String> sseSink;
+        private Long jobId;
+        private VulnScanJobMapper jobMapper;
+        private int currentStep = 0;
+
+        void setDbPersistence(Long jobId, VulnScanJobMapper jobMapper) {
+            this.jobId = jobId;
+            this.jobMapper = jobMapper;
+        }
 
         void emit(String msg) {
-            lines.add(msg);
+            String structured = "{\"step\":" + currentStep + ",\"msg\":\"" + escapeJson(msg) + "\"}";
+            lines.add(structured);
             if (sseSink != null) {
-                sseSink.accept(msg);
+                sseSink.accept(structured);
             }
+            if (jobId != null && jobMapper != null) {
+                try {
+                    VulnScanJob update = new VulnScanJob();
+                    update.setId(jobId);
+                    update.setProgressStep(extractStepLabel(msg));
+                    update.setProgressText(String.join("\n", lines));
+                    jobMapper.updateVulnScanJob(update);
+                } catch (Exception ignored) {
+                    // best-effort: don't fail the scan if DB update fails
+                }
+            }
+        }
+
+        void nextStep(int step, String label) {
+            this.currentStep = step;
+            emit(label);
+        }
+
+        private static String escapeJson(String s) {
+            return s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+        }
+
+        private static String extractStepLabel(String msg) {
+            int end = msg.indexOf('：');
+            if (end < 0) end = msg.indexOf(':');
+            if (end < 0) end = Math.min(msg.length(), 24);
+            return msg.substring(0, end).trim();
         }
 
         String join() {
@@ -228,6 +331,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
         jobMapper.insertVulnScanJob(job);
 
         ScanProgress progress = new ScanProgress();
+        progress.setDbPersistence(job.getId(), jobMapper);
         UrlScanOptions options = UrlScanOptions.of(requestHeaders, scanProfile, customPaths, maxDepth, maxPages, portScanEnabled, portSpec);
         VulnLlmVerifier llm = buildVerifier(deptId, userId, modelType, modelId);
         List<VulnFinding> findings = doUrlScan(targetUrl, options, progress, llm);
@@ -241,6 +345,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
             progress.emit("12. AI 复核与建议：选择资源与配置的模型配置，服务端完成规则扫描，客户端继续调用本地模型复核");
         }
         dedupeFindings(findings);
+        progress.emit("13. 保存结果：统计并保存扫描结果");
         job.setProgressText(progress.join());
         saveFindings(job.getId(), findings);
         updateJobCounts(job, findings);
@@ -258,28 +363,38 @@ public class VulnScanServiceImpl implements IVulnScanService {
         job.setProgressText("开始网址漏洞扫描");
         jobMapper.insertVulnScanJob(job);
 
-        ScanProgress progress = new ScanProgress();
-        progress.sseSink = progressCallback;
-        progressCallback.accept("开始网址漏洞扫描");
+        try {
+            ScanProgress progress = new ScanProgress();
+            progress.setDbPersistence(job.getId(), jobMapper);
+            progress.sseSink = progressCallback;
+            progressCallback.accept("开始网址漏洞扫描");
 
-        UrlScanOptions options = UrlScanOptions.of(requestHeaders, scanProfile, customPaths, maxDepth, maxPages, portScanEnabled, portSpec);
-        VulnLlmVerifier llm = buildVerifier(deptId, userId, modelType, modelId);
-        List<VulnFinding> findings = doUrlScan(targetUrl, options, progress, llm);
-        if ("department".equalsIgnoreCase(modelType)) {
-            if (llm == null) {
-                throw new IllegalStateException("部门模型配置有问题：未找到可用部门模型");
+            UrlScanOptions options = UrlScanOptions.of(requestHeaders, scanProfile, customPaths, maxDepth, maxPages, portScanEnabled, portSpec);
+            VulnLlmVerifier llm = buildVerifier(deptId, userId, modelType, modelId);
+            List<VulnFinding> findings = doUrlScan(targetUrl, options, progress, llm);
+            if ("department".equalsIgnoreCase(modelType)) {
+                if (llm == null) {
+                    throw new IllegalStateException("部门模型配置有问题：未找到可用部门模型");
+                }
+                progress.emit("12. AI 复核与建议：调用部门模型复核候选漏洞、降低误报并补充修复建议");
+                findings = verifyUrlFindings(findings, llm, targetUrl, progress);
+            } else {
+                progress.emit("12. AI 复核与建议：选择资源与配置的模型配置，服务端完成规则扫描，客户端继续调用本地模型复核");
             }
-            progress.emit("12. AI 复核与建议：调用部门模型复核候选漏洞、降低误报并补充修复建议");
-            findings = verifyUrlFindings(findings, llm, targetUrl, progress);
-        } else {
-            progress.emit("12. AI 复核与建议：选择资源与配置的模型配置，服务端完成规则扫描，客户端继续调用本地模型复核");
+            dedupeFindings(findings);
+            progress.emit("13. 保存结果：统计并保存扫描结果");
+            job.setProgressText(progress.join());
+            saveFindings(job.getId(), findings);
+            updateJobCounts(job, findings);
+            job.setFindings(findings);
+            return job;
+        } catch (Exception e) {
+            log.error("Stream scan failed for {}: {}", targetUrl, e.getMessage());
+            job.setStatus("failed");
+            job.setProgressText("扫描异常: " + e.getMessage());
+            jobMapper.updateVulnScanJob(job);
+            throw e;
         }
-        dedupeFindings(findings);
-        job.setProgressText(progress.join());
-        saveFindings(job.getId(), findings);
-        updateJobCounts(job, findings);
-        job.setFindings(findings);
-        return job;
     }
 
     @Override
@@ -295,6 +410,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
             throw new IllegalStateException("部门模型配置有问题：未找到可用部门模型");
         }
         ScanProgress progress = new ScanProgress();
+        progress.setDbPersistence(job.getId(), jobMapper);
         List<VulnFinding> findings = doCodeScan(dirPath, llm, progress);
         job.setProgressText(progress.join());
         saveFindings(job.getId(), findings);
@@ -410,31 +526,45 @@ public class VulnScanServiceImpl implements IVulnScanService {
 
     private List<VulnFinding> doUrlScan(String targetUrl, UrlScanOptions options, ScanProgress progress, VulnLlmVerifier llm) {
         List<VulnFinding> findings = new ArrayList<>();
+        progress.nextStep(1, "1. 校验目标：规范化 URL，限制在同源范围内扫描");
+        progress.nextStep(2, options.headers.isEmpty()
+            ? "2. 加载登录态：未提供 Cookie/Authorization，仅扫描公开页面"
+            : "2. 加载登录态：已携带 Cookie/Authorization/自定义 Header 扫描登录后页面");
+        progress.nextStep(3, "3. 扫描策略：" + options.profileLabel() + "，最大深度 " + options.maxDepth + "，最多页面 " + options.maxPages);
         try {
-            progress.emit("1. 校验目标：规范化 URL，限制在同源范围内扫描");
             URI baseUri = normalizeTargetUri(targetUrl);
-            progress.emit(options.headers.isEmpty()
-                ? "2. 加载登录态：未提供 Cookie/Authorization，仅扫描公开页面"
-                : "2. 加载登录态：已携带 Cookie/Authorization/自定义 Header 扫描登录后页面");
-            progress.emit("3. 扫描策略：" + options.profileLabel() + "，最大深度 " + options.maxDepth + "，最多页面 " + options.maxPages);
-            runPortScanIfNeeded(baseUri, options, findings, progress);
-            checkTlsSecurity(baseUri, findings, progress);
+            progress.nextStep(4, "4. 爬取入口：开始爬取同源页面，收集链接、表单和可测试入口");
             crawlSameOrigin(baseUri, options, findings, progress);
-            progress.emit("4. SQL 注入检测：已完成 URL 参数、表单输入点的注入测试（含布尔盲注、时间盲注、联合查询、堆叠查询等）");
-            progress.emit("5. XSS/CSRF/SSTI 检测：已完成反射型 XSS、CSRF 表单、SSTI 模板注入（Jinja2/Freemarker/Velocity）检测");
-            progress.emit("6. SSRF/NoSQL/LFI 检测：已完成服务端请求伪造、NoSQL 注入（MongoDB/Redis）、文件包含与目录穿越检测");
-            progress.emit("7. 安全头/CORS/目录列举：已完成 HTTP 安全头、跨域配置、敏感目录暴露检查");
-            checkSensitivePaths(baseUri, options, findings, progress);
-            progress.emit("8. 敏感路径/TLS/端口：已完成敏感路径探测、TLS 证书校验、端口扫描与服务识别");
-            runSystemChecks(baseUri, options, findings, progress);
-            progress.emit("9. 系统漏洞检测：已完成 HTTP 方法探测、CRLF/Host 头注入、默认凭据爆破、源码泄露扫描");
-            progress.emit("10. 误报控制：401/403 或业务 code=401 视为认证保护生效，不计入漏洞");
+            progress.nextStep(5, "5. 注入检测：SQL 注入/XSS/CSRF/SSRF/NoSQL/SSTI/LFI 全部注入类型已完成");
+            // Launch LLM discovery in parallel with security checks (steps 6-9)
+            CompletableFuture<Void> llmDiscoveryFuture = null;
+            List<VulnFinding> aiFindings = Collections.synchronizedList(new ArrayList<>());
             if (llm != null) {
-                progress.emit("11. AI 智能发现：调用大模型分析原始响应，发现规则扫描遗漏的漏洞");
-                runLlmDiscovery(baseUri, options, llm, findings, progress);
+                progress.emit("11. AI 智能发现：启动6角色并行分析（与安全检查并行进行）");
+                llmDiscoveryFuture = CompletableFuture.runAsync(
+                    () -> runLlmDiscovery(baseUri, options, llm, aiFindings, progress), SCAN_EXECUTOR);
+            }
+            progress.nextStep(6, "6. 端口扫描：开始扫描目标端口与服务识别");
+            runPortScanIfNeeded(baseUri, options, findings, progress);
+            progress.nextStep(7, "7. TLS 证书检查：开始检查 HTTPS 证书、TLS 协议版本等传输层安全");
+            checkTlsSecurity(baseUri, findings, progress);
+            progress.nextStep(8, "8. 敏感路径检测：探测常见敏感路径（配置文件、Swagger、Actuator 等）");
+            checkSensitivePaths(baseUri, options, findings, progress);
+            progress.nextStep(9, "9. 系统漏洞检测：HTTP 方法探测/CRLF/Host 头注入/默认凭据爆破/源码泄露扫描");
+            runSystemChecks(baseUri, options, findings, progress);
+            progress.nextStep(10, "10. 误报控制：401/403 视为认证保护生效，不计入漏洞");
+            if (llmDiscoveryFuture != null) {
+                try {
+                    llmDiscoveryFuture.get(60, TimeUnit.SECONDS);
+                    for (VulnFinding f : aiFindings) { findings.add(f); }
+                } catch (Exception e) {
+                    progress.emit("11. AI 智能发现：超时，跳过 AI 发现阶段");
+                }
+            } else {
+                progress.emit("11. AI 智能发现：未配置部门模型，跳过 AI 智能发现");
             }
         } catch (Exception e) {
-            findings.add(new VulnFinding(null, "MEDIUM", "连接错误", targetUrl,
+            findings.add(vf(null, "MEDIUM", "连接错误", targetUrl,
                 "无法连接到目标 URL: " + e.getMessage(), "确认 URL 是否正确、网络是否可达、是否需要登录态"));
             progress.emit("扫描失败：无法访问目标 URL，原因：" + e.getMessage());
         }
@@ -458,18 +588,37 @@ public class VulnScanServiceImpl implements IVulnScanService {
             }
         }
         boolean checkedGlobalHeaders = false;
+        int wafThrottleMs = 0;
         while (!queue.isEmpty() && visited.size() < options.maxPages) {
+            if (wafThrottleMs > 0) {
+                try { Thread.sleep(wafThrottleMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            }
             CrawlTarget current = queue.poll();
             URI uri = stripFragment(current.uri.normalize());
             if (!isSameOrigin(baseUri, uri) || !visited.add(uri.toString())) continue;
             PageFetch page = fetchPage(uri, options);
             progress.emit("爬取页面：" + uri + " -> HTTP " + page.status);
             if (page.error != null) {
-                findings.add(new VulnFinding(null, "LOW", "页面访问失败", uri.toString(),
+                findings.add(vf(null, "LOW", "页面访问失败", uri.toString(),
                     "爬取失败: " + page.error, "确认该路径是否需要登录、是否存在访问限制或服务异常"));
                 continue;
             }
             if (!checkedGlobalHeaders) {
+                DetectedWaf waf = detectWaf(page);
+                if (waf.isBehindWaf()) {
+                    wafThrottleMs = waf.throttleMs();
+                    progress.emit("WAF 检测: " + waf.name() + " (请求间隔 " + wafThrottleMs + "ms)");
+                }
+                List<DetectedTech> techs = fingerprintTech(page, baseUri);
+                if (!techs.isEmpty()) {
+                    StringBuilder sb = new StringBuilder("技术栈识别: ");
+                    for (int i = 0; i < techs.size(); i++) {
+                        DetectedTech t = techs.get(i);
+                        if (i > 0) sb.append(", ");
+                        sb.append(t.name()).append(" [").append(t.category()).append("]");
+                    }
+                    progress.emit(sb.toString());
+                }
                 checkSecurityHeaders(page.headers, uri.toString(), findings);
                 checkCorsHeaders(page.headers, uri.toString(), findings);
                 checkedGlobalHeaders = true;
@@ -485,16 +634,35 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 }
                 continue;
             }
-            runSqlInjectionChecks(uri, page, options, findings, progress);
-            runXssProbeChecks(uri, page, options, findings, progress);
-            runSsrfChecks(uri, page, options, findings, progress);
-            runNoSqlInjectionChecks(uri, page, options, findings, progress);
-            runSstiChecks(uri, page, options, findings, progress);
-            runLfiChecks(uri, page, options, findings, progress);
-            checkDirectoryListing(page, uri.toString(), findings, progress);
-            scanHtmlContent(page.body, uri.toString(), findings);
-            scanForms(page.body, uri, findings, progress);
-            scanPassiveHtmlSignals(page.body, uri.toString(), findings);
+            // Parallel injection checks — all 6 injection types + 4 passive checks run concurrently
+            List<VulnFinding> injectionFindings = Collections.synchronizedList(new ArrayList<>());
+            CompletableFuture<Void> sqli = CompletableFuture.runAsync(
+                () -> runSqlInjectionChecks(uri, page, options, injectionFindings, progress), SCAN_EXECUTOR);
+            CompletableFuture<Void> xss = CompletableFuture.runAsync(
+                () -> runXssProbeChecks(uri, page, options, injectionFindings, progress), SCAN_EXECUTOR);
+            CompletableFuture<Void> ssrf = CompletableFuture.runAsync(
+                () -> runSsrfChecks(uri, page, options, injectionFindings, progress), SCAN_EXECUTOR);
+            CompletableFuture<Void> nosql = CompletableFuture.runAsync(
+                () -> runNoSqlInjectionChecks(uri, page, options, injectionFindings, progress), SCAN_EXECUTOR);
+            CompletableFuture<Void> ssti = CompletableFuture.runAsync(
+                () -> runSstiChecks(uri, page, options, injectionFindings, progress), SCAN_EXECUTOR);
+            CompletableFuture<Void> lfi = CompletableFuture.runAsync(
+                () -> runLfiChecks(uri, page, options, injectionFindings, progress), SCAN_EXECUTOR);
+            CompletableFuture<Void> dir = CompletableFuture.runAsync(
+                () -> checkDirectoryListing(page, uri.toString(), injectionFindings, progress), SCAN_EXECUTOR);
+            CompletableFuture<Void> html = CompletableFuture.runAsync(
+                () -> scanHtmlContent(page.body, uri.toString(), injectionFindings), SCAN_EXECUTOR);
+            CompletableFuture<Void> forms = CompletableFuture.runAsync(
+                () -> scanForms(page.body, uri, injectionFindings, progress), SCAN_EXECUTOR);
+            CompletableFuture<Void> passive = CompletableFuture.runAsync(
+                () -> scanPassiveHtmlSignals(page.body, uri.toString(), injectionFindings), SCAN_EXECUTOR);
+            try {
+                CompletableFuture.allOf(sqli, xss, ssrf, nosql, ssti, lfi, dir, html, forms, passive)
+                    .get(25, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                progress.emit("注入检测：部分检查超时，已收集已完成的结果");
+            }
+            findings.addAll(injectionFindings);
             if (current.depth >= options.maxDepth) continue;
             for (URI link : extractLinks(page.body, uri)) {
                 URI clean = stripFragment(link.normalize());
@@ -680,10 +848,12 @@ public class VulnScanServiceImpl implements IVulnScanService {
                     progress.emit("SQL 注入：URL 参数已在 " + stopped + " 个参数上确认漏洞，停止进一步测试");
                     break;
                 }
+                progress.emit("SQL 注入：正在测试参数 " + name);
                 SqlInjectionResult r = testSqlInjection(pageUri, name, null, options);
                 tested += r.tested;
                 if (r.hit) {
-                    findings.add(new VulnFinding(null, "CRITICAL", "SQL注入", pageUri.toString(),
+                    progress.emit("SQL 注入：参数 " + name + " Payload [" + r.payload + "] -> 触发 SQL 错误，判定 CRITICAL");
+                    findings.add(vf(null, "CRITICAL", "SQL注入", pageUri.toString(),
                         "URL 参数 " + name + " 对 Payload [" + r.payload + "] 返回 SQL 错误指纹",
                         "使用参数化查询或 ORM 参数绑定，关闭详细 SQL 错误回显"));
                     stopped++;
@@ -705,10 +875,12 @@ public class VulnScanServiceImpl implements IVulnScanService {
                     progress.emit("SQL 注入：表单参数已在 " + stopped + " 个参数上确认漏洞，停止进一步测试");
                     break;
                 }
+                progress.emit("SQL 注入：正在测试表单参数 " + fp.name + " (POST)");
                 SqlInjectionResult r = testFormParamSqlInjection(pageUri, fp, options);
                 tested += r.tested;
                 if (r.hit) {
-                    findings.add(new VulnFinding(null, "CRITICAL", "SQL注入", pageUri.toString(),
+                    progress.emit("SQL 注入：表单参数 " + fp.name + " Payload [" + r.payload + "] -> 触发 SQL 错误，判定 CRITICAL");
+                    findings.add(vf(null, "CRITICAL", "SQL注入", pageUri.toString(),
                         "表单参数 " + fp.name + " (method=" + fp.method + ", action=" + fp.action + ") 对 Payload ["
                             + r.payload + "] 返回 SQL 错误指纹",
                         "使用参数化查询或 ORM 参数绑定，关闭详细 SQL 错误回显"));
@@ -813,7 +985,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 hitPayload = truePayloads[i];
             }
             if (hitPayload != null) {
-                findings.add(new VulnFinding(null, "CRITICAL", "SQL注入(布尔盲注)", pageUri.toString(),
+                findings.add(vf(null, "CRITICAL", "SQL注入(布尔盲注)", pageUri.toString(),
                     "参数 " + targetParam + " 对布尔条件 Payload [" + hitPayload + "] 返回差异响应"
                         + "（true=" + trueLen + " vs false=" + falseLen + "，diff=" + diff + "）",
                     "使用参数化查询或 ORM 参数绑定"));
@@ -932,7 +1104,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 String statusLabel = result.status >= 200 && result.status < 400 ? "GET:" + result.status : "HTTP " + result.status;
                 if (hit) {
                     progress.emit("SSRF 检测：参数 " + name + " Payload [" + payload + "] -> " + statusLabel + "，命中指纹 [" + evidence + "]");
-                    findings.add(new VulnFinding(null, "CRITICAL", "SSRF", probe.toString(),
+                    findings.add(vf(null, "CRITICAL", "SSRF", probe.toString(),
                         "参数 " + name + " 可注入内网地址，响应命中云元数据/内网服务指纹: " + evidence,
                         "对 URL 参数做严格白名单校验，禁止内网 IP、localhost、file:// 等协议"));
                     break;
@@ -989,8 +1161,10 @@ public class VulnScanServiceImpl implements IVulnScanService {
         // 1) URL query parameter injection
         Map<String, String> params = queryParams(pageUri);
         if (!params.isEmpty()) {
+            progress.emit("NoSQL 注入：页面 " + pageUri + " URL 含有 " + params.size() + " 个查询参数，开始注入测试");
             int tested = 0;
             for (String name : params.keySet()) {
+                progress.emit("NoSQL 注入：正在测试参数 " + name);
                 for (String payload : NOSQL_PAYLOADS) {
                     tested++;
                     URI probe = replaceQueryParam(pageUri, name, payload);
@@ -998,21 +1172,25 @@ public class VulnScanServiceImpl implements IVulnScanService {
                     PageFetch result = fetchPage(probe, options);
                     if (result.error != null) continue;
                     if (result.body != null && hasNoSqlError(result.body)) {
-                        findings.add(new VulnFinding(null, "CRITICAL", "NoSQL注入", probe.toString(),
+                        findings.add(vf(null, "CRITICAL", "NoSQL注入", probe.toString(),
                             "URL 参数 " + name + " 对 Payload [" + truncate(payload, 50) + "] 返回 NoSQL 错误指纹",
                             "使用参数化查询，对用户输入做严格类型校验和过滤"));
-                        progress.emit("NoSQL 注入：参数 " + name + " Payload [" + truncate(payload, 40) + "] -> HTTP " + result.status + "，命中 NoSQL 指纹");
+                        progress.emit("NoSQL 注入：参数 " + name + " Payload [" + truncate(payload, 40) + "] -> 触发 NoSQL 错误，判定 CRITICAL");
                         break;
                     }
                 }
             }
             progress.emit("NoSQL 注入：URL 参数共测试 " + tested + " 次");
+        } else {
+            progress.emit("NoSQL 注入：页面 " + pageUri + " 未发现 URL 查询参数");
         }
         // 2) Form parameter injection
         List<FormParam> formParams = extractFormParams(baseline.body, pageUri);
         if (!formParams.isEmpty()) {
+            progress.emit("NoSQL 注入：页面 " + pageUri + " 表单含有 " + formParams.size() + " 个输入参数，开始注入测试");
             int tested = 0;
             for (FormParam fp : formParams) {
+                progress.emit("NoSQL 注入：正在测试表单参数 " + fp.name + " (" + fp.method + ")");
                 for (String payload : NOSQL_PAYLOADS) {
                     tested++;
                     PageFetch result;
@@ -1025,14 +1203,17 @@ public class VulnScanServiceImpl implements IVulnScanService {
                     }
                     if (result.error != null) continue;
                     if (result.body != null && hasNoSqlError(result.body)) {
-                        findings.add(new VulnFinding(null, "CRITICAL", "NoSQL注入", fp.action.toString(),
+                        findings.add(vf(null, "CRITICAL", "NoSQL注入", fp.action.toString(),
                             "表单参数 " + fp.name + " (method=" + fp.method + ") 对 Payload [" + truncate(payload, 50) + "] 返回 NoSQL 错误指纹",
                             "使用参数化查询，对用户输入做严格类型校验"));
+                        progress.emit("NoSQL 注入：表单参数 " + fp.name + " Payload [" + truncate(payload, 40) + "] -> 触发 NoSQL 错误，判定 CRITICAL");
                         break;
                     }
                 }
             }
             progress.emit("NoSQL 注入：表单参数共测试 " + tested + " 次");
+        } else {
+            progress.emit("NoSQL 注入：页面 " + pageUri + " 未发现表单输入参数");
         }
     }
 
@@ -1059,11 +1240,11 @@ public class VulnScanServiceImpl implements IVulnScanService {
         // Wildcard origin
         if ("*".equals(acao.trim())) {
             if (hasCredentials) {
-                findings.add(new VulnFinding(null, "CRITICAL", "CORS配置错误", url,
+                findings.add(vf(null, "CRITICAL", "CORS配置错误", url,
                     "Access-Control-Allow-Origin 设为 * 且同时启用 credentials，浏览器会拒绝但仍为严重配置错误",
                     "将 Allow-Origin 限定为白名单域名，避免与 credentials 同时使用通配符"));
             } else {
-                findings.add(new VulnFinding(null, "MEDIUM", "CORS配置宽松", url,
+                findings.add(vf(null, "MEDIUM", "CORS配置宽松", url,
                     "Access-Control-Allow-Origin 设为 *，允许任意来源访问 API 响应",
                     "如 API 涉及敏感数据，应将 Allow-Origin 限定为具体受信域名"));
             }
@@ -1071,7 +1252,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
 
         // null origin allowed (sandboxed iframes, local files)
         if ("null".equalsIgnoreCase(acao.trim())) {
-            findings.add(new VulnFinding(null, "HIGH", "CORS允许null来源", url,
+            findings.add(vf(null, "HIGH", "CORS允许null来源", url,
                 "Access-Control-Allow-Origin 设为 null，允许 sandbox 环境和本地文件访问",
                 "移除 null 来源支持，除非业务确需支持"));
         }
@@ -1081,7 +1262,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
         // looks dynamic — non-asterisk, non-null, and site-specific patterns may indicate reflection
         if (!"*".equals(acao.trim()) && !"null".equalsIgnoreCase(acao.trim())
             && acaoLower.contains("{") && acaoLower.contains("}")) {
-            findings.add(new VulnFinding(null, "LOW", "CORS动态模板", url,
+            findings.add(vf(null, "LOW", "CORS动态模板", url,
                 "Access-Control-Allow-Origin 值包含模板变量: " + acao,
                 "确认服务端是否反射任意 Origin 头，避免被恶意网站利用"));
         }
@@ -1122,25 +1303,22 @@ public class VulnScanServiceImpl implements IVulnScanService {
         }
         int tested = 0;
         for (String name : params.keySet()) {
+            progress.emit("SSTI 检测：正在测试参数 " + name);
             for (String payload : SSTI_PAYLOADS) {
                 tested++;
                 URI probe = replaceQueryParam(pageUri, name, payload);
                 if (probe == null) continue;
                 PageFetch result = fetchPage(probe, options);
                 if (result.error != null) continue;
-                // SSTI success patterns: math evaluation (49), leaked config/internals
                 boolean hit = false;
                 String evidence = null;
                 if (result.body != null) {
-                    // Math payloads: {{7*7}} should produce 49 in output
                     if (payload.contains("7*7") && result.body.contains("49")) {
                         hit = true;
                         evidence = "数学表达式被求值(49)";
                     }
-                    // Config/internal leaks
                     if ((payload.contains("{{config}}") || payload.contains("{{_self}}") || payload.contains("__class__"))
                         && !result.body.contains(payload)) {
-                        // Payload disappeared (likely executed) but didn't produce literal match
                         String lower = result.body.toLowerCase(Locale.ROOT);
                         if (lower.contains("config") || lower.contains("secret") || lower.contains("debug")
                             || lower.contains("werkzeug") || lower.contains("flask")) {
@@ -1150,8 +1328,8 @@ public class VulnScanServiceImpl implements IVulnScanService {
                     }
                 }
                 if (hit) {
-                    progress.emit("SSTI 检测：参数 " + name + " Payload [" + payload + "] -> " + evidence);
-                    findings.add(new VulnFinding(null, "CRITICAL", "SSTI模板注入", probe.toString(),
+                    progress.emit("SSTI 检测：参数 " + name + " Payload [" + payload + "] -> " + evidence + "，判定 CRITICAL");
+                    findings.add(vf(null, "CRITICAL", "SSTI模板注入", probe.toString(),
                         "参数 " + name + " 对模板注入 Payload [" + payload + "] 产生异常响应: " + evidence,
                         "避免将用户输入直接传入模板渲染函数，使用沙箱或禁用危险标签"));
                     break;
@@ -1208,6 +1386,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
         }
         int tested = 0;
         for (String name : params.keySet()) {
+            progress.emit("LFI 检测：正在测试参数 " + name);
             for (String payload : LFI_PAYLOADS) {
                 tested++;
                 URI probe = replaceQueryParam(pageUri, name, payload);
@@ -1216,7 +1395,6 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 if (result.error != null) continue;
                 boolean hit = false;
                 String evidence = null;
-                // Only check successful responses (200)
                 if (result.status >= 200 && result.status < 300 && result.body != null) {
                     for (String pattern : LFI_SUCCESS_PATTERNS) {
                         if (result.body.contains(pattern)) {
@@ -1225,7 +1403,6 @@ public class VulnScanServiceImpl implements IVulnScanService {
                             break;
                         }
                     }
-                    // Also detect PHP wrapper base64 decode success
                     if (payload.contains("base64-encode") && result.body.length() > 100
                         && !result.body.contains("failed to open stream")
                         && !result.body.contains("Warning:")) {
@@ -1234,8 +1411,8 @@ public class VulnScanServiceImpl implements IVulnScanService {
                     }
                 }
                 if (hit) {
-                    progress.emit("LFI 检测：参数 " + name + " Payload [" + payload + "] -> 命中指纹 [" + evidence + "]");
-                    findings.add(new VulnFinding(null, "CRITICAL", "文件包含(LFI)", probe.toString(),
+                    progress.emit("LFI 检测：参数 " + name + " Payload [" + payload + "] -> 命中指纹 [" + evidence + "]，判定 CRITICAL");
+                    findings.add(vf(null, "CRITICAL", "文件包含(LFI)", probe.toString(),
                         "参数 " + name + " 的文件包含 Payload 响应包含敏感文件内容: " + evidence,
                         "白名单限制文件访问路径，规范化输入并拒绝路径遍历字符"));
                     break;
@@ -1263,7 +1440,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
         for (String pattern : DIR_LISTING_PATTERNS) {
             if (lower.contains(pattern.toLowerCase(Locale.ROOT))) {
                 progress.emit("目录遍历：页面 " + url + " 命中目录列表指纹 [" + pattern + "]");
-                findings.add(new VulnFinding(null, "MEDIUM", "目录列表暴露", url,
+                findings.add(vf(null, "MEDIUM", "目录列表暴露", url,
                     "目录开启了文件列表功能，可能泄露源码和敏感文件",
                     "在 Web 服务器配置中关闭目录索引（如 nginx 'autoindex off'，Apache '-Indexes'）"));
                 return;
@@ -1276,7 +1453,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
     private void checkTlsSecurity(URI baseUri, List<VulnFinding> findings, ScanProgress progress) {
         if (!"https".equalsIgnoreCase(baseUri.getScheme())) {
             progress.emit("TLS 检查：目标使用 HTTP，未启用 HTTPS 加密");
-            findings.add(new VulnFinding(null, "HIGH", "未启用HTTPS", baseUri.toString(),
+            findings.add(vf(null, "HIGH", "未启用HTTPS", baseUri.toString(),
                 "目标使用明文 HTTP 协议，数据在传输中可能被窃听或篡改",
                 "强制启用 HTTPS，配置 HTTP 到 HTTPS 的 301 重定向并启用 HSTS"));
             return;
@@ -1300,7 +1477,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
 
             // Check TLS version
             if (protocol == null || protocol.contains("TLSv1") || protocol.contains("TLSv1.0") || protocol.contains("TLSv1.1")) {
-                findings.add(new VulnFinding(null, "MEDIUM", "弱TLS版本", baseUri.toString(),
+                findings.add(vf(null, "MEDIUM", "弱TLS版本", baseUri.toString(),
                     "服务器支持的 TLS 版本: " + protocol + "，存在已知安全缺陷",
                     "禁用 TLS 1.0/1.1，仅启用 TLS 1.2+"));
             }
@@ -1310,11 +1487,11 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 java.security.cert.X509Certificate cert = (java.security.cert.X509Certificate) certs[0];
                 long daysLeft = (cert.getNotAfter().getTime() - System.currentTimeMillis()) / (1000L * 60 * 60 * 24);
                 if (daysLeft < 0) {
-                    findings.add(new VulnFinding(null, "HIGH", "SSL证书已过期", baseUri.toString(),
+                    findings.add(vf(null, "HIGH", "SSL证书已过期", baseUri.toString(),
                         "证书有效期截止于 " + cert.getNotAfter() + "，已过期 " + Math.abs(daysLeft) + " 天",
                         "立即更新 SSL 证书"));
                 } else if (daysLeft < 30) {
-                    findings.add(new VulnFinding(null, "MEDIUM", "SSL证书即将过期", baseUri.toString(),
+                    findings.add(vf(null, "MEDIUM", "SSL证书即将过期", baseUri.toString(),
                         "证书有效期截止于 " + cert.getNotAfter() + "，剩余 " + daysLeft + " 天",
                         "尽快续期 SSL 证书"));
                 }
@@ -1323,7 +1500,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 String issuer = cert.getIssuerDN().getName();
                 String subject = cert.getSubjectDN().getName();
                 if (issuer.equals(subject)) {
-                    findings.add(new VulnFinding(null, "LOW", "自签名SSL证书", baseUri.toString(),
+                    findings.add(vf(null, "LOW", "自签名SSL证书", baseUri.toString(),
                         "证书为自签名 (Issuer=Subject)，客户端会收到安全警告",
                         "使用 Let's Encrypt 或商业 CA 签发的证书"));
                 }
@@ -1334,7 +1511,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
             String msg = e.getMessage();
             if (msg != null && (msg.contains("unable to find valid certification path")
                 || msg.contains("self-signed") || msg.contains("PKIX"))) {
-                findings.add(new VulnFinding(null, "MEDIUM", "SSL证书不可信", baseUri.toString(),
+                findings.add(vf(null, "MEDIUM", "SSL证书不可信", baseUri.toString(),
                     "证书验证失败: " + msg, "使用受信任 CA 签发的证书"));
                 progress.emit("TLS 检查：证书不可信 — " + msg);
             } else {
@@ -1387,40 +1564,25 @@ public class VulnScanServiceImpl implements IVulnScanService {
     private PageFetch postFormWithPayload(URI actionUri, Map<String, String> allInputs,
                                            String targetParam, String payload, UrlScanOptions options) {
         try {
-            URL url = actionUri.toURL();
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(12000);
-            conn.setInstanceFollowRedirects(false);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 SecurityScanner/3.0");
-            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-            for (Map.Entry<String, String> header : options.headers.entrySet()) {
-                conn.setRequestProperty(header.getKey(), header.getValue());
-            }
-            // Build form body with payload injected into target parameter
             StringBuilder sb = new StringBuilder();
             for (Map.Entry<String, String> entry : allInputs.entrySet()) {
                 if (sb.length() > 0) sb.append('&');
                 String val = entry.getKey().equals(targetParam) ? payload : entry.getValue();
                 sb.append(urlEncode(entry.getKey())).append('=').append(urlEncode(val));
             }
-            byte[] body = sb.toString().getBytes(StandardCharsets.UTF_8);
-            conn.setDoOutput(true);
-            conn.getOutputStream().write(body);
-            conn.getOutputStream().flush();
-            conn.getOutputStream().close();
-            int status = conn.getResponseCode();
-            Map<String, List<String>> headers = conn.getHeaderFields();
-            String contentType = conn.getContentType();
-            String respBody = "";
-            if (isTextContent(contentType)) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    status >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8))) {
-                    respBody = readLimited(reader, MAX_BODY_CHARS);
-                }
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(actionUri)
+                .POST(HttpRequest.BodyPublishers.ofString(sb.toString()))
+                .timeout(Duration.ofSeconds(12))
+                .header("User-Agent", "Mozilla/5.0 SecurityScanner/3.0")
+                .header("Content-Type", "application/x-www-form-urlencoded");
+            for (Map.Entry<String, String> header : options.headers.entrySet()) {
+                reqBuilder.header(header.getKey(), header.getValue());
             }
-            conn.disconnect();
+            HttpResponse<String> resp = SHARED_HTTP.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            int status = resp.statusCode();
+            Map<String, List<String>> headers = resp.headers().map();
+            String contentType = resp.headers().firstValue("Content-Type").orElse(null);
+            String respBody = isTextContent(contentType) ? limitString(resp.body(), MAX_BODY_CHARS) : "";
             return new PageFetch(status, headers, contentType, respBody, null);
         } catch (Exception e) {
             return new PageFetch(0, Collections.emptyMap(), "", "", e.getMessage());
@@ -1501,7 +1663,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 boolean reflected = result.body != null && result.body.contains(payload);
                 progress.emit("XSS 检测：参数 " + name + " Payload [" + truncate(payload, 40) + "] -> HTTP " + result.status + "，反射=" + (reflected ? "是" : "否"));
                 if (reflected) {
-                    findings.add(new VulnFinding(null, "HIGH", "XSS", probe.toString(),
+                    findings.add(vf(null, "HIGH", "XSS", probe.toString(),
                         "参数 " + name + " 的 XSS payload 被页面原样反射: " + payload,
                         "对输出进行 HTML 编码，按上下文过滤危险字符，并启用 CSP"));
                     break; // Stop testing more payloads on this param once confirmed
@@ -1525,7 +1687,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
             }
             if (page.status >= 200 && page.status < 300 && looksExposedSensitivePath(path, page)) {
                 progress.emit("敏感路径：" + path + " -> HTTP " + page.status + "，内容匹配暴露指纹，已记录漏洞");
-                findings.add(new VulnFinding(null, severityForSensitivePath(path), "敏感路径暴露", probe.toString(),
+                findings.add(vf(null, severityForSensitivePath(path), "敏感路径暴露", probe.toString(),
                     "常见敏感路径可被直接访问: " + path, "关闭公网访问，删除备份/配置文件，或增加认证和 IP 白名单"));
             } else {
                 progress.emit("敏感路径：" + path + " -> HTTP " + page.status + "，未匹配暴露指纹");
@@ -1548,23 +1710,35 @@ public class VulnScanServiceImpl implements IVulnScanService {
         }
         List<Integer> ports = parsePorts(options.portSpec, options.profile);
         progress.emit("端口扫描：目标 " + host + "，计划检测 " + ports.size() + " 个端口：" + summarizePorts(ports));
-        int openCount = 0;
+
+        // Parallel port scanning — each port checked concurrently via thread pool
+        AtomicInteger openCount = new AtomicInteger(0);
+        ConcurrentLinkedQueue<VulnFinding> portFindings = new ConcurrentLinkedQueue<>();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (Integer port : ports) {
-            boolean open = isTcpPortOpen(host, port);
-            String service = describePort(port);
-            progress.emit("端口扫描：TCP " + port + " -> " + (open ? "开放" : "关闭/超时") + "，识别用途：" + service);
-            if (open) {
-                openCount++;
-                if (isRiskyPublicPort(port)) {
-                    String scope = isPublicIpv4(host) ? "公网" : "内网";
-                    findings.add(new VulnFinding(null, severityForOpenPort(port), "服务器端口暴露",
-                        host + ":" + port,
-                        "服务器 " + scope + " 开放端口 " + port + "，用途识别为 " + service,
-                        "确认该端口是否必须开放；非必要服务应关闭监听，改为 VPN/堡垒机/IP 白名单访问，并开启认证和审计"));
+            futures.add(CompletableFuture.runAsync(() -> {
+                boolean open = isTcpPortOpen(host, port);
+                String service = describePort(port);
+                if (open) {
+                    openCount.incrementAndGet();
+                    if (isRiskyPublicPort(port)) {
+                        String scope = isPublicIpv4(host) ? "公网" : "内网";
+                        portFindings.add(vf(null, severityForOpenPort(port), "服务器端口暴露",
+                            host + ":" + port,
+                            "服务器 " + scope + " 开放端口 " + port + "，用途识别为 " + service,
+                            "确认该端口是否必须开放；非必要服务应关闭监听，改为 VPN/堡垒机/IP 白名单访问，并开启认证和审计"));
+                    }
                 }
-            }
+                progress.emit("端口扫描：TCP " + port + " -> " + (open ? "开放" : "关闭/超时") + "，识别用途：" + service);
+            }, SCAN_EXECUTOR));
         }
-        progress.emit("端口扫描：完成，发现开放端口 " + openCount + " 个");
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get(30, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            progress.emit("端口扫描：部分端口扫描超时，已收集已完成的结果");
+        }
+        findings.addAll(portFindings);
+        progress.emit("端口扫描：完成，发现开放端口 " + openCount.get() + " 个");
     }
 
     private static boolean isTcpPortOpen(String host, int port) {
@@ -1695,21 +1869,18 @@ public class VulnScanServiceImpl implements IVulnScanService {
         String[] dangerousMethods = {"TRACE", "PUT", "DELETE", "PATCH", "OPTIONS"};
         for (String method : dangerousMethods) {
             try {
-                URL url = baseUri.resolve("/").toURL();
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod(method);
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                conn.setInstanceFollowRedirects(false);
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(baseUri.resolve("/"))
+                    .method(method, HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofSeconds(8));
                 for (Map.Entry<String, String> h : options.headers.entrySet()) {
-                    conn.setRequestProperty(h.getKey(), h.getValue());
+                    reqBuilder.header(h.getKey(), h.getValue());
                 }
-                int status = conn.getResponseCode();
-                conn.disconnect();
+                HttpResponse<Void> resp = SHARED_HTTP.send(reqBuilder.build(), HttpResponse.BodyHandlers.discarding());
+                int status = resp.statusCode();
                 if (status < 400) {
                     String severity = "TRACE".equals(method) ? "HIGH" : "MEDIUM";
                     String desc = "服务器允许 " + method + " 方法 (HTTP " + status + ")，可能被利用进行跨站追踪攻击或任意文件操作";
-                    findings.add(new VulnFinding(null, severity, "HTTP方法配置不当", baseUri.toString(),
+                    findings.add(vf(null, severity, "HTTP方法配置不当", baseUri.toString(),
                         desc,
                         "在 Web 服务器配置中禁用危险 HTTP 方法（TRACE/PUT/DELETE），仅保留 GET/POST/HEAD"));
                     progress.emit("HTTP方法探测：" + method + " -> " + status + "，存在风险");
@@ -1730,7 +1901,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 PageFetch page = fetchPage(probe, options);
                 String respHeaders = page.headers.toString().toLowerCase(Locale.ROOT);
                 if (respHeaders.contains("crlftest") || respHeaders.contains("x-injected")) {
-                    findings.add(new VulnFinding(null, "HIGH", "CRLF注入", baseUri.toString(),
+                    findings.add(vf(null, "HIGH", "CRLF注入", baseUri.toString(),
                         "服务器响应中包含注入的自定义响应头，payload: " + payload,
                         "对用户输入中的 CR/LF 字符进行编码或过滤，在 URL 参数和响应头拼接处做严格校验"));
                     progress.emit("CRLF注入：payload [" + payload + "] HTTP " + page.status + "，响应已回显注入头");
@@ -1743,28 +1914,20 @@ public class VulnScanServiceImpl implements IVulnScanService {
 
     private void probeHostHeaderInjection(URI baseUri, UrlScanOptions options, List<VulnFinding> findings, ScanProgress progress) {
         try {
-            URL url = baseUri.resolve("/").toURL();
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
-            conn.setInstanceFollowRedirects(false);
-            conn.setRequestProperty("Host", "evil-host-injection-test.com");
-            conn.setRequestProperty("User-Agent", "SecurityScanner/3.0");
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(baseUri.resolve("/"))
+                .GET()
+                .timeout(Duration.ofSeconds(8))
+                .header("Host", "evil-host-injection-test.com")
+                .header("User-Agent", "SecurityScanner/3.0");
             for (Map.Entry<String, String> h : options.headers.entrySet()) {
                 if (!"Host".equalsIgnoreCase(h.getKey())) {
-                    conn.setRequestProperty(h.getKey(), h.getValue());
+                    reqBuilder.header(h.getKey(), h.getValue());
                 }
             }
-            int status = conn.getResponseCode();
-            String body = "";
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                status >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8))) {
-                body = readLimited(reader, MAX_BODY_CHARS);
-            }
-            conn.disconnect();
+            HttpResponse<String> resp = SHARED_HTTP.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            String body = limitString(resp.body(), MAX_BODY_CHARS);
             if (body.contains("evil-host-injection-test.com")) {
-                findings.add(new VulnFinding(null, "MEDIUM", "Host头注入", baseUri.toString(),
+                findings.add(vf(null, "MEDIUM", "Host头注入", baseUri.toString(),
                     "服务器响应中回显了伪造的 Host 头，可能导致缓存投毒或密码重置劫持",
                     "使用白名单验证 Host 头，或使用 SERVER_NAME 替代 HTTP Host 头"));
                 progress.emit("Host头注入：响应回显伪造 Host，存在注入风险");
@@ -1780,7 +1943,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
             PageFetch page = fetchPage(probe, options);
             if (page.status >= 200 && page.status < 300 && !isAccessDenied(page)) {
                 found++;
-                findings.add(new VulnFinding(null,
+                findings.add(vf(null,
                     leakPath.contains(".git") || leakPath.contains("id_rsa") || leakPath.contains("credentials") ? "CRITICAL" : "HIGH",
                     "源码/配置泄露", probe.toString(),
                     "可公开访问敏感文件: " + leakPath + " (HTTP " + page.status + ")",
@@ -1819,7 +1982,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                         || postPage.body.contains("用户名不存在"));
                     if ((postPage.status == 302 && hasSetCookie) || (postPage.status == 200 && hasSetCookie && !hasError)) {
                         foundWeak = true;
-                        findings.add(new VulnFinding(null, "CRITICAL", "默认/弱凭据", loginUri.toString(),
+                        findings.add(vf(null, "CRITICAL", "默认/弱凭据", loginUri.toString(),
                             "使用默认凭据 " + cred[0] + "/" + cred[1] + " 成功登录 (HTTP " + postPage.status + ")，字段名: " + fields[0] + "/" + fields[1],
                             "立即修改默认密码，启用账户锁定策略，实施多因素认证"));
                         progress.emit("默认凭据爆破：路径 " + loginPath + " 凭据 " + cred[0] + "/" + cred[1] + " -> 登录成功！");
@@ -1847,7 +2010,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                             || postPage.body.contains("登录失败") || postPage.body.contains("账号或密码"));
                         if ((postPage.status == 302 && hasSetCookie) || (postPage.status == 200 && hasSetCookie && !hasError)) {
                             foundWeak = true;
-                            findings.add(new VulnFinding(null, "CRITICAL", "默认/弱凭据(API)", loginUri.toString(),
+                            findings.add(vf(null, "CRITICAL", "默认/弱凭据(API)", loginUri.toString(),
                                 "使用默认凭据 " + cred[0] + "/" + cred[1] + " 通过 JSON API 成功登录 (HTTP " + postPage.status + ")",
                                 "立即修改默认密码，启用账户锁定策略，实施多因素认证"));
                             progress.emit("默认凭据爆破(JSON)：路径 " + loginPath + " 凭据 " + cred[0] + "/" + cred[1] + " -> 登录成功！");
@@ -1885,71 +2048,48 @@ public class VulnScanServiceImpl implements IVulnScanService {
     }
 
     private PageFetch fetchFormPost(URI uri, UrlScanOptions options, String formBody) {
-        HttpURLConnection conn = null;
         try {
-            URL url = uri.toURL();
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(15000);
-            conn.setInstanceFollowRedirects(false);
-            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 SecurityScanner/3.0");
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(uri)
+                .POST(HttpRequest.BodyPublishers.ofString(formBody))
+                .timeout(Duration.ofSeconds(15))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("User-Agent", "Mozilla/5.0 SecurityScanner/3.0");
             for (Map.Entry<String, String> header : options.headers.entrySet()) {
-                conn.setRequestProperty(header.getKey(), header.getValue());
+                reqBuilder.header(header.getKey(), header.getValue());
             }
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(formBody.getBytes(StandardCharsets.UTF_8));
-                os.flush();
-            }
-            int status = conn.getResponseCode();
-            Map<String, List<String>> headers = conn.getHeaderFields();
-            String contentType = conn.getContentType();
-            String body = "";
-            if (isTextContent(contentType)) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    status >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8))) {
-                    body = readLimited(reader, MAX_BODY_CHARS);
-                }
-            }
+            HttpResponse<String> resp = SHARED_HTTP.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            int status = resp.statusCode();
+            Map<String, List<String>> headers = resp.headers().map();
+            String contentType = resp.headers().firstValue("Content-Type").orElse(null);
+            String body = isTextContent(contentType) ? limitString(resp.body(), MAX_BODY_CHARS) : "";
             return new PageFetch(status, headers, contentType, body, null);
         } catch (Exception e) {
             return new PageFetch(0, Collections.emptyMap(), "", "", e.getMessage());
-        } finally {
-            if (conn != null) conn.disconnect();
         }
     }
 
     private PageFetch fetchPage(URI uri, UrlScanOptions options) {
-        HttpURLConnection conn = null;
         try {
-            URL url = uri.toURL();
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(15000);
-            conn.setInstanceFollowRedirects(false);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 SecurityScanner/3.0");
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(uri)
+                .GET()
+                .timeout(Duration.ofSeconds(15))
+                .header("User-Agent", "Mozilla/5.0 SecurityScanner/3.0");
             for (Map.Entry<String, String> header : options.headers.entrySet()) {
-                conn.setRequestProperty(header.getKey(), header.getValue());
+                reqBuilder.header(header.getKey(), header.getValue());
             }
-            int status = conn.getResponseCode();
-            Map<String, List<String>> headers = conn.getHeaderFields();
-            String contentType = conn.getContentType();
-            String body = "";
-            if (isTextContent(contentType)) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    status >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8))) {
-                    body = readLimited(reader, MAX_BODY_CHARS);
-                }
-            }
+            HttpResponse<String> resp = SHARED_HTTP.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            int status = resp.statusCode();
+            Map<String, List<String>> headers = resp.headers().map();
+            String contentType = resp.headers().firstValue("Content-Type").orElse(null);
+            String body = isTextContent(contentType) ? limitString(resp.body(), MAX_BODY_CHARS) : "";
             return new PageFetch(status, headers, contentType, body, null);
         } catch (Exception e) {
             return new PageFetch(0, Collections.emptyMap(), "", "", e.getMessage());
-        } finally {
-            if (conn != null) conn.disconnect();
         }
+    }
+
+    private static String limitString(String s, int maxChars) {
+        return s.length() <= maxChars ? s : s.substring(0, maxChars);
     }
 
     private List<VulnFinding> verifyUrlFindings(List<VulnFinding> findings, VulnLlmVerifier llm, String targetUrl, ScanProgress progress) {
@@ -1975,7 +2115,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
         progress.emit("1. 校验目标：检查目录是否存在并确认可扫描");
         if (!Files.exists(root) || !Files.isDirectory(root)) {
             progress.emit("1. 校验目标：目录不存在或无法访问，扫描停止");
-            findings.add(new VulnFinding(null, "MEDIUM", "路径错误", dirPath, "目录不存在或无法访问", "确认目录路径是否正确"));
+            findings.add(vf(null, "MEDIUM", "路径错误", dirPath, "目录不存在或无法访问", "确认目录路径是否正确"));
             return findings;
         }
         progress.emit("2. 加载登录态：代码扫描不需要登录态，跳过");
@@ -2002,7 +2142,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
             });
         } catch (Exception e) {
             progress.emit("扫描失败：扫描目录时出错，原因：" + e.getMessage());
-            findings.add(new VulnFinding(null, "MEDIUM", "扫描错误", dirPath, "扫描目录时出错: " + e.getMessage(), "确认目录权限"));
+            findings.add(vf(null, "MEDIUM", "扫描错误", dirPath, "扫描目录时出错: " + e.getMessage(), "确认目录权限"));
             return findings;
         }
         progress.emit("4. 爬取入口：共扫描源码文件 " + scannedFiles[0] + " 个，发现候选文件 " + findingsByFile.size() + " 个");
@@ -2046,7 +2186,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 if (matcher.find()) {
                     String matched = truncate(matcher.group(), 80);
                     String description = rule.defaultDescription != null ? rule.defaultDescription : "发现潜在的 " + rule.type + " 漏洞: " + matched;
-                    findings.add(new VulnFinding(null, rule.severity, rule.type, relPath, description, rule.defaultSuggestion));
+                    findings.add(vf(null, rule.severity, rule.type, relPath, description, rule.defaultSuggestion));
                     break;
                 }
             }
@@ -2071,12 +2211,12 @@ public class VulnScanServiceImpl implements IVulnScanService {
             progress.emit("CSRF 表单检查：页面 " + pageUri + " 表单#" + index + " method=" + method
                 + " action=" + formLocation + "，CSRF token=" + (hasCsrf ? "存在" : "缺失"));
             if ("POST".equals(method) && !containsCsrfToken(formBody)) {
-                findings.add(new VulnFinding(null, "HIGH", "CSRF", formLocation, "POST 表单缺少明显的 CSRF 防护 token", "为状态变更表单加入服务端校验的 CSRF token，并设置 SameSite Cookie"));
+                findings.add(vf(null, "HIGH", "CSRF", formLocation, "POST 表单缺少明显的 CSRF 防护 token", "为状态变更表单加入服务端校验的 CSRF token，并设置 SameSite Cookie"));
             }
             progress.emit("敏感表单检查：页面 " + pageUri + " 表单#" + index + " method=" + method
                 + "，密码字段=" + (hasPassword ? "存在" : "未发现"));
             if ("GET".equals(method) && hasPassword) {
-                findings.add(new VulnFinding(null, "HIGH", "敏感信息通过 GET 提交", formLocation, "密码或敏感字段所在表单使用 GET 方法，可能进入日志、历史记录和 Referer", "敏感表单必须使用 POST，并启用 HTTPS"));
+                findings.add(vf(null, "HIGH", "敏感信息通过 GET 提交", formLocation, "密码或敏感字段所在表单使用 GET 方法，可能进入日志、历史记录和 Referer", "敏感表单必须使用 POST，并启用 HTTPS"));
             }
         }
         if (index == 0) {
@@ -2097,7 +2237,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 String suggestion = hasSrc
                     ? "为此 script 标签添加 integrity=\"sha384-...\" 属性和 crossorigin=\"anonymous\"，格式：<script src=\"...\" integrity=\"sha384-xxx\" crossorigin=\"anonymous\"></script>。生成命令：openssl dgst -sha384 -binary file.js | openssl base64 -A"
                     : "为内联 script 添加 nonce=\"随机值\" 属性并在 CSP 头中声明：Content-Security-Policy: script-src 'nonce-随机值'";
-                findings.add(new VulnFinding(null, "MEDIUM", "脚本缺少完整性保护",
+                findings.add(vf(null, "MEDIUM", "脚本缺少完整性保护",
                     url + " (脚本#" + count + ")",
                     "缺少 nonce/integrity 的 script 标签: " + tagPreview,
                     suggestion));
@@ -2107,14 +2247,14 @@ public class VulnScanServiceImpl implements IVulnScanService {
         Matcher inlineMatcher = INLINE_EVENT.matcher(html);
         if (inlineMatcher.find()) {
             String snippet = truncate(inlineMatcher.group(), 120);
-            findings.add(new VulnFinding(null, "MEDIUM", "内联事件处理器", url,
+            findings.add(vf(null, "MEDIUM", "内联事件处理器", url,
                 "发现内联事件: " + snippet,
                 "将事件处理迁移到外部 JS 文件：element.addEventListener('event', handler)，并配合 CSP 禁止内联脚本"));
         }
         Matcher jsHrefMatcher = HREF_JS.matcher(html);
         if (jsHrefMatcher.find()) {
             String snippet = truncate(jsHrefMatcher.group(), 120);
-            findings.add(new VulnFinding(null, "HIGH", "XSS", url,
+            findings.add(vf(null, "HIGH", "XSS", url,
                 "发现 javascript: 协议: " + snippet,
                 "移除 javascript: 伪协议，改用 element.addEventListener('click', handler) 或 <button> 元素"));
         }
@@ -2123,19 +2263,19 @@ public class VulnScanServiceImpl implements IVulnScanService {
     private void scanPassiveHtmlSignals(String html, String url, List<VulnFinding> findings) {
         Matcher mixedMatcher = MIXED_CONTENT.matcher(html);
         if (mixedMatcher.find()) {
-            findings.add(new VulnFinding(null, "MEDIUM", "混合内容", url,
+            findings.add(vf(null, "MEDIUM", "混合内容", url,
                 "HTTPS 页面引用 HTTP 资源: " + truncate(mixedMatcher.group(), 120),
                 "将所有资源切换为 HTTPS，或使用协议相对 URL (//example.com/...)"));
         }
         Matcher commentMatcher = COMMENT_LEAK.matcher(html);
         if (commentMatcher.find()) {
-            findings.add(new VulnFinding(null, "LOW", "注释信息泄露", url,
+            findings.add(vf(null, "LOW", "注释信息泄露", url,
                 "HTML 注释疑似含敏感信息: " + truncate(commentMatcher.group(), 120),
                 "移除生产页面中的调试注释，避免泄露 TODO/FIXME/密码/Token/API-Key 等敏感线索"));
         }
         String lower = html.toLowerCase(Locale.ROOT);
         if (lower.contains("swagger-ui") || lower.contains("api-docs")) {
-            findings.add(new VulnFinding(null, "MEDIUM", "接口文档暴露", url, "页面疑似暴露 Swagger/OpenAPI 文档入口", "生产环境限制接口文档访问权限或关闭公开入口"));
+            findings.add(vf(null, "MEDIUM", "接口文档暴露", url, "页面疑似暴露 Swagger/OpenAPI 文档入口", "生产环境限制接口文档访问权限或关闭公开入口"));
         }
     }
 
@@ -2152,7 +2292,7 @@ public class VulnScanServiceImpl implements IVulnScanService {
                     PageFetch postPage = fetchPostPage(uri, options, poisonedBody);
                     if (postPage.error != null) continue;
                     if (hasSqlError(postPage.body)) {
-                        findings.add(new VulnFinding(null, "CRITICAL", "SQL注入(POST API)", uri.toString(),
+                        findings.add(vf(null, "CRITICAL", "SQL注入(POST API)", uri.toString(),
                             "API 端点 " + path + " 参数 " + paramName + " 注入 payload [" + truncate(payload, 40) + "] -> HTTP " + postPage.status + "，响应含 SQL 错误指纹",
                             "对 API 端点的 " + paramName + " 参数使用参数化查询，并增加接口认证和速率限制"));
                         progress.emit("API POST SQL注入：参数 " + paramName + " Payload [" + truncate(payload, 40) + "] -> HTTP " + postPage.status + "，命中 SQL 指纹");
@@ -2165,39 +2305,23 @@ public class VulnScanServiceImpl implements IVulnScanService {
     }
 
     private PageFetch fetchPostPage(URI uri, UrlScanOptions options, String jsonBody) {
-        HttpURLConnection conn = null;
         try {
-            URL url = uri.toURL();
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(15000);
-            conn.setInstanceFollowRedirects(false);
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 SecurityScanner/3.0");
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(uri)
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .timeout(Duration.ofSeconds(15))
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "Mozilla/5.0 SecurityScanner/3.0");
             for (Map.Entry<String, String> header : options.headers.entrySet()) {
-                conn.setRequestProperty(header.getKey(), header.getValue());
+                reqBuilder.header(header.getKey(), header.getValue());
             }
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
-                os.flush();
-            }
-            int status = conn.getResponseCode();
-            Map<String, List<String>> headers = conn.getHeaderFields();
-            String contentType = conn.getContentType();
-            String body = "";
-            if (isTextContent(contentType)) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    status >= 400 ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8))) {
-                    body = readLimited(reader, MAX_BODY_CHARS);
-                }
-            }
+            HttpResponse<String> resp = SHARED_HTTP.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            int status = resp.statusCode();
+            Map<String, List<String>> headers = resp.headers().map();
+            String contentType = resp.headers().firstValue("Content-Type").orElse(null);
+            String body = isTextContent(contentType) ? limitString(resp.body(), MAX_BODY_CHARS) : "";
             return new PageFetch(status, headers, contentType, body, null);
         } catch (Exception e) {
             return new PageFetch(0, Collections.emptyMap(), "", "", e.getMessage());
-        } finally {
-            if (conn != null) conn.disconnect();
         }
     }
 
@@ -2210,16 +2334,16 @@ public class VulnScanServiceImpl implements IVulnScanService {
         );
         for (Map.Entry<String, String> entry : required.entrySet()) {
             if (!containsHeader(headers, entry.getKey())) {
-                findings.add(new VulnFinding(null, "MEDIUM", "缺少安全响应头", url, "缺少 " + entry.getValue() + " 响应头", "添加 " + entry.getKey() + " 响应头以增强安全性"));
+                findings.add(vf(null, "MEDIUM", "缺少安全响应头", url, "缺少 " + entry.getValue() + " 响应头", "添加 " + entry.getKey() + " 响应头以增强安全性"));
             }
         }
         for (String server : headerValues(headers, "Server")) {
             if (server != null && !server.isBlank()) {
-                findings.add(new VulnFinding(null, "LOW", "信息泄露", url, "Server 响应头泄露服务器信息: " + server, "移除或隐藏 Server 响应头"));
+                findings.add(vf(null, "LOW", "信息泄露", url, "Server 响应头泄露服务器信息: " + server, "移除或隐藏 Server 响应头"));
             }
         }
         if (!headerValues(headers, "X-Powered-By").isEmpty()) {
-            findings.add(new VulnFinding(null, "LOW", "信息泄露", url, "X-Powered-By 响应头泄露技术栈信息", "移除 X-Powered-By 响应头"));
+            findings.add(vf(null, "LOW", "信息泄露", url, "X-Powered-By 响应头泄露技术栈信息", "移除 X-Powered-By 响应头"));
         }
     }
 
@@ -2228,20 +2352,20 @@ public class VulnScanServiceImpl implements IVulnScanService {
             String lower = cookie.toLowerCase(Locale.ROOT);
             boolean sessionLike = lower.contains("session") || lower.contains("token") || lower.contains("jwt") || lower.contains("remember") || lower.contains("auth");
             if (sessionLike && !lower.contains("httponly")) {
-                findings.add(new VulnFinding(null, "MEDIUM", "Cookie 缺少 HttpOnly", url, "认证相关 Cookie 未设置 HttpOnly，XSS 后可能被脚本读取", "为会话 Cookie 增加 HttpOnly 属性"));
+                findings.add(vf(null, "MEDIUM", "Cookie 缺少 HttpOnly", url, "认证相关 Cookie 未设置 HttpOnly，XSS 后可能被脚本读取", "为会话 Cookie 增加 HttpOnly 属性"));
             }
             if (url.startsWith("https://") && sessionLike && !lower.contains("secure")) {
-                findings.add(new VulnFinding(null, "MEDIUM", "Cookie 缺少 Secure", url, "HTTPS 站点认证 Cookie 未设置 Secure", "为会话 Cookie 增加 Secure 属性"));
+                findings.add(vf(null, "MEDIUM", "Cookie 缺少 Secure", url, "HTTPS 站点认证 Cookie 未设置 Secure", "为会话 Cookie 增加 Secure 属性"));
             }
             if (sessionLike && !lower.contains("samesite")) {
-                findings.add(new VulnFinding(null, "LOW", "Cookie 缺少 SameSite", url, "认证相关 Cookie 未设置 SameSite，CSRF 风险更高", "设置 SameSite=Lax 或 Strict"));
+                findings.add(vf(null, "LOW", "Cookie 缺少 SameSite", url, "认证相关 Cookie 未设置 SameSite，CSRF 风险更高", "设置 SameSite=Lax 或 Strict"));
             }
         }
     }
 
     private void checkOpenRedirect(String targetUrl, String location, List<VulnFinding> findings) {
         if (REDIRECT_PARAM.matcher(targetUrl).find()) {
-            findings.add(new VulnFinding(null, "HIGH", "开放重定向", targetUrl, "URL 包含重定向参数，可能被用于钓鱼攻击", "对重定向目标做白名单校验"));
+            findings.add(vf(null, "HIGH", "开放重定向", targetUrl, "URL 包含重定向参数，可能被用于钓鱼攻击", "对重定向目标做白名单校验"));
         }
     }
 
@@ -2428,17 +2552,6 @@ public class VulnScanServiceImpl implements IVulnScanService {
             || path.contains("/oauth/") || path.contains("/graphql");
     }
 
-    private static String readLimited(BufferedReader reader, int maxChars) throws java.io.IOException {
-        if (reader == null) return "";
-        StringBuilder content = new StringBuilder(Math.min(maxChars, 8192));
-        char[] buffer = new char[4096];
-        int read;
-        while ((read = reader.read(buffer)) != -1 && content.length() < maxChars) {
-            content.append(buffer, 0, Math.min(read, maxChars - content.length()));
-        }
-        return content.toString();
-    }
-
     private static List<String> headerValues(Map<String, List<String>> headers, String name) {
         if (headers == null || name == null) return Collections.emptyList();
         for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
@@ -2596,6 +2709,181 @@ public class VulnScanServiceImpl implements IVulnScanService {
         }
     }
 
+    record DetectedWaf(String name, List<String> evidence, int throttleMs) {
+        boolean isBehindWaf() { return name != null && !"none".equals(name); }
+    }
+
+    record DetectedTech(String name, String category, String evidence) {}
+
+    // ---- WAF detection ----
+
+    private DetectedWaf detectWaf(PageFetch page) {
+        List<String> evidence = new ArrayList<>();
+        String wafName = "none";
+        int throttleMs = 0;
+
+        // Check response headers for WAF signatures
+        for (String[] sig : WAF_HEADER_SIGNATURES) {
+            String headerName = sig[0];
+            String expectedValue = sig[1];
+            for (Map.Entry<String, List<String>> entry : page.headers.entrySet()) {
+                if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(headerName)) {
+                    String value = String.join(",", entry.getValue()).toLowerCase();
+                    if (expectedValue == null || value.contains(expectedValue.toLowerCase())) {
+                        evidence.add(entry.getKey() + ": " + String.join(",", entry.getValue()));
+                        if (headerName.equals("CF-RAY") || headerName.equals("__cf_bm") || headerName.equals("__cfduid")) {
+                            wafName = "Cloudflare";
+                        } else if (headerName.equals("X-Sucuri-ID") || headerName.equals("X-Sucuri-Cache")) {
+                            wafName = "Sucuri";
+                        } else if (headerName.startsWith("X-Amz")) {
+                            wafName = "AWS CloudFront/WAF";
+                        } else if (value.contains("akamai")) {
+                            wafName = "Akamai";
+                        } else if (value.contains("bigip")) {
+                            wafName = "F5 BigIP";
+                        } else if (value.contains("imperva") || value.contains("incapsula")) {
+                            wafName = "Imperva/Incapsula";
+                        } else if (value.contains("barracuda")) {
+                            wafName = "Barracuda";
+                        } else if (value.contains("fortiweb")) {
+                            wafName = "Fortinet FortiWeb";
+                        } else if (value.contains("wallarm")) {
+                            wafName = "Wallarm";
+                        } else if (value.contains("mod_security")) {
+                            wafName = "ModSecurity";
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check body for WAF block patterns
+        if (page.body != null) {
+            String bodyLower = page.body.toLowerCase(Locale.ROOT);
+            for (String pattern : WAF_BLOCK_PATTERNS) {
+                if (bodyLower.contains(pattern)) {
+                    evidence.add("body: " + pattern);
+                    if ("none".equals(wafName)) {
+                        if (pattern.contains("cloudflare") || pattern.contains("checking your browser")) {
+                            wafName = "Cloudflare";
+                        } else if (pattern.contains("incapsula")) {
+                            wafName = "Imperva/Incapsula";
+                        } else if (pattern.contains("sucuri")) {
+                            wafName = "Sucuri";
+                        } else if (pattern.contains("mod_security")) {
+                            wafName = "ModSecurity";
+                        } else {
+                            wafName = "Generic WAF";
+                        }
+                    }
+                }
+            }
+        }
+
+        // Status 403 with no standard server error suggests WAF
+        if ("none".equals(wafName) && page.status == 403) {
+            evidence.add("HTTP 403 Forbidden");
+            wafName = "Suspected WAF";
+        }
+
+        if (!"none".equals(wafName)) {
+            throttleMs = WAF_THROTTLE_MS;
+            log.info("WAF detected: {} (evidence: {})", wafName, evidence);
+        }
+
+        return new DetectedWaf(wafName, evidence, throttleMs);
+    }
+
+    // ---- Technology fingerprinting ----
+
+    private List<DetectedTech> fingerprintTech(PageFetch page, URI baseUri) {
+        List<DetectedTech> techs = new ArrayList<>();
+
+        // Check response headers
+        for (String[] sig : TECH_HEADER_SIGNATURES) {
+            for (Map.Entry<String, List<String>> entry : page.headers.entrySet()) {
+                if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(sig[0])) {
+                    String value = String.join(",", entry.getValue());
+                    if (sig[1] == null || value.toLowerCase(Locale.ROOT).contains(sig[1].toLowerCase())) {
+                        techs.add(new DetectedTech(sig[1] != null ? sig[1] : value, "server", entry.getKey() + ": " + value));
+                    }
+                }
+            }
+        }
+
+        // Check cookies for technology indicators
+        String setCookie = page.headers.entrySet().stream()
+            .filter(e -> e.getKey() != null && e.getKey().equalsIgnoreCase("Set-Cookie"))
+            .map(e -> String.join(",", e.getValue()))
+            .collect(java.util.stream.Collectors.joining("; "));
+        if (!setCookie.isEmpty()) {
+            for (String[] sig : TECH_COOKIE_PATTERNS) {
+                if (setCookie.contains(sig[0])) {
+                    techs.add(new DetectedTech(sig[1], "framework", "cookie: " + sig[0]));
+                }
+            }
+        }
+
+        // Check HTML body for framework patterns
+        if (page.body != null && isHtml(page.contentType)) {
+            String bodyLower = page.body.toLowerCase(Locale.ROOT);
+            for (String[] pattern : TECH_HTML_PATTERNS) {
+                if (bodyLower.contains(pattern[0].toLowerCase())) {
+                    techs.add(new DetectedTech(pattern[1], "framework", "html: " + pattern[0]));
+                }
+            }
+        }
+
+        // Deduplicate by name
+        Set<String> seen = new LinkedHashSet<>();
+        List<DetectedTech> unique = new ArrayList<>();
+        for (DetectedTech tech : techs) {
+            if (seen.add(tech.name().toLowerCase())) {
+                unique.add(tech);
+            }
+        }
+        return unique;
+    }
+
+    // ---- Confidence scoring ----
+
+    private static VulnFinding vf(Long jobId, String severity, String type, String location,
+                                   String description, String suggestion) {
+        return new VulnFinding(jobId, severity, type, location, description, suggestion,
+            scoreConfidence(type));
+    }
+
+    private static int scoreConfidence(String checkType, Object... evidence) {
+        return switch (checkType) {
+            // High confidence: clear error messages, explicit version disclosure
+            case "sql_error", "sql_time_based", "version_disclosure", "source_leak",
+                 "dir_listing", "default_creds",
+                 "SQL注入", "默认/弱凭据", "默认/弱凭据(API)", "目录列表暴露",
+                 "敏感路径暴露", "源码泄露" -> 90;
+            // Medium-high: behavioral responses with some ambiguity
+            case "sql_boolean", "xss_reflected", "lfi_content", "open_redirect",
+                 "host_header", "crlf_injection", "cors_misconfig",
+                 "SQL注入(布尔盲注)", "XSS", "文件包含(LFI)", "开放重定向",
+                 "CRLF注入", "Host头注入", "CORS配置错误", "CORS配置宽松",
+                 "CORS允许null来源", "内联事件处理器" -> 75;
+            // Medium: pattern matching without exploit verification
+            case "ssti_detect", "ssrf_probe", "nosql_inject", "cookie_secure",
+                 "mixed_content", "comment_leak", "method_probe",
+                 "SSTI模板注入", "SSRF", "NoSQL注入", "Cookie 缺少 HttpOnly",
+                 "Cookie 缺少 Secure", "Cookie 缺少 SameSite", "混合内容",
+                 "注释信息泄露", "HTTP方法配置不当", "SQL注入(POST API)" -> 60;
+            // Low-medium: passive detection, potentially informational
+            case "header_missing", "form_csrf", "tls_weak", "port_open",
+                 "tech_detected", "api_exposed",
+                 "缺少安全响应头", "信息泄露", "CSRF", "敏感信息通过 GET 提交",
+                 "脚本缺少完整性保护", "未启用HTTPS", "弱TLS版本",
+                 "SSL证书已过期", "SSL证书即将过期", "自签名SSL证书", "SSL证书不可信",
+                 "服务器端口暴露", "接口文档暴露", "CORS动态模板" -> 40;
+            // Default for unrecognized types
+            default -> 50;
+        };
+    }
+
     // ---- Agent integration ----
 
     @Override
@@ -2605,28 +2893,37 @@ public class VulnScanServiceImpl implements IVulnScanService {
         VulnScanJob job = createJob("url", targetUrl, userId, deptId, modelType, modelId);
         jobMapper.insertVulnScanJob(job);
 
-        VulnLlmVerifier llm = buildVerifier(deptId, userId, modelType, modelId);
-        ScanProgress progress = new ScanProgress();
-        UrlScanOptions options = UrlScanOptions.of(null, "standard", null, null, null, null, null);
-        List<VulnFinding> findings = doUrlScan(targetUrl, options, progress, llm);
-        List<String> messages = new ArrayList<>();
-
-        CompletableFuture<List<VulnFinding>> agentFuture = launchAgentIfConfigured(
-            targetUrl, llm, agentCredentials, messages);
-
         try {
-            List<VulnFinding> agentFindings = agentFuture.get(5, TimeUnit.MINUTES);
-            if (agentFindings != null && !agentFindings.isEmpty()) {
-                findings.addAll(agentFindings);
-            }
-        } catch (Exception e) {
-            log.warn("Agent scan incomplete: {}", e.getMessage());
-        }
+            VulnLlmVerifier llm = buildVerifier(deptId, userId, modelType, modelId);
+            ScanProgress progress = new ScanProgress();
+            progress.setDbPersistence(job.getId(), jobMapper);
+            UrlScanOptions options = UrlScanOptions.of(null, "standard", null, null, null, null, null);
+            List<VulnFinding> findings = doUrlScan(targetUrl, options, progress, llm);
+            List<String> messages = new ArrayList<>();
 
-        saveFindings(job.getId(), findings);
-        updateJobCounts(job, findings);
-        job.setFindings(findings);
-        return job;
+            CompletableFuture<List<VulnFinding>> agentFuture = launchAgentIfConfigured(
+                targetUrl, llm, agentCredentials, messages);
+
+            try {
+                List<VulnFinding> agentFindings = agentFuture.get(5, TimeUnit.MINUTES);
+                if (agentFindings != null && !agentFindings.isEmpty()) {
+                    findings.addAll(agentFindings);
+                }
+            } catch (Exception e) {
+                log.warn("Agent scan incomplete: {}", e.getMessage());
+            }
+
+            saveFindings(job.getId(), findings);
+            updateJobCounts(job, findings);
+            job.setFindings(findings);
+            return job;
+        } catch (Exception e) {
+            log.error("Agent scan failed for {}: {}", targetUrl, e.getMessage());
+            job.setStatus("failed");
+            job.setProgressText("扫描异常: " + e.getMessage());
+            jobMapper.updateVulnScanJob(job);
+            throw e;
+        }
     }
 
     private CompletableFuture<List<VulnFinding>> launchAgentIfConfigured(
@@ -2649,6 +2946,69 @@ public class VulnScanServiceImpl implements IVulnScanService {
                 log.info("[Agent] {}", msg);
                 if (progressMessages != null) progressMessages.add(msg);
             }
+        );
+
+        if (agentCredentials != null && !agentCredentials.isEmpty()) {
+            agent.loadCredentials(agentCredentials);
+        }
+
+        return CompletableFuture.supplyAsync(() -> agent.run());
+    }
+
+    @Override
+    public VulnScanJob scanUrlWithAgentStream(String targetUrl, Long userId, Long deptId,
+                                               String modelType, Long modelId,
+                                               List<CredentialState> agentCredentials,
+                                               Consumer<String> progressCallback) {
+        VulnScanJob job = createJob("url", targetUrl, userId, deptId, modelType, modelId);
+        jobMapper.insertVulnScanJob(job);
+
+        try {
+            VulnLlmVerifier llm = buildVerifier(deptId, userId, modelType, modelId);
+            ScanProgress progress = new ScanProgress();
+            progress.setDbPersistence(job.getId(), jobMapper);
+            progress.sseSink = progressCallback;
+            UrlScanOptions options = UrlScanOptions.of(null, "standard", null, null, null, null, null);
+            List<VulnFinding> findings = doUrlScan(targetUrl, options, progress, llm);
+
+            CompletableFuture<List<VulnFinding>> agentFuture = launchAgentIfConfiguredStream(
+                targetUrl, llm, agentCredentials, progressCallback);
+
+            try {
+                List<VulnFinding> agentFindings = agentFuture.get(5, TimeUnit.MINUTES);
+                if (agentFindings != null && !agentFindings.isEmpty()) {
+                    findings.addAll(agentFindings);
+                }
+            } catch (Exception e) {
+                log.warn("Agent scan incomplete: {}", e.getMessage());
+            }
+
+            saveFindings(job.getId(), findings);
+            updateJobCounts(job, findings);
+            job.setFindings(findings);
+            return job;
+        } catch (Exception e) {
+            log.error("Agent stream scan failed: {}", e.getMessage());
+            job.setStatus("failed");
+            job.setProgressText("扫描异常: " + e.getMessage());
+            jobMapper.updateVulnScanJob(job);
+            throw e;
+        }
+    }
+
+    private CompletableFuture<List<VulnFinding>> launchAgentIfConfiguredStream(
+            String targetUrl, VulnLlmVerifier llm,
+            List<CredentialState> agentCredentials,
+            Consumer<String> progressSink) {
+        if (llm == null) {
+            log.info("Agent skipped: no LLM configured");
+            return CompletableFuture.completedFuture(List.of());
+        }
+
+        PenTestAgent agent = new PenTestAgent(
+            targetUrl, llm.getBaseUrl(), llm.getModel(), llm.getApiKey(),
+            50, Duration.ofMinutes(55),
+            progressSink
         );
 
         if (agentCredentials != null && !agentCredentials.isEmpty()) {

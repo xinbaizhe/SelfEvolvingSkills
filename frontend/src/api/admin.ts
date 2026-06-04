@@ -64,3 +64,42 @@ export function exportJson(resource: string) {
 export function exportCsv(resource: string) {
   return api<ApiResponse<string>>('GET', `/export/${resource}`, { format: 'csv' })
 }
+
+export interface DailyReport {
+  report_date: string
+  content: string
+  source_count: number
+  generated_at: string
+  from_cache?: boolean
+}
+
+export function fetchDailyReport(date?: string) {
+  return api<ApiResponse<DailyReport | null>>('GET', '/admin/daily-report', date ? { search: date } : undefined)
+}
+
+export interface GenStatus {
+  generating: boolean
+  target_date?: string
+  report_date?: string
+  phase?: string      // "scanning" | "summarizing" | "done" | "error"
+  progress?: number   // 0-100
+  message?: string
+  error?: string
+  // included when from_cache=true
+  content?: string
+  source_count?: number
+  generated_at?: string
+  from_cache?: boolean
+}
+
+export function generateDailyReport(date: string) {
+  return api<ApiResponse<GenStatus>>('POST', '/admin/daily-report', null, { date })
+}
+
+export function fetchGenerationStatus() {
+  return api<ApiResponse<GenStatus>>('GET', '/admin/daily-report/status')
+}
+
+export function fetchDailyReportHistory(limit = 30) {
+  return api<ApiResponse<{ report_date: string; source_count: number; generated_at: string }[]>>('GET', '/admin/daily-report/history', { limit })
+}
