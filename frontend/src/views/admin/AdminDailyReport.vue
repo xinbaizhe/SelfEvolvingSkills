@@ -272,7 +272,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Report content -->
-    <div v-else class="report-content">
+    <div v-else-if="report" class="report-content">
       <div class="report-meta">
         <span>📊 分析了 {{ report.source_count }} 条编程对话记录</span>
         <span>🕐 生成时间：{{ formatDisplayTime(report.generated_at) }}</span>

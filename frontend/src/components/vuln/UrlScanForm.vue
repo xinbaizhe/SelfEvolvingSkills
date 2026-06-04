@@ -58,6 +58,12 @@ const scanProfileOptions = [
 const selectedProfile = computed(() =>
   scanProfileOptions.find(item => item.value === props.scanProfile) || scanProfileOptions[1]
 )
+
+function updateCredential(idx: number, field: keyof AgentCredential, value: string) {
+  const copy = [...props.agentCredentials!]
+  copy[idx] = { ...copy[idx], [field]: value }
+  emit('update:agentCredentials', copy)
+}
 </script>
 
 <template>
@@ -92,10 +98,10 @@ const selectedProfile = computed(() =>
       <el-button size="small" @click="emit('addCredential')">+ 添加凭据</el-button>
     </div>
     <div v-for="(cred, idx) in agentCredentials" :key="idx" class="cred-row" style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
-      <el-input :model-value="cred.username" @update:model-value="const copy = [...agentCredentials]; copy[idx] = { ...copy[idx], username: $event }; emit('update:agentCredentials', copy)" placeholder="用户名" size="small" style="width:100px" />
-      <el-input :model-value="cred.role" @update:model-value="const copy = [...agentCredentials]; copy[idx] = { ...copy[idx], role: $event }; emit('update:agentCredentials', copy)" placeholder="角色(admin/user)" size="small" style="width:120px" />
-      <el-input :model-value="cred.cookie" @update:model-value="const copy = [...agentCredentials]; copy[idx] = { ...copy[idx], cookie: $event }; emit('update:agentCredentials', copy)" placeholder="Cookie" size="small" style="width:160px" />
-      <el-input :model-value="cred.authorization" @update:model-value="const copy = [...agentCredentials]; copy[idx] = { ...copy[idx], authorization: $event }; emit('update:agentCredentials', copy)" placeholder="Authorization" size="small" style="width:160px" />
+      <el-input :model-value="cred.username" @update:model-value="updateCredential(idx, 'username', $event)" placeholder="用户名" size="small" style="width:100px" />
+      <el-input :model-value="cred.role" @update:model-value="updateCredential(idx, 'role', $event)" placeholder="角色(admin/user)" size="small" style="width:120px" />
+      <el-input :model-value="cred.cookie" @update:model-value="updateCredential(idx, 'cookie', $event)" placeholder="Cookie" size="small" style="width:160px" />
+      <el-input :model-value="cred.authorization" @update:model-value="updateCredential(idx, 'authorization', $event)" placeholder="Authorization" size="small" style="width:160px" />
       <el-button @click="emit('removeCredential', idx)" size="small" type="danger" circle>×</el-button>
     </div>
   </div>
