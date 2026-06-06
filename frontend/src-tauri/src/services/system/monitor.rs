@@ -122,10 +122,13 @@ pub(crate) fn get_table_detail(
         result
     };
 
-    let col_names: Vec<String> = columns
+    let mut col_names: Vec<String> = columns
         .iter()
         .filter_map(|c| c["name"].as_str().map(String::from))
         .collect();
+
+    // SELECT includes rowid as first column — prepend to col_names for correct index mapping
+    col_names.insert(0, "rowid".to_string());
 
     let offset = (page.saturating_sub(1) * size) as i64;
     let size_i64 = size as i64;
@@ -184,8 +187,9 @@ pub(crate) fn get_table_detail(
                 let cell = row
                     .get::<_, String>(i)
                     .map(|s| {
-                        if s.len() > 500 {
-                            Value::String(format!("{}...", &s[..500]))
+                        if s.chars().count() > 500 {
+                            let truncated: String = s.chars().take(500).collect();
+                            Value::String(format!("{}...", truncated))
                         } else {
                             Value::String(s)
                         }

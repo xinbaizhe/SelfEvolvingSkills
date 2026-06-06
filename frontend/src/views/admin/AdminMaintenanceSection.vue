@@ -172,7 +172,11 @@ async function loadDetail(tableName: string) {
     const res = await getTableDetail(tableName, undefined, detailPage.value, detailSize)
     if (res.success) {
       detailData.value = res.data
+    } else {
+      ElMessage.error('加载表数据失败')
     }
+  } catch (e) {
+    ElMessage.error('加载表数据出错: ' + String(e))
   } finally {
     detailLoading.value = false
   }
@@ -231,7 +235,10 @@ function cancelEdit() {
 }
 
 async function saveEdit() {
-  if (!detailData.value || editingRowid.value == null) return
+  if (!detailData.value || editingRowid.value == null || editingRowid.value <= 0) {
+    ElMessage.warning('无法获取行标识 rowid，请确认后端已更新')
+    return
+  }
   saving.value = true
   try {
     const res = await updateTableRow(detailData.value.table, editingRowid.value, editingData.value)
@@ -240,8 +247,10 @@ async function saveEdit() {
       editingRowid.value = null
       editingData.value = {}
       await loadDetail(detailData.value.table)
+    } else {
+      ElMessage.error('更新失败')
     }
-  } catch (e) { ElMessage.error(String(e)) }
+  } catch (e) { ElMessage.error('更新出错: ' + String(e)) }
   finally { saving.value = false }
 }
 
@@ -250,7 +259,7 @@ function startAdd() {
   editingRowid.value = null
   newRowData.value = {}
   for (const col of detailData.value?.columns || []) {
-    if (col.name !== 'rowid') newRowData.value[col.name] = ''
+    if (col.name !== 'rowid' && col.name !== 'id') newRowData.value[col.name] = ''
   }
 }
 
@@ -269,26 +278,34 @@ async function saveAdd() {
       addingNew.value = false
       newRowData.value = {}
       await loadDetail(detailData.value.table)
+    } else {
+      ElMessage.error('新增失败')
     }
-  } catch (e) { ElMessage.error(String(e)) }
+  } catch (e) { ElMessage.error('新增出错: ' + String(e)) }
   finally { saving.value = false }
 }
 
 async function handleDelete(row: Record<string, unknown>) {
   if (!detailData.value) return
+  const rowid = row['rowid'] as number
+  if (!rowid || rowid <= 0) {
+    ElMessage.warning('无法获取行标识 rowid，请确认后端已更新')
+    return
+  }
   try {
     await ElMessageBox.confirm('确定删除该行数据？此操作不可恢复。', '确认删除', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
   } catch { return }
 
   saving.value = true
   try {
-    const rowid = row['rowid'] as number
     const res = await deleteTableRow(detailData.value.table, rowid)
     if (res.success) {
       ElMessage.success('已删除')
       await loadDetail(detailData.value.table)
+    } else {
+      ElMessage.error('删除失败')
     }
-  } catch (e) { ElMessage.error(String(e)) }
+  } catch (e) { ElMessage.error('删除出错: ' + String(e)) }
   finally { saving.value = false }
 }
 </script>

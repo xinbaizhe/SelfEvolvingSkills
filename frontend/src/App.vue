@@ -62,10 +62,9 @@ onMounted(async () => {
   try {
     const res = await fetchSystemInfo()
     const data = res.data as Record<string, unknown> | null
-    const startTime = data?.start_time as string | undefined
-    if (startTime) {
-      appStartedAt.value = Date.parse(startTime.replace(' ', 'T') + 'Z')
-      if (isNaN(appStartedAt.value)) appStartedAt.value = new Date(startTime).getTime()
+    const epoch = data?.start_time as number | undefined
+    if (epoch && epoch > 0) {
+      appStartedAt.value = epoch * 1000  // Rust returns epoch seconds, JS uses ms
     }
   } catch { /* fall back to page load time */ }
   if (!appStartedAt.value) appStartedAt.value = Date.now()

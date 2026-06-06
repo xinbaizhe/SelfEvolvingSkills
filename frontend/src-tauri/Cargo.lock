@@ -3560,7 +3560,7 @@ dependencies = [
 
 [[package]]
 name = "self-evolving-skills"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

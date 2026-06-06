@@ -245,11 +245,11 @@ pub fn run() {
 }
 
 use std::sync::OnceLock;
-static PROCESS_START_TIME: OnceLock<String> = OnceLock::new();
+static PROCESS_START_EPOCH: OnceLock<i64> = OnceLock::new();
 
-pub(crate) fn process_start_time() -> &'static str {
-    PROCESS_START_TIME.get_or_init(|| {
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+pub(crate) fn process_start_time() -> i64 {
+    *PROCESS_START_EPOCH.get_or_init(|| {
+        chrono::Local::now().timestamp()
     })
 }
 

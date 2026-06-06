@@ -579,8 +579,17 @@ pub(crate) async fn pet_chat(
     message: &str,
 ) -> Result<String> {
     let persona = pet_persona(pet_type, pet_name);
+    let now = chrono::Local::now();
+    let date_info = now.format("%Y年%m月%d日，星期%u（周%u）").to_string();
+    // Convert weekday number to Chinese
+    let weekday_cn = match now.format("%u").to_string().as_str() {
+        "1" => "一", "2" => "二", "3" => "三", "4" => "四", "5" => "五", "6" => "六", "7" => "日",
+        _ => "",
+    };
+    let time_info = now.format("%H:%M").to_string();
     let system_prompt = format!(
         "你是「{}」，一只住在程序员电脑桌面上的虚拟{}宠物。\
+        今天是：{}年{}月{}日，星期{}，当前时间 {}。\
         你没有任何修改代码或系统的能力——你只能通过前端API和用户已有的页面功能来帮忙。\
         你可以做的事情：\
         - 陪用户聊天、讲笑话、给鼓励\
@@ -598,8 +607,10 @@ pub(crate) async fn pet_chat(
         2. 语气可爱自然，拟声词（喵~/汪!/叽叽）\
         3. 绝对不要用markdown，纯文字回复\
         4. 不要自称AI——你是真实的桌面小动物\
-        5. 保持积极温暖，有陪伴感",
-        pet_name, persona
+        5. 保持积极温暖，有陪伴感\
+        6. 如果用户问日期或时间，请根据以上提供的日期时间来回答",
+        pet_name, persona,
+        now.format("%Y"), now.format("%m"), now.format("%d"), weekday_cn, time_info
     );
 
     let reply = call_llm(
