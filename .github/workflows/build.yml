@@ -248,3 +248,26 @@ jobs:
             - **Linux**: download `.deb` or `.AppImage.zip`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit latest.json to repo (for jsDelivr mirror)
+        if: hashFiles('dist/latest.json') != ''
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp dist/latest.json latest.json
+          if git diff --quiet latest.json; then
+            echo "latest.json unchanged, skip commit"
+          else
+            git add latest.json
+            git commit -m "chore: update latest.json for ${{ github.ref_name }} [skip ci]"
+            git push origin master
+            echo "::notice::latest.json updated and pushed to master branch"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

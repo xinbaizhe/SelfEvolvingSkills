@@ -55,7 +55,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUyRjM2NUI3RTNCNTI1QTYKUldTbUpiWGp0Mlh6VWpqRGR0UHJlVFFFaExVZDNpak1UNTRyQm5mMGR1QmVOSnA1T215OS81bnYK",
       "endpoints": [
-        "https://github.com/xinbaizhe/SelfEvolvingSkills/releases/latest/download/latest.json"
+        "https://cdn.jsdelivr.net/gh/xinbaizhe/SelfEvolvingSkills@master/latest.json"
       ]
     }
   }
