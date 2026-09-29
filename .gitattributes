@@ -1,0 +1,8 @@
+# Shell scripts are executed on Linux runners and inside containers. A CRLF
+# shebang line fails there with a confusing "bad interpreter" error, and this
+# repo has core.autocrlf=true, so pin them explicitly.
+*.sh text eol=lf
+
+# Workflow files are parsed on the runner; keep them LF too.
+*.yml text eol=lf
+*.yaml text eol=lf
