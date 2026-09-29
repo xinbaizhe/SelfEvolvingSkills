@@ -171,6 +171,56 @@ jobs:
             zip -r "${dirname}.zip" "$dir"
           done
 
+      # tauri-bundler <= 2.9.3 wrote the AppDir's .DirIcon and root .desktop as
+      # absolute symlinks into the build machine's filesystem. They dangle once
+      # the AppImage is mounted elsewhere, which fails every AppDir linter with
+      # "FATAL: .DirIcon is missing". Fixed in tauri-cli 2.11.4 / tauri-bundler
+      # 2.9.4 (tauri-apps/tauri#15596) - this guards against a downgrade.
+      - name: Verify AppImage AppDir
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPIMAGE=$(find "src-tauri/target/${{ matrix.target }}/release/bundle/appimage" -maxdepth 1 -name '*.AppImage' -type f | head -1)
+          if [ -z "$APPIMAGE" ]; then
+            echo "::error::No .AppImage produced"
+            exit 1
+          fi
+          APPIMAGE="$PWD/$APPIMAGE"
+          echo "Verifying: $APPIMAGE"
+
+          chmod +x "$APPIMAGE"
+          # Extract into a scratch dir so the upload artifact stays clean.
+          rm -rf /tmp/appdir-check && mkdir -p /tmp/appdir-check && cd /tmp/appdir-check
+          "$APPIMAGE" --appimage-extract >/dev/null
+
+          fail=0
+
+          # `test -e` follows symlinks, so a dangling .DirIcon fails here too.
+          if [ ! -e squashfs-root/.DirIcon ]; then
+            echo "::error::.DirIcon is missing or dangling in the AppImage"
+            fail=1
+          else
+            echo ".DirIcon -> $(readlink squashfs-root/.DirIcon || echo '(regular file)')"
+          fi
+
+          # Symlinks at the AppDir root must be relative (resolve inside the AppDir).
+          for link in squashfs-root/.DirIcon squashfs-root/*.desktop; do
+            [ -L "$link" ] || continue
+            target=$(readlink "$link")
+            case "$target" in
+              /*) echo "::error::$(basename "$link") is an absolute symlink -> $target"; fail=1 ;;
+            esac
+          done
+
+          ls squashfs-root/*.desktop >/dev/null 2>&1 || {
+            echo "::error::no .desktop file at the AppDir root"
+            fail=1
+          }
+
+          [ "$fail" -eq 0 ] || exit 1
+          echo "AppDir OK"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
