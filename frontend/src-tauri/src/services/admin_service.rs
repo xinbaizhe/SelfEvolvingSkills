@@ -1,8 +1,9 @@
+use super::llm_utils::{call_llm, LlmCallParams};
+use crate::utils::failure::{failed, failed_with};
 use crate::{hash_bytes, now_string};
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
-use super::llm_utils::{call_llm, LlmCallParams};
 use serde_json::{json, Value};
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
@@ -181,7 +182,9 @@ pub(crate) async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
         .await
         .unwrap_or_else(|e| format!("[Failed to read response body: {e}]"));
     if status.is_success() {
-        Ok(json!({ "message": "大模型连接测试成功" }))
+        Ok(json!({
+            "message": failed("admin.config.llmTestOk", "大模型连接测试成功")
+        }))
     } else {
         let message = serde_json::from_str::<Value>(&text)
             .ok()
@@ -201,11 +204,12 @@ pub(crate) async fn test_llm_connection(body: Option<Value>) -> Result<Value> {
                 }
             })
             .unwrap_or_else(|| text.chars().take(300).collect::<String>());
-        Err(anyhow!(
-            "大模型连接测试失败：HTTP {} {}",
-            status.as_u16(),
-            message
-        ))
+        let detail = format!("大模型连接测试失败：HTTP {} {}", status.as_u16(), message);
+        Err(anyhow!(failed_with(
+            "admin.config.llmTestFailed",
+            json!({ "status": status.as_u16(), "detail": message }),
+            detail
+        )))
     }
 }
 
@@ -229,10 +233,13 @@ fn extract_json_object(text: &str) -> Result<String> {
     }
     let start = stripped
         .find('{')
-        .ok_or_else(|| anyhow!("大模型未返回 JSON 对象"))?;
-    let end = stripped
-        .rfind('}')
-        .ok_or_else(|| anyhow!("大模型未返回完整 JSON 对象"))?;
+        .ok_or_else(|| anyhow!(failed("admin.config.llmNoJson", "大模型未返回 JSON 对象")))?;
+    let end = stripped.rfind('}').ok_or_else(|| {
+        anyhow!(failed(
+            "admin.config.llmIncompleteJson",
+            "大模型未返回完整 JSON 对象"
+        ))
+    })?;
     Ok(stripped[start..=end].to_string())
 }
 
@@ -267,10 +274,17 @@ fn scan_uploaded_zip(content: &str) -> Result<Option<Value>> {
     let Some(encoded) = extract_line_value(content, "ZIP_BASE64") else {
         return Ok(None);
     };
-    let filename = extract_line_value(content, "ZIP_FILE").unwrap_or_else(|| "uploaded.zip".to_string());
+    let filename =
+        extract_line_value(content, "ZIP_FILE").unwrap_or_else(|| "uploaded.zip".to_string());
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded.trim())
-        .map_err(|err| anyhow!("zip base64 解码失败：{err}"))?;
+        .map_err(|err| {
+            anyhow!(failed_with(
+                "admin.config.zipDecodeFailed",
+                json!({ "error": err.to_string() }),
+                format!("zip base64 解码失败：{err}"),
+            ))
+        })?;
     let mut archive = ZipArchive::new(Cursor::new(bytes))?;
     let mut entries = Vec::new();
     let mut scanned_files = 0usize;
@@ -331,10 +345,7 @@ pub(crate) async fn evaluate_share_resource_with_llm(
         .unwrap_or("")
         .to_string();
     let zip_scan = scan_uploaded_zip(&content)?;
-    let content_preview = content
-        .chars()
-        .take(16_000)
-        .collect::<String>();
+    let content_preview = content.chars().take(16_000).collect::<String>();
     let metadata = body.get("metadata").cloned().unwrap_or_else(|| json!({}));
     let heuristic = body.get("heuristic").cloned().unwrap_or_else(|| json!({}));
 
@@ -375,13 +386,28 @@ pub(crate) async fn evaluate_share_resource_with_llm(
         serde_json::to_string_pretty(&zip_scan.clone().unwrap_or_else(|| json!(null)))?
     );
 
-    let raw = call_llm(LlmCallParams::new(base_url, api_key, model, api_format, system_prompt, &user_prompt).error_label("大模型评估请求失败"))
-        .await?;
+    let raw = call_llm(
+        LlmCallParams::new(
+            base_url,
+            api_key,
+            model,
+            api_format,
+            system_prompt,
+            &user_prompt,
+        )
+        .error_label("大模型评估请求失败"),
+    )
+    .await?;
     let parsed: Value = serde_json::from_str(&extract_json_object(&raw)?)?;
     let llm_score = clamp_score(parsed.get("score").and_then(Value::as_i64), 0);
-    let security_score = clamp_score(parsed.get("securityScore").and_then(Value::as_i64), llm_score);
-    let performance_score =
-        clamp_score(parsed.get("performanceScore").and_then(Value::as_i64), llm_score);
+    let security_score = clamp_score(
+        parsed.get("securityScore").and_then(Value::as_i64),
+        llm_score,
+    );
+    let performance_score = clamp_score(
+        parsed.get("performanceScore").and_then(Value::as_i64),
+        llm_score,
+    );
 
     Ok(json!({
         "score": llm_score,
@@ -400,13 +426,24 @@ pub(crate) async fn evaluate_share_resource_with_llm(
 fn scan_skill_directory(directory: &str) -> Result<Value> {
     let path = PathBuf::from(directory.trim());
     if directory.trim().is_empty() {
-        return Err(anyhow!("评估目录不能为空"));
+        return Err(anyhow!(failed(
+            "admin.config.evalDirEmpty",
+            "评估目录不能为空"
+        )));
     }
     if !path.exists() {
-        return Err(anyhow!("评估目录不存在：{}", directory));
+        return Err(anyhow!(failed_with(
+            "admin.config.evalDirMissing",
+            json!({ "dir": directory }),
+            format!("评估目录不存在：{}", directory)
+        )));
     }
     if !path.is_dir() {
-        return Err(anyhow!("评估目标不是目录：{}", directory));
+        return Err(anyhow!(failed_with(
+            "admin.config.evalTargetNotDir",
+            json!({ "dir": directory }),
+            format!("评估目标不是目录：{}", directory)
+        )));
     }
 
     let mut skills = Vec::new();
@@ -502,7 +539,9 @@ fn scan_skill_directory(directory: &str) -> Result<Value> {
                 .lines()
                 .filter(|line| {
                     let lower_line = line.to_lowercase();
-                    risk_markers.iter().any(|marker| lower_line.contains(marker))
+                    risk_markers
+                        .iter()
+                        .any(|marker| lower_line.contains(marker))
                         || lower_line.starts_with("def ")
                         || lower_line.starts_with("class ")
                         || lower_line.contains("__main__")
@@ -529,7 +568,10 @@ fn scan_skill_directory(directory: &str) -> Result<Value> {
     }
 
     if skills.is_empty() && python_files.is_empty() {
-        return Err(anyhow!("目录下未发现 SKILL.md 或 Python 代码，无法进行评估"));
+        return Err(anyhow!(failed(
+            "admin.config.evalNoFiles",
+            "目录下未发现 SKILL.md 或 Python 代码，无法进行评估"
+        )));
     }
 
     Ok(json!({
@@ -599,13 +641,28 @@ pub(crate) async fn evaluate_directory_skills_with_llm(
         serde_json::to_string_pretty(&scan)?
     );
 
-    let raw = call_llm(LlmCallParams::new(base_url, api_key, model, api_format, system_prompt, &user_prompt).error_label("大模型评估请求失败"))
-        .await?;
+    let raw = call_llm(
+        LlmCallParams::new(
+            base_url,
+            api_key,
+            model,
+            api_format,
+            system_prompt,
+            &user_prompt,
+        )
+        .error_label("大模型评估请求失败"),
+    )
+    .await?;
     let parsed: Value = serde_json::from_str(&extract_json_object(&raw)?)?;
     let llm_score = clamp_score(parsed.get("score").and_then(Value::as_i64), 0);
-    let security_score = clamp_score(parsed.get("securityScore").and_then(Value::as_i64), llm_score);
-    let performance_score =
-        clamp_score(parsed.get("performanceScore").and_then(Value::as_i64), llm_score);
+    let security_score = clamp_score(
+        parsed.get("securityScore").and_then(Value::as_i64),
+        llm_score,
+    );
+    let performance_score = clamp_score(
+        parsed.get("performanceScore").and_then(Value::as_i64),
+        llm_score,
+    );
 
     Ok(json!({
         "score": llm_score,

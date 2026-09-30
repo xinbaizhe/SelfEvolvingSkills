@@ -1,13 +1,13 @@
 [package]
 name = "self-evolving-skills"
-version = "2.0.5"
+version = "2.0.6"
 description = "Self Evolving Skills Tauri desktop app"
 authors = ["SelfEvolvingSkills"]
 edition = "2021"
 
 [package.metadata]
 name = "self-evolving-skills"
-version = "2.0.5"
+version = "2.0.6"
 
 [lib]
 name = "self_evolving_skills_lib"
@@ -42,4 +42,7 @@ yaml-rust2 = "0.9"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+# Only for the catalog test in `src/utils/failure.rs`, which reads the backend's
+# string literals; it is already in the tree as a dependency of the proc macros.
+proc-macro2 = "1"
 tempfile = "3"

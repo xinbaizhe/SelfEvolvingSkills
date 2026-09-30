@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useBackendText } from '../../composables/useBackendText'
 import { getEvolutionHistory, type EvolutionPhase, type EvolutionRun } from '../../api/evolution'
+
+const { t } = useI18n()
+const backendText = useBackendText()
 
 const runs = ref<EvolutionRun[]>([])
 const total = ref(0)
@@ -8,17 +13,21 @@ const page = ref(1)
 const size = 10
 const loading = ref(false)
 
-const phaseLabel: Record<string, string> = {
-  discover: '扫描发现',
-  reference_retrieval: '参考检索',
-  cluster: '聚类分析',
-  draft_generate: '生成草稿',
-  optimize: '智能优化',
-  qa_review: '质量评审',
-  diff_recommend: '差异推荐',
+const PHASE_KEYS: Record<string, string> = {
+  discover: 'discover',
+  reference_retrieval: 'referenceRetrieval',
+  cluster: 'cluster',
+  draft_generate: 'draftGenerate',
+  optimize: 'optimize',
+  qa_review: 'qaReview',
+  diff_recommend: 'diffRecommend',
 }
 
 const phaseOrder = ['discover', 'reference_retrieval', 'cluster', 'draft_generate', 'optimize', 'qa_review', 'diff_recommend']
+
+const phaseLabel = computed<Record<string, string>>(() =>
+  Object.fromEntries(phaseOrder.map((phase) => [phase, t(`core.pipeline.phase.${PHASE_KEYS[phase] ?? phase}`)])),
+)
 
 const statusTag: Record<string, 'success' | 'warning' | 'info' | 'danger'> = {
   completed: 'success',
@@ -27,12 +36,12 @@ const statusTag: Record<string, 'success' | 'warning' | 'info' | 'danger'> = {
   pending: 'info',
 }
 
-const statusText: Record<string, string> = {
-  completed: '完成',
-  running: '运行中',
-  failed: '失败',
-  pending: '待执行',
-}
+const statusText = computed<Record<string, string>>(() => ({
+  completed: t('core.history.status.completed'),
+  running: t('core.history.status.running'),
+  failed: t('core.history.status.failed'),
+  pending: t('core.history.status.pending'),
+}))
 
 function formatTime(t: string | null): string {
   if (!t) return '-'
@@ -48,6 +57,21 @@ function formatTime(t: string | null): string {
 function sortedPhases(phases: EvolutionPhase[]): EvolutionPhase[] {
   return phases.slice().sort((a, b) => phaseOrder.indexOf(a.phase) - phaseOrder.indexOf(b.phase))
 }
+
+/**
+ * The runs as rendered: phases in pipeline order, each carrying the message
+ * text resolved for the current language.
+ *
+ * Resolving here rather than in the template keeps the work to one pass and,
+ * more importantly, makes the text a computed value - so a language switch
+ * re-renders every stored run instead of leaving the old language on screen.
+ */
+const runsWithText = computed(() =>
+  runs.value.map((run) => ({
+    ...run,
+    phases: sortedPhases(run.phases).map((phase) => ({ ...phase, text: backendText(phase) })),
+  })),
+)
 
 async function load() {
   loading.value = true
@@ -72,18 +96,18 @@ function onPageChange(p: number) {
 
 <template>
   <div v-loading="loading" class="evolution-history">
-    <el-empty v-if="runs.length === 0" description="暂无进化管道操作记录">
-      <el-button type="primary" @click="load">刷新</el-button>
+    <el-empty v-if="runs.length === 0" :description="t('core.history.empty')">
+      <el-button type="primary" @click="load">{{ t('common.refresh') }}</el-button>
     </el-empty>
 
     <template v-else>
       <div class="history-header">
-        <span class="history-title">共 {{ total }} 次进化记录</span>
-        <el-button size="small" text @click="load">刷新</el-button>
+        <span class="history-title">{{ t('core.history.total', { count: total }) }}</span>
+        <el-button size="small" text @click="load">{{ t('common.refresh') }}</el-button>
       </div>
 
       <div class="run-list">
-        <div v-for="run in runs" :key="run.run_id" class="run-card">
+        <div v-for="run in runsWithText" :key="run.run_id" class="run-card">
           <div class="run-card__head">
             <strong>#{{ run.run_id }}</strong>
             <el-tag :type="statusTag[run.status] || 'info'" size="small">
@@ -94,7 +118,7 @@ function onPageChange(p: number) {
 
           <div class="phase-bar">
             <div
-              v-for="phase in sortedPhases(run.phases)"
+              v-for="phase in run.phases"
               :key="phase.id"
               class="phase-item"
               :class="'phase-' + phase.status"
@@ -105,7 +129,7 @@ function onPageChange(p: number) {
                 <span v-else class="empty-dot" />
               </div>
               <div class="phase-name">{{ phaseLabel[phase.phase] || phase.phase }}</div>
-              <div class="phase-msg" :title="phase.message || ''">{{ phase.message || '-' }}</div>
+              <div class="phase-msg" :title="phase.text || ''">{{ phase.text || '-' }}</div>
               <div class="phase-time">
                 <template v-if="phase.started_at">
                   {{ formatTime(phase.started_at) }}

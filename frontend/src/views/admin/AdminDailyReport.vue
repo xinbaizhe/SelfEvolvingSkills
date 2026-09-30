@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
   fetchDailyReport,
@@ -9,7 +10,11 @@ import {
   type DailyReport,
   type GenStatus,
 } from '../../api/admin'
+import { describeError } from '../../utils/error'
+import { useBackendText } from '../../composables/useBackendText'
 
+const { t } = useI18n()
+const backendText = useBackendText()
 const report = ref<DailyReport | null>(null)
 const loading = ref(false)
 const generating = ref(false)
@@ -37,40 +42,14 @@ function formatDisplayTime(dateStr: string): string {
   return dateStr.length >= 16 ? dateStr.slice(0, 16) : dateStr
 }
 
-function friendlyError(err: unknown): string {
-  const msg = String(err?.toString?.() ?? err ?? '')
-  if (msg.includes('大模型未启用') || msg.includes('未启用')) {
-    return 'AI 模型还没启用，请先去「资源与配置」页面配置并启用大模型'
-  }
-  if (msg.includes('API Key') || msg.includes('api_key')) {
-    return 'AI 模型缺少 API 密钥，请先去「资源与配置」页面设置 API Key'
-  }
-  if (msg.includes('没有找到') || msg.includes('对话记录')) {
-    return '没有找到选中日期的编程对话记录，是不是当天没有用 AI 编程工具？试试切换到其他日期'
-  }
-  if (msg.includes('HTTP') || msg.includes('timeout') || msg.includes('超时') || msg.includes('连接')) {
-    return 'AI 模型连接不上，请检查网络或模型配置（API 地址、密钥、模型名称）是否正确'
-  }
-  if (msg.includes('缺少文本') || msg.includes('响应') || msg.includes('内容')) {
-    return 'AI 模型返回了无法识别的内容，可能是模型不支持该请求格式，请检查模型配置'
-  }
-  if (msg.includes('已有日报')) {
-    return msg
-  }
-  if (msg.includes('生成中')) {
-    return msg
-  }
-  return msg || '操作失败，请检查模型配置和网络连接后重试'
-}
-
 function phaseLabel(phase: string): string {
   const map: Record<string, string> = {
-    scanning: '正在扫描本地 AI 对话文件...',
-    summarizing: '正在调用 AI 模型生成日报...',
-    done: '日报生成完成',
-    error: '生成出错',
+    scanning: 'admin.dailyReport.phaseScanning',
+    summarizing: 'admin.dailyReport.phaseSummarizing',
+    done: 'admin.dailyReport.genDone',
+    error: 'admin.dailyReport.phaseError',
   }
-  return map[phase] || phase
+  return map[phase] ? t(map[phase]) : phase
 }
 
 async function loadReport(date?: string) {
@@ -79,7 +58,7 @@ async function loadReport(date?: string) {
     const res = await fetchDailyReport(date)
     report.value = res.data ?? null
   } catch (err) {
-    ElMessage.error(friendlyError(err))
+    ElMessage.error(describeError(err, t('admin.dailyReport.errGeneric')))
   } finally {
     loading.value = false
   }
@@ -110,7 +89,7 @@ async function handleGenerate() {
         generated_at: status.generated_at || '',
         from_cache: true,
       }
-      ElMessage.success('该日期已有日报，直接加载')
+      ElMessage.success(t('admin.dailyReport.cacheLoaded'))
       await loadHistory()
       return
     }
@@ -120,13 +99,16 @@ async function handleGenerate() {
     genProgress.value = status.progress || 5
     genPhase.value = status.phase || 'scanning'
 
-    if (status.message?.includes('生成中')) {
-      ElMessage.info('日报生成已启动，后台处理中...')
+    // The backend tags this outcome with a catalog key, so the branch no longer
+    // depends on the wording of `message`; the message renders in the interface
+    // language through the same resolver the pipeline uses.
+    if (status.code === 'admin.report.alreadyGenerating') {
+      ElMessage.info(backendText(status))
     }
 
     await pollUntilDone()
   } catch (err) {
-    ElMessage.error(friendlyError(err))
+    ElMessage.error(describeError(err, t('admin.dailyReport.errGeneric')))
     generating.value = false
   }
 }
@@ -147,10 +129,10 @@ async function pollUntilDone() {
           clearPollTimer()
           generating.value = false
           if (status.phase === 'error' || status.error) {
-            ElMessage.error(friendlyError(status.error))
+            ElMessage.error(describeError(status.error, t('admin.dailyReport.errGeneric')))
             failedAutoAttempts++
           } else {
-            ElMessage.success('日报生成完成')
+            ElMessage.success(t('admin.dailyReport.genDone'))
             await loadReport()
             await loadHistory()
             failedAutoAttempts = 0
@@ -205,8 +187,8 @@ onUnmounted(() => {
   <div class="daily-report-page">
     <div class="page-header">
       <div class="header-left">
-        <h2>工作日报</h2>
-        <span class="header-subtitle">基于 AI 编程对话记录自动生成每日工作总结</span>
+        <h2>{{ t('admin.dailyReport.title') }}</h2>
+        <span class="header-subtitle">{{ t('admin.dailyReport.subtitle') }}</span>
       </div>
       <div class="header-right">
         <input
@@ -222,7 +204,7 @@ onUnmounted(() => {
           @click="handleGenerate"
         >
           <span v-if="generating" class="spinner"></span>
-          {{ generating ? '后台生成中…' : '生成日报' }}
+          {{ generating ? t('admin.dailyReport.generating') : t('admin.dailyReport.generate') }}
         </button>
       </div>
     </div>
@@ -240,12 +222,12 @@ onUnmounted(() => {
           :style="{ width: genProgress + '%' }"
         ></div>
       </div>
-      <p class="gen-progress-hint">数据来源：读取本地 AI 编程工具对话文件（Claude Code、Codex、Cursor 等），无需联网</p>
+      <p class="gen-progress-hint">{{ t('admin.dailyReport.sourceHint') }}</p>
     </div>
 
     <!-- History date chips -->
     <div class="history-bar" v-if="history.length > 0">
-      <span class="history-label">历史日报：</span>
+      <span class="history-label">{{ t('admin.dailyReport.historyLabel') }}</span>
       <button
         v-for="item in history.slice(0, 14)"
         :key="item.report_date"
@@ -260,24 +242,24 @@ onUnmounted(() => {
     <!-- Loading state -->
     <div v-if="loading" class="state-box">
       <span class="spinner large"></span>
-      <p>加载日报中，请稍候…</p>
+      <p>{{ t('admin.dailyReport.loading') }}</p>
     </div>
 
     <!-- Empty state -->
     <div v-else-if="!report && !generating" class="state-box empty">
       <div class="empty-icon">📋</div>
-      <p>{{ selectedDate }} 的日报还没有生成</p>
-      <p class="hint">点击右上角「生成日报」，AI 会读取 {{ selectedDate }} 当天所有 AI 编程工具的对话文件，总结这天你和 AI 聊了什么、做了什么工作</p>
-      <p class="hint-sub">💾 数据来源：本地磁盘 ~/.claude/ ~/.codex/ ~/.hermes/ 等 9 个 AI 工具的对话文件，按文件修改日期匹配</p>
+      <p>{{ t('admin.dailyReport.notGenerated', { date: selectedDate }) }}</p>
+      <p class="hint">{{ t('admin.dailyReport.emptyHint', { date: selectedDate }) }}</p>
+      <p class="hint-sub">{{ t('admin.dailyReport.emptyHintSub') }}</p>
     </div>
 
     <!-- Report content -->
     <div v-else-if="report" class="report-content">
       <div class="report-meta">
-        <span>📊 分析了 {{ report.source_count }} 条编程对话记录</span>
-        <span>🕐 生成时间：{{ formatDisplayTime(report.generated_at) }}</span>
-        <span v-if="report.from_cache" class="cache-tag">（缓存）</span>
-        <span class="storage-hint" title="数据存储在本地的 data/skills_analyzer.db 数据库中 → daily_reports 表">💾 本地存储</span>
+        <span>{{ t('admin.dailyReport.analyzed', { count: report.source_count }) }}</span>
+        <span>{{ t('admin.dailyReport.generatedAt', { time: formatDisplayTime(report.generated_at) }) }}</span>
+        <span v-if="report.from_cache" class="cache-tag">{{ t('admin.dailyReport.cached') }}</span>
+        <span class="storage-hint" :title="t('admin.dailyReport.localStorageTitle')">{{ t('admin.dailyReport.localStorage') }}</span>
       </div>
       <div
         class="markdown-body"

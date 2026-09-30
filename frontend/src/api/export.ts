@@ -1,3 +1,4 @@
+import i18n from '../i18n'
 import { api } from './tauri'
 import type { ApiResponse } from './skills'
 
@@ -20,7 +21,7 @@ export async function exportSkills(format: 'json' | 'csv', agentSource?: string)
       content_type: format === 'csv' ? 'text/csv' : 'application/json',
     }
   }
-  throw new Error(res.error || '导出失败')
+  throw new Error(res.error || i18n.global.t('core.export.failed'))
 }
 
 export async function exportAgents(): Promise<ExportPayload> {

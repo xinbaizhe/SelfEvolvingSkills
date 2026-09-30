@@ -1,30 +1,34 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useTeamStore } from '../../stores/useTeamStore'
 
 defineProps<{ collapsed: boolean }>()
 
 const route = useRoute()
+const { t } = useI18n()
 const teamStore = useTeamStore()
 
-const baseMenuItems = [
-  { path: '/admin', title: '系统管理', match: ['/admin', '/admin/login', '/admin/users'] },
-  { path: '/admin/daily-report', title: '日报', match: ['/admin/daily-report'] },
-  { path: '/workbench', title: 'Skills 工作台', match: ['/workbench', '/workflows', '/drafts', '/garden'] },
-  { path: '/skills', title: '已有 Skills', match: ['/skills'] },
-  { path: '/agents', title: 'Agent 列表', match: ['/agents'] },
-  { path: '/resources', title: '资源与配置', match: ['/resources', '/sources', '/admin/config'] },
-  { path: '/community', title: '社区 Skills', match: ['/community'] },
-  { path: '/team', title: '团队 Skills', match: ['/team'] },
-  { path: '/vuln-scanner', title: '漏洞查询', match: ['/vuln-scanner'] },
-]
+// Wrapped in computed so the labels re-evaluate when the language changes -
+// as a plain array they would be frozen at setup time.
+const baseMenuItems = computed(() => [
+  { path: '/admin', title: t('nav.admin'), match: ['/admin', '/admin/login', '/admin/users'] },
+  { path: '/admin/daily-report', title: t('nav.dailyReport'), match: ['/admin/daily-report'] },
+  { path: '/workbench', title: t('nav.workbench'), match: ['/workbench', '/workflows', '/drafts', '/garden'] },
+  { path: '/skills', title: t('nav.skills'), match: ['/skills'] },
+  { path: '/agents', title: t('nav.agents'), match: ['/agents'] },
+  { path: '/resources', title: t('nav.resources'), match: ['/resources', '/sources', '/admin/config'] },
+  { path: '/community', title: t('nav.community'), match: ['/community'] },
+  { path: '/team', title: t('nav.team'), match: ['/team'] },
+  { path: '/vuln-scanner', title: t('nav.vulnScanner'), match: ['/vuln-scanner'] },
+])
 
 const menuItems = computed(() => {
-  if (!teamStore.isAuthenticated) return baseMenuItems
+  if (!teamStore.isAuthenticated) return baseMenuItems.value
   return [
-    ...baseMenuItems,
-    { path: '/team/models', title: '团队模型管理', match: ['/team/models'] },
+    ...baseMenuItems.value,
+    { path: '/team/models', title: t('nav.teamModels'), match: ['/team/models'] },
   ]
 })
 

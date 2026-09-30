@@ -23,8 +23,24 @@ import {
   type DepFinding,
   type UploadManifestResult,
 } from '../api/vuln'
+import { describeError, failureCode } from '../utils/error'
+
+/**
+ * Failures the backend raises before it ever reaches the scan server, plus the
+ * transport failures reqwest reports through reqwest's own English text. Keyed
+ * on the catalog code where there is one so a translated envelope is still
+ * recognised as a connection problem.
+ */
+const CONNECTION_ERROR_CODES = new Set([
+  'vuln.sseRequestFailed',
+  'vuln.agentSseRequestFailed',
+  'vuln.streamReadFailed',
+  'team.apiRequestFailed',
+  'team.connectFailed',
+])
 
 function isConnectionError(e: unknown): boolean {
+  if (CONNECTION_ERROR_CODES.has(failureCode(e) ?? '')) return true
   const msg = e instanceof Error ? e.message : String(e)
   return msg.includes('error sending request for url')
       || msg.includes('ConnectError')
@@ -64,7 +80,7 @@ export const useVulnStore = defineStore('vuln', () => {
       if (isConnectionError(e)) {
         offline.value = true
       } else {
-        error.value = e instanceof Error ? e.message : String(e)
+        error.value = describeError(e)
       }
       return null
     } finally {
@@ -105,7 +121,7 @@ export const useVulnStore = defineStore('vuln', () => {
       if (isConnectionError(e)) {
         offline.value = true
       } else {
-        error.value = e instanceof Error ? e.message : String(e)
+        error.value = describeError(e)
       }
       return null
     } finally {
@@ -142,7 +158,7 @@ export const useVulnStore = defineStore('vuln', () => {
       if (isConnectionError(e)) {
         offline.value = true
       } else {
-        error.value = e instanceof Error ? e.message : String(e)
+        error.value = describeError(e)
       }
       return null
     } finally {
@@ -164,7 +180,7 @@ export const useVulnStore = defineStore('vuln', () => {
       if (isConnectionError(e)) {
         offline.value = true
       } else {
-        error.value = e instanceof Error ? e.message : String(e)
+        error.value = describeError(e)
       }
       return null
     } finally {
@@ -182,7 +198,7 @@ export const useVulnStore = defineStore('vuln', () => {
       if (isConnectionError(e)) {
         offline.value = true
       } else {
-        error.value = e instanceof Error ? e.message : String(e)
+        error.value = describeError(e)
       }
     }
   }
@@ -195,7 +211,7 @@ export const useVulnStore = defineStore('vuln', () => {
       if (isConnectionError(e)) {
         offline.value = true
       } else {
-        error.value = e instanceof Error ? e.message : String(e)
+        error.value = describeError(e)
       }
     }
   }
@@ -219,7 +235,7 @@ export const useVulnStore = defineStore('vuln', () => {
       if (isConnectionError(e)) {
         offline.value = true
       } else {
-        error.value = e instanceof Error ? e.message : String(e)
+        error.value = describeError(e)
       }
     } finally {
       intelLoading.value = false
@@ -235,7 +251,7 @@ export const useVulnStore = defineStore('vuln', () => {
       await loadSnapshots()
       return result
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      error.value = describeError(e)
       return null
     } finally {
       depLoading.value = false
@@ -247,7 +263,7 @@ export const useVulnStore = defineStore('vuln', () => {
     try {
       snapshots.value = await fetchDepSnapshots()
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      error.value = describeError(e)
     } finally {
       depLoading.value = false
     }
@@ -258,7 +274,7 @@ export const useVulnStore = defineStore('vuln', () => {
     try {
       currentSnapshotDeps.value = await fetchDepDeps(snapshotId, name)
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      error.value = describeError(e)
     } finally {
       depLoading.value = false
     }
@@ -268,7 +284,7 @@ export const useVulnStore = defineStore('vuln', () => {
     try {
       depFindings.value = await fetchDepFindings(depId)
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      error.value = describeError(e)
     }
   }
 
@@ -278,7 +294,7 @@ export const useVulnStore = defineStore('vuln', () => {
       await refreshDepSnapshot(id)
       await loadSnapshots()
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      error.value = describeError(e)
     } finally {
       depLoading.value = false
     }
@@ -289,7 +305,7 @@ export const useVulnStore = defineStore('vuln', () => {
       await deleteDepSnapshot(id)
       await loadSnapshots()
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      error.value = describeError(e)
     }
   }
 

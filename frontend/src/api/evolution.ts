@@ -6,7 +6,17 @@ export interface EvolutionPhase {
   phase: string
   status: string
   progress: number
+  /** Chinese prose. Rendered only when `code` is missing or unknown. */
   message: string | null
+  /**
+   * Catalog key and placeholder values for `message`, so the phase renders in
+   * the interface language. Null for phases recorded before these columns
+   * existed - those rows keep showing whatever prose was written at the time.
+   */
+  code: string | null
+  params: Record<string, unknown> | null
+  /** A phrase the backend appended to `message`, e.g. a stale-job sweep. */
+  suffix_code: string | null
   started_at: string | null
   completed_at: string | null
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { useTeamStore } from '../../stores/useTeamStore'
 import { evaluateShareResource, fetchLlmConfig } from '../../api/admin'
@@ -21,6 +22,7 @@ type EvaluationResult = {
   llmScore?: number
 }
 
+const { t } = useI18n()
 const store = useTeamStore()
 const visible = ref(false)
 const loading = ref(false)
@@ -45,7 +47,7 @@ const form = reactive({
 })
 
 const selectedVersionLabel = computed(() =>
-  form.currentVersion > 0 ? `${form.skillName} v${form.currentVersion}` : '未选择 Skill'
+  form.currentVersion > 0 ? `${form.skillName} v${form.currentVersion}` : t('team.evolutionDialog.notSelectedSkill')
 )
 const filteredModels = computed(() => {
   if (form.evaluationModelType === 'personal') {
@@ -64,8 +66,9 @@ async function loadSkills() {
   try {
     const res = await fetchTeamSkills({ pageSize: '100' })
     skills.value = res.items
-  } catch { /* 团队 Skill 加载失败时仍保留弹窗 */ }
-  finally { loading.value = false }
+  } catch {
+    /* 团队 Skill 加载失败时仍保留弹窗 */
+  } finally { loading.value = false }
 }
 
 async function loadModels() {
@@ -78,7 +81,7 @@ async function loadModels() {
     availableModels.value = teamModels
     ensureModelSelection()
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载可用模型失败'))
+    ElMessage.error(getErrorMessage(e, t('team.common.loadModelsFailed')))
   } finally {
     modelLoading.value = false
   }
@@ -102,7 +105,7 @@ async function loadLocalResourceModel() {
     }
     localResourceModel.value = {
       id: -1,
-      name: '资源与配置的模型配置',
+      name: t('team.common.localResourceModelName'),
       provider: data.provider || data.api_format || 'custom',
       baseUrl: data.base_url,
       model: data.model,
@@ -111,9 +114,9 @@ async function loadLocalResourceModel() {
       apiKeyHash: data.api_key_configured || data.has_api_key ? 'configured' : undefined,
       isActive: 1,
       createdAt: '',
-      deptName: '资源与配置',
-      createdByName: '本机',
-      recipientName: '本机',
+      deptName: t('nav.resources'),
+      createdByName: t('team.common.localMachineName'),
+      recipientName: t('team.common.localMachineName'),
     }
   } catch {
     localResourceModel.value = null
@@ -158,7 +161,7 @@ async function onSkillSelect(skillId: number) {
     form.proposedChange = skill.bodyMd || ''
     invalidateEvaluation()
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载团队 Skill 详情失败'))
+    ElMessage.error(getErrorMessage(e, t('team.evolutionDialog.loadDetailFailed')))
   } finally {
     loading.value = false
   }
@@ -178,7 +181,7 @@ function resetForm(skillId?: number) {
 
 function open(skillId?: number) {
   if (!store.isAuthenticated) {
-    ElMessage.warning('请先登录团队版')
+    ElMessage.warning(t('team.common.loginRequired'))
     return
   }
   resetForm(skillId)
@@ -190,15 +193,15 @@ function open(skillId?: number) {
 
 function validateForm() {
   if (!form.skillId || !form.proposedChange.trim()) {
-    ElMessage.warning('请选择 Skill，并填写改进后的完整内容')
+    ElMessage.warning(t('team.evolutionDialog.skillRequired'))
     return false
   }
   if (!form.reason.trim()) {
-    ElMessage.warning('请填写改进理由，方便团队审核')
+    ElMessage.warning(t('team.evolutionDialog.reasonRequired'))
     return false
   }
   if (!form.evaluationModelId) {
-    ElMessage.warning('请选择用于 AI 评估的模型')
+    ElMessage.warning(t('team.common.evalModelRequired'))
     return false
   }
   return true
@@ -220,22 +223,22 @@ function calculateEvaluationScore(): EvaluationResult {
   let securityDeductions = 0
   let performanceDeductions = 0
   if (/api[_-]?key|secret|token|password|bearer\s+[a-z0-9._-]{16,}/i.test(body)) {
-    securityDeductions += addPenalty(penalties, '改进内容疑似包含密钥、令牌或密码', 18)
+    securityDeductions += addPenalty(penalties, t('team.evolutionDialog.penaltySecret'), 18)
   }
   if (/(rm\s+-rf|del\s+\/[sq]|format\s+[a-z]:|shutdown\s+\/|powershell\s+-enc|curl\s+.*\|\s*(sh|bash)|wget\s+.*\|\s*(sh|bash))/i.test(body)) {
-    securityDeductions += addPenalty(penalties, '改进内容包含高危系统命令或远程脚本执行模式', 20)
+    securityDeductions += addPenalty(penalties, t('team.evolutionDialog.penaltyDangerousCommand'), 20)
   }
   if (form.proposedChange.trim().length < 120) {
-    performanceDeductions += addPenalty(penalties, '改进后的 Skill 内容过短，缺少完整执行说明', 10)
+    performanceDeductions += addPenalty(penalties, t('team.evolutionDialog.penaltyShortContent'), 10)
   }
   if (form.reason.trim().length < 8) {
-    performanceDeductions += addPenalty(penalties, '改进理由过短，不利于团队审核', 5)
+    performanceDeductions += addPenalty(penalties, t('team.evolutionDialog.penaltyShortReason'), 5)
   }
   if (form.proposedChange.length > 300_000) {
-    performanceDeductions += addPenalty(penalties, '改进内容体积偏大，审核和分发成本高', 8)
+    performanceDeductions += addPenalty(penalties, t('team.evolutionDialog.penaltyTooLarge'), 8)
   }
   if (!selectedEvaluationModel.value?.model) {
-    securityDeductions += addPenalty(penalties, '未选择可用评估模型', 25)
+    securityDeductions += addPenalty(penalties, t('team.evolutionDialog.penaltyNoEvalModel'), 25)
   }
   const securityScore = clampScore(100 - securityDeductions)
   const performanceScore = clampScore(100 - performanceDeductions)
@@ -245,7 +248,7 @@ function calculateEvaluationScore(): EvaluationResult {
     securityScore,
     performanceScore,
     passed: score >= 95,
-    summary: score >= 95 ? '评估通过，可以提交提案。' : '评估未通过，需要总分达到 95 分以上才能提交提案。',
+    summary: score >= 95 ? t('team.evolutionDialog.heuristicSummaryPassed') : t('team.evolutionDialog.heuristicSummaryFailed'),
     penalties,
     suggestions: [],
     requiredChanges: [],
@@ -273,7 +276,7 @@ function buildEvaluationPayload(heuristic: EvaluationResult) {
   return {
     metadata: {
       shareType: 'evolution-proposal',
-      name: `${form.skillName} 进化提案`,
+      name: `${form.skillName} 进化提案`, // i18n-exempt: LLM evaluation payload metadata, not UI
       description: form.reason,
       category: 'evolution',
       originAgent: 'team-evolution',
@@ -291,14 +294,14 @@ function buildEvaluationPayload(heuristic: EvaluationResult) {
       penalties: heuristic.penalties,
     },
     content: [
-      `# ${form.skillName} 进化提案`,
+      `# ${form.skillName} 进化提案`, // i18n-exempt: LLM evaluation payload
       '',
-      `当前版本: v${form.currentVersion || 1}`,
+      `当前版本: v${form.currentVersion || 1}`, // i18n-exempt: LLM evaluation payload
       '',
-      '## 改进理由',
+      '## 改进理由', // i18n-exempt: LLM evaluation payload
       form.reason,
       '',
-      '## 改进后的完整内容',
+      '## 改进后的完整内容', // i18n-exempt: LLM evaluation payload
       form.proposedChange,
     ].join('\n'),
   }
@@ -306,8 +309,8 @@ function buildEvaluationPayload(heuristic: EvaluationResult) {
 
 function evaluationErrorFallback() {
   return form.evaluationModelType === 'department'
-    ? '大模型评估失败，请检查所选部门模型配置、API Key、Base URL 和模型标识'
-    : '大模型评估失败，请检查资源与配置中的模型配置'
+    ? t('team.common.evalErrorDepartment')
+    : t('team.common.evalErrorPersonal')
 }
 
 async function runEvaluation() {
@@ -316,7 +319,7 @@ async function runEvaluation() {
   try {
     const heuristic = calculateEvaluationScore()
     const res = await evaluateShareResource(buildEvaluationPayload(heuristic) as Record<string, unknown>)
-    if (!res.success) throw new Error(res.error || '大模型评估失败')
+    if (!res.success) throw new Error(res.error || t('team.common.llmEvaluationFailed'))
     const data = (res.data || {}) as Record<string, unknown>
     const llmScore = clampScore(Number(data.score ?? 0))
     const llmSecurityScore = clampScore(Number(data.securityScore ?? llmScore))
@@ -327,7 +330,7 @@ async function runEvaluation() {
       securityScore: Math.min(heuristic.securityScore, llmSecurityScore),
       performanceScore: Math.min(heuristic.performanceScore, llmPerformanceScore),
       passed: finalScore >= 95,
-      summary: String(data.summary || (finalScore >= 95 ? '大模型评估通过，可以提交提案。' : '大模型评估未通过，需要按建议修改后重新评估。')),
+      summary: String(data.summary || (finalScore >= 95 ? t('team.evolutionDialog.llmSummaryPassed') : t('team.evolutionDialog.llmSummaryFailed'))),
       penalties: heuristic.penalties,
       suggestions: stringArray(data.suggestions),
       requiredChanges: stringArray(data.requiredChanges),
@@ -337,9 +340,9 @@ async function runEvaluation() {
     }
     evaluationSignature.value = currentEvaluationSignature()
     if (evaluationResult.value.passed) {
-      ElMessage.success(`评估通过：${evaluationResult.value.score} 分`)
+      ElMessage.success(t('team.evolutionDialog.evalPassed', { score: evaluationResult.value.score }))
     } else {
-      ElMessage.warning(`评估未通过：${evaluationResult.value.score} 分，需达到 95 分以上`)
+      ElMessage.warning(t('team.evolutionDialog.evalFailed', { score: evaluationResult.value.score }))
     }
   } catch (e: unknown) {
     evaluationResult.value = null
@@ -352,11 +355,11 @@ async function runEvaluation() {
 
 function validateEvaluationResult() {
   if (!evaluationResult.value || evaluationSignature.value !== currentEvaluationSignature()) {
-    ElMessage.warning('请先完成 AI 安全与性能评估')
+    ElMessage.warning(t('team.common.evalNotRun'))
     return false
   }
   if (!evaluationResult.value.passed) {
-    ElMessage.warning('评估分数需达到 95 分以上才能提交提案')
+    ElMessage.warning(t('team.evolutionDialog.evalScoreTooLow'))
     return false
   }
   return true
@@ -373,20 +376,20 @@ async function doSubmit() {
       reason: [
         form.reason,
         '',
-        '## AI 安全与性能评估',
-        `综合分: ${evaluationResult.value?.score ?? 0}`,
-        `安全分: ${evaluationResult.value?.securityScore ?? 0}`,
-        `性能分: ${evaluationResult.value?.performanceScore ?? 0}`,
-        `大模型分: ${evaluationResult.value?.llmScore ?? 0}`,
-        `评估摘要: ${evaluationResult.value?.summary || ''}`,
+        t('team.evolutionDialog.reasonSectionTitle'),
+        t('team.evolutionDialog.reasonOverallScore', { score: evaluationResult.value?.score ?? 0 }),
+        t('team.evolutionDialog.reasonSecurityScore', { score: evaluationResult.value?.securityScore ?? 0 }),
+        t('team.evolutionDialog.reasonPerformanceScore', { score: evaluationResult.value?.performanceScore ?? 0 }),
+        t('team.evolutionDialog.reasonLlmScore', { score: evaluationResult.value?.llmScore ?? 0 }),
+        t('team.evolutionDialog.reasonSummary', { summary: evaluationResult.value?.summary || '' }),
       ].join('\n'),
       previousVersion: form.currentVersion > 0 ? `v${form.currentVersion}` : undefined,
     })
-    ElMessage.success('进化提案已提交')
+    ElMessage.success(t('team.evolutionDialog.submitSuccess'))
     visible.value = false
     emit('submitted')
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '提交失败'))
+    ElMessage.error(getErrorMessage(e, t('team.evolutionDialog.submitFailed')))
   } finally {
     submitting.value = false
   }
@@ -410,12 +413,12 @@ defineExpose({ open })
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="提交协同进化提案" width="760px" top="6vh">
+  <el-dialog v-model="visible" :title="t('team.evolutionDialog.title')" width="760px" top="6vh">
     <el-form label-position="top" @submit.prevent="doSubmit">
-      <el-form-item label="选择团队 Skill">
+      <el-form-item :label="t('team.evolutionDialog.selectSkill')">
         <el-select
           v-model="form.skillId"
-          placeholder="选择要进化的团队 Skill..."
+          :placeholder="t('team.evolutionDialog.selectSkillPlaceholder')"
           filterable
           style="width: 100%"
           :loading="loading"
@@ -432,58 +435,58 @@ defineExpose({ open })
 
       <div v-if="currentBody" class="version-panel">
         <div class="version-header">
-          <span>当前版本：{{ selectedVersionLabel }}</span>
-          <el-button size="small" text type="primary" @click="form.proposedChange = currentBody">恢复为当前版本</el-button>
+          <span>{{ t('team.evolutionDialog.currentVersion', { label: selectedVersionLabel }) }}</span>
+          <el-button size="small" text type="primary" @click="form.proposedChange = currentBody">{{ t('team.evolutionDialog.restoreCurrent') }}</el-button>
         </div>
         <div class="body-preview">{{ currentBody }}</div>
       </div>
 
-      <el-form-item label="改进后的完整内容 (Markdown)">
+      <el-form-item :label="t('team.evolutionDialog.proposedChange')">
         <el-input
           v-model="form.proposedChange"
           type="textarea"
           :rows="10"
-          placeholder="选择 Skill 后会自动带入当前内容，请在此基础上修改。"
+          :placeholder="t('team.evolutionDialog.proposedChangePlaceholder')"
         />
       </el-form-item>
 
-      <el-form-item label="改进理由">
+      <el-form-item :label="t('team.evolutionDialog.reason')">
         <el-input
           v-model="form.reason"
           type="textarea"
           :rows="3"
-          placeholder="说明触发场景、改动点和预期收益。"
+          :placeholder="t('team.evolutionDialog.reasonPlaceholder')"
         />
       </el-form-item>
 
       <section class="evaluation-panel">
         <div class="evaluation-head">
           <div>
-            <div class="evaluation-title">AI 安全与性能评估</div>
-            <p>总分 95 分以上才能提交提案。</p>
+            <div class="evaluation-title">{{ t('team.common.evalTitle') }}</div>
+            <p>{{ t('team.evolutionDialog.scoreHint') }}</p>
           </div>
-          <el-button type="primary" plain :loading="evaluating" @click="runEvaluation">开始评估</el-button>
+          <el-button type="primary" plain :loading="evaluating" @click="runEvaluation">{{ t('team.common.startEvaluation') }}</el-button>
         </div>
 
         <div class="evaluation-grid">
-          <el-form-item label="模型类型">
+          <el-form-item :label="t('team.common.modelType')">
             <el-segmented
               v-model="form.evaluationModelType"
               :options="[
-                { label: '部门模型', value: 'department' },
-                { label: '资源与配置的模型配置', value: 'personal' },
+                { label: t('team.common.deptModel'), value: 'department' },
+                { label: t('team.common.localResourceModelName'), value: 'personal' },
               ]"
             />
           </el-form-item>
 
-          <el-form-item label="评估模型">
+          <el-form-item :label="t('team.common.evaluationModel')">
             <el-select
               v-model="form.evaluationModelId"
-              placeholder="请选择评估模型"
+              :placeholder="t('team.common.selectEvaluationModel')"
               filterable
               style="width: 100%"
               :loading="modelLoading"
-              no-data-text="暂无可用模型，请先到资源与配置中启用模型配置"
+              :no-data-text="t('team.common.noAvailableModels')"
             >
               <el-option
                 v-for="model in filteredModels"
@@ -501,26 +504,25 @@ defineExpose({ open })
         <div v-if="evaluationResult" class="evaluation-result" :class="{ passed: evaluationResult.passed }">
           <div class="score-block">
             <strong>{{ evaluationResult.score }}</strong>
-            <span>综合分</span>
+            <span>{{ t('team.common.overallScore') }}</span>
           </div>
           <div class="score-detail">
             <div>{{ evaluationResult.summary }}</div>
             <small>
-              安全 {{ evaluationResult.securityScore }} / 性能 {{ evaluationResult.performanceScore }}
-              / 规则 {{ evaluationResult.heuristicScore }}
-              <template v-if="evaluationResult.llmScore !== undefined"> / 大模型 {{ evaluationResult.llmScore }}</template>
+              {{ t('team.common.scoreBreakdown', { security: evaluationResult.securityScore, performance: evaluationResult.performanceScore, heuristic: evaluationResult.heuristicScore }) }}
+              <template v-if="evaluationResult.llmScore !== undefined">{{ t('team.common.scoreBreakdownLlm', { llm: evaluationResult.llmScore }) }}</template>
             </small>
             <ul v-if="evaluationResult.requiredChanges.length">
-              <li v-for="item in evaluationResult.requiredChanges" :key="`required-${item}`">必须修改：{{ item }}</li>
+              <li v-for="item in evaluationResult.requiredChanges" :key="`required-${item}`">{{ t('team.common.requiredChange', { item }) }}</li>
             </ul>
             <ul v-if="evaluationResult.suggestions.length">
-              <li v-for="item in evaluationResult.suggestions" :key="`suggestion-${item}`">建议：{{ item }}</li>
+              <li v-for="item in evaluationResult.suggestions" :key="`suggestion-${item}`">{{ t('team.common.suggestion', { item }) }}</li>
             </ul>
             <ul v-if="evaluationResult.risks.length">
-              <li v-for="item in evaluationResult.risks" :key="`risk-${item}`">风险：{{ item }}</li>
+              <li v-for="item in evaluationResult.risks" :key="`risk-${item}`">{{ t('team.common.risk', { item }) }}</li>
             </ul>
             <ul v-if="evaluationResult.penalties.length">
-              <li v-for="item in evaluationResult.penalties" :key="`penalty-${item}`">规则扣分：{{ item }}</li>
+              <li v-for="item in evaluationResult.penalties" :key="`penalty-${item}`">{{ t('team.common.penalty', { item }) }}</li>
             </ul>
           </div>
         </div>
@@ -528,8 +530,8 @@ defineExpose({ open })
     </el-form>
 
     <template #footer>
-      <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" :loading="submitting" :disabled="!evaluationResult?.passed" @click="doSubmit">提交提案</el-button>
+      <el-button @click="visible = false">{{ t('common.cancel') }}</el-button>
+      <el-button type="primary" :loading="submitting" :disabled="!evaluationResult?.passed" @click="doSubmit">{{ t('team.evolutionDialog.submit') }}</el-button>
     </template>
   </el-dialog>
 </template>

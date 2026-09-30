@@ -422,32 +422,56 @@ fn seed_recommendations(conn: &Connection, query: &str) -> Vec<CommunityRecommen
         .into_iter()
         .enumerate()
         .map(|(index, (name, description, category))| {
-            let desc = if description.is_empty() {
-                format!("本地 Skill「{}」— 基于你的实际使用数据推荐相关社区项目", name)
-            } else {
+            let has_description = !description.is_empty();
+            let desc_text = if has_description {
                 description
+            } else {
+                format!("本地 Skill「{}」— 基于你的实际使用数据推荐相关社区项目", name)
             };
-            let relevance = utils::metadata_relevance_score(query, &name, &desc, &name)
+            let relevance = utils::metadata_relevance_score(query, &name, &desc_text, &name)
                 .max(0.78 - index as f64 * 0.05);
             let quality = (0.88 - index as f64 * 0.04).max(0.70);
-            let cat_hint = if category.is_empty() {
-                String::new()
+            let repo_full_name = format!("skill-seed/{}", utils::slug(&name));
+            let repo_url = format!(
+                "https://github.com/search?q={}+skill+agent",
+                utils::url_query(&name)
+            );
+            let desc = if has_description {
+                desc_text
             } else {
-                format!("，归类为「{}」", category)
+                utils::field_text(
+                    "workbench.community.seedDescription",
+                    json!({ "name": name.clone() }),
+                    desc_text,
+                )
             };
+            let (cat_hint, cat_hint_text) = if category.is_empty() {
+                (json!(""), String::new())
+            } else {
+                let text = format!("，归类为「{}」", category);
+                let hint = utils::field(
+                    "workbench.community.seedCategoryHint",
+                    json!({ "category": category }),
+                    text.clone(),
+                );
+                (hint, text)
+            };
+            let reason_text = format!(
+                "它是什么：根据你本地已安装的 Skill「{}」{}生成的社区参考条目。\n\n对 Skills 工作台有什么用：你的工作流中已在使用此 Skill，社区中可能有更优的同类实现可以参考、对比或合并。\n\n适合什么时候看：当你觉得当前 Skill 的指令不够精准、覆盖场景不够全，或者想看看社区如何解决同类问题时打开。\n\n建议优先看什么：搜索结果的 README、示例目录、agent instructions 或 workflow 文件。",
+                name, cat_hint_text
+            );
+            let reason = utils::field_text(
+                "workbench.community.seedReason",
+                json!({ "name": name.clone(), "categoryHint": cat_hint }),
+                reason_text,
+            );
             CommunityRecommendation {
-                name: format!("{} (社区参考)", name),
-                repo_full_name: format!("skill-seed/{}", utils::slug(&name)),
-                repo_url: format!(
-                    "https://github.com/search?q={}+skill+agent",
-                    utils::url_query(&name)
-                ),
+                name,
+                repo_full_name,
+                repo_url,
                 stars: 0,
                 description: desc,
-                reason: format!(
-                    "它是什么：根据你本地已安装的 Skill「{}」{}生成的社区参考条目。\n\n对 Skills 工作台有什么用：你的工作流中已在使用此 Skill，社区中可能有更优的同类实现可以参考、对比或合并。\n\n适合什么时候看：当你觉得当前 Skill 的指令不够精准、覆盖场景不够全，或者想看看社区如何解决同类问题时打开。\n\n建议优先看什么：搜索结果的 README、示例目录、agent instructions 或 workflow 文件。",
-                    name, cat_hint
-                ),
+                reason,
                 source: "Seed".to_string(),
                 license: None,
                 pushed_at: None,

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { fetchLlmConfig, fetchScanPaths, fetchSystemInfo, testLlmConnection, updateLlmConfig } from '../../api/admin'
 import type { LlmConfigData, ScanPathEntry, ScanPathSource, SystemInfo } from '../../types/admin'
+import { describeError } from '../../utils/error'
 
 interface ProviderPreset {
   key: string
-  label: string
+  labelKey: string
   baseUrl: string
   anthropicBaseUrl?: string
   models: string[]
@@ -15,16 +17,17 @@ interface ProviderPreset {
 }
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
-  { key: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.1', 'o3', 'gpt-4.1'], defaultModel: 'gpt-5.5' },
-  { key: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', anthropicBaseUrl: 'https://api.deepseek.com/anthropic', models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-v4-pro' },
+  { key: 'openai', labelKey: 'admin.common.providerPreset.openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.1', 'o3', 'gpt-4.1'], defaultModel: 'gpt-5.5' },
+  { key: 'deepseek', labelKey: 'admin.common.providerPreset.deepseek', baseUrl: 'https://api.deepseek.com', anthropicBaseUrl: 'https://api.deepseek.com/anthropic', models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-v4-pro' },
 
-  { key: 'bailian', label: '阿里百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen3.7-max', 'qwen3.6-max-preview', 'qwen3.6-plus', 'qwen-plus', 'qwen-max'], defaultModel: 'qwen3.7-max' },
-  { key: 'zhipu', label: '智谱 AI (GLM)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic', models: ['glm-5.1', 'glm-5', 'glm-4.7-flash', 'glm-4.6'], defaultModel: 'glm-5.1' },
-  { key: 'moonshot', label: '月之暗面 (Moonshot)', baseUrl: 'https://api.moonshot.cn/v1', models: ['kimi-k2.6', 'kimi-k2.5', 'moonshot-v1-128k', 'moonshot-v1-32k'], defaultModel: 'kimi-k2.6' },
-  { key: 'minimax', label: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1', anthropicBaseUrl: 'https://api.minimaxi.com/anthropic', models: ['MiniMax-M2.7'], defaultModel: 'MiniMax-M2.7', apiFormat: 'anthropic' },
-  { key: 'custom', label: '自定义兼容接口', baseUrl: '', models: [], defaultModel: '' },
+  { key: 'bailian', labelKey: 'admin.common.providerPreset.bailian', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen3.7-max', 'qwen3.6-max-preview', 'qwen3.6-plus', 'qwen-plus', 'qwen-max'], defaultModel: 'qwen3.7-max' },
+  { key: 'zhipu', labelKey: 'admin.common.providerPreset.zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic', models: ['glm-5.1', 'glm-5', 'glm-4.7-flash', 'glm-4.6'], defaultModel: 'glm-5.1' },
+  { key: 'moonshot', labelKey: 'admin.common.providerPreset.moonshot', baseUrl: 'https://api.moonshot.cn/v1', models: ['kimi-k2.6', 'kimi-k2.5', 'moonshot-v1-128k', 'moonshot-v1-32k'], defaultModel: 'kimi-k2.6' },
+  { key: 'minimax', labelKey: 'admin.common.providerPreset.minimax', baseUrl: 'https://api.minimaxi.com/v1', anthropicBaseUrl: 'https://api.minimaxi.com/anthropic', models: ['MiniMax-M2.7'], defaultModel: 'MiniMax-M2.7', apiFormat: 'anthropic' },
+  { key: 'custom', labelKey: 'admin.common.providerPreset.custom', baseUrl: '', models: [], defaultModel: '' },
 ]
 
+const { t } = useI18n()
 const selectedProvider = ref('openai')
 const showApiKey = ref(false)
 const systemInfo = ref<SystemInfo | null>(null)
@@ -45,10 +48,10 @@ const formatUnsupported = computed(() => {
 })
 
 const llmStatusLabel = computed(() => {
-  if (lastTestOk.value === true) return '大模型可用'
-  if (lastTestOk.value === false) return `连接失败：${lastTestError.value || '未知错误'}`
-  if (form.llm_enabled && form.api_key_configured) return '已配置，未测试连接'
-  return '使用本地回退'
+  if (lastTestOk.value === true) return t('admin.config.llmAvailable')
+  if (lastTestOk.value === false) return t('admin.config.connectionFailed', { error: lastTestError.value || t('admin.config.unknownError') })
+  if (form.llm_enabled && form.api_key_configured) return t('admin.config.configuredUntested')
+  return t('admin.config.localFallback')
 })
 
 const llmStatusType = computed<'' | 'success' | 'danger' | 'warning' | 'info'>(() => {
@@ -148,15 +151,15 @@ function llmPayload() {
 
 function validateLlmForm() {
   if (!form.llm_base_url.trim()) {
-    ElMessage.warning('请填写基础 URL')
+    ElMessage.warning(t('admin.config.fillBaseUrl'))
     return false
   }
   if (!form.llm_model.trim()) {
-    ElMessage.warning('请选择或填写模型')
+    ElMessage.warning(t('admin.config.fillModel'))
     return false
   }
   if (!form.llm_api_key.trim() && !form.api_key_configured) {
-    ElMessage.warning('请填写 API Key')
+    ElMessage.warning(t('admin.config.fillApiKey'))
     return false
   }
   return true
@@ -172,7 +175,7 @@ async function save() {
       applyLlmConfig(res.data || { ...payload, enabled: payload.llm_enabled, provider: payload.llm_provider, base_url: payload.llm_base_url, model: payload.llm_model, api_format: payload.llm_api_format, has_api_key: true })
       const sysRes = await fetchSystemInfo()
       if (sysRes.success) systemInfo.value = sysRes.data as SystemInfo
-      ElMessage.success('大模型配置已保存')
+      ElMessage.success(t('admin.config.saveSuccess'))
     }
   } finally {
     saving.value = false
@@ -188,16 +191,16 @@ async function testConnection() {
     const res = await testLlmConnection(llmPayload())
     if (res.success) {
       lastTestOk.value = true
-      ElMessage.success(res.data?.message || '连接测试成功')
+      ElMessage.success(describeError(res.data?.message, t('admin.config.testSuccess')))
     } else {
       lastTestOk.value = false
-      lastTestError.value = res.error || '连接测试失败'
-      ElMessage.error(res.error || '连接测试失败')
+      lastTestError.value = describeError(res.error, t('admin.config.testFailed'))
+      ElMessage.error(describeError(res.error, t('admin.config.testFailed')))
     }
   } catch (e: unknown) {
     lastTestOk.value = false
-    lastTestError.value = e instanceof Error ? e.message : '连接测试异常'
-    ElMessage.error(e instanceof Error ? e.message : '连接测试异常')
+    lastTestError.value = describeError(e, t('admin.config.testError'))
+    ElMessage.error(describeError(e, t('admin.config.testError')))
   } finally {
     testing.value = false
   }
@@ -213,48 +216,48 @@ function getSourcePaths(source: ScanPathSource): ScanPathEntry[] {
 
 <template>
   <div v-loading="loading">
-    <h2 style="margin-bottom: 16px">系统配置</h2>
+    <h2 style="margin-bottom: 16px">{{ t('admin.config.title') }}</h2>
 
-    <el-card header="大模型推荐配置">
+    <el-card :header="t('admin.config.llmCard')">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
-        <template #title>兼容 OpenAI / Anthropic 接口</template>
-        基础 URL、API Key 和模型均可自行填写；支持 OpenAI 和 Anthropic Messages 两种 API 格式。
+        <template #title>{{ t('admin.config.llmAlertTitle') }}</template>
+        {{ t('admin.config.llmAlertBody') }}
       </el-alert>
 
       <el-form label-width="120px" style="max-width: 760px">
-        <el-form-item label="启用大模型">
+        <el-form-item :label="t('admin.config.enableLlm')">
           <el-switch v-model="form.llm_enabled" />
         </el-form-item>
-        <el-form-item label="服务商">
+        <el-form-item :label="t('admin.config.provider')">
           <el-select
             v-model="selectedProvider"
-            placeholder="选择服务商"
+            :placeholder="t('admin.config.selectProvider')"
             style="width: 100%"
             @change="onProviderChange"
           >
             <el-option
               v-for="provider in PROVIDER_PRESETS"
               :key="provider.key"
-              :label="provider.label"
+              :label="t(provider.labelKey)"
               :value="provider.key"
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="API 格式">
+        <el-form-item :label="t('admin.common.apiFormat')">
           <el-select v-model="form.llm_api_format" style="width: 100%" @change="onApiFormatChange">
-            <el-option label="OpenAI 兼容 (Chat Completions)" value="openai" />
-            <el-option label="Anthropic (Messages API)" value="anthropic" />
+            <el-option :label="t('admin.config.apiFormatOpenai')" value="openai" />
+            <el-option :label="t('admin.config.apiFormatAnthropic')" value="anthropic" />
           </el-select>
         </el-form-item>
         <div v-if="formatUnsupported" style="max-width: 760px; margin: 0 0 18px 120px">
           <el-alert type="warning" :closable="false" show-icon>
-            <template #title>{{ activePreset?.label }} 暂不支持 Anthropic Messages API，建议切换为 OpenAI 兼容格式</template>
+            <template #title>{{ t('admin.config.formatUnsupported', { provider: activePreset ? t(activePreset.labelKey) : '' }) }}</template>
           </el-alert>
         </div>
-        <el-form-item label="基础 URL">
+        <el-form-item :label="t('admin.config.baseUrl')">
           <el-select
             v-model="form.llm_base_url"
-            placeholder="选择或输入基础 URL"
+            :placeholder="t('admin.config.baseUrlPlaceholder')"
             style="width: 100%"
             filterable
             allow-create
@@ -272,7 +275,7 @@ function getSourcePaths(source: ScanPathSource): ScanPathEntry[] {
           <el-input
             v-model="form.llm_api_key"
             :type="showApiKey ? 'text' : 'password'"
-            :placeholder="form.api_key_configured ? '已配置，留空则保持不变' : '请输入 API Key'"
+            :placeholder="form.api_key_configured ? t('admin.config.apiKeyConfiguredPlaceholder') : t('admin.config.apiKeyPlaceholder')"
           >
             <template #suffix>
               <el-icon
@@ -294,10 +297,10 @@ function getSourcePaths(source: ScanPathSource): ScanPathEntry[] {
             </template>
           </el-input>
         </el-form-item>
-        <el-form-item label="模型">
+        <el-form-item :label="t('admin.common.model')">
           <el-select
             v-model="form.llm_model"
-            placeholder="选择或输入模型"
+            :placeholder="t('admin.common.modelPlaceholder')"
             style="width: 100%"
             filterable
             allow-create
@@ -312,44 +315,42 @@ function getSourcePaths(source: ScanPathSource): ScanPathEntry[] {
           </el-select>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
-          <el-button :loading="testing" @click="testConnection">测试连接</el-button>
+          <el-button type="primary" :loading="saving" @click="save">{{ t('admin.config.saveConfig') }}</el-button>
+          <el-button :loading="testing" @click="testConnection">{{ t('admin.config.testConnection') }}</el-button>
           <el-tag :type="llmStatusType" size="small">{{ llmStatusLabel }}</el-tag>
         </el-form-item>
       </el-form>
     </el-card>
 
-    <el-card header="扫描路径配置" style="margin-top: 20px">
+    <el-card :header="t('admin.config.scanPathsCard')" style="margin-top: 20px">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
-        <template #title>路径来源</template>
-        显示已启用本地 Agent 数据源的实际扫描路径。可在“本地数据源”页面启用或禁用 Agent。
+        <template #title>{{ t('admin.config.pathSourceTitle') }}</template>
+        {{ t('admin.config.pathSourceBody') }}
       </el-alert>
 
-      <el-empty v-if="scanPaths.length === 0" description="未启用任何 Agent 数据源" />
+      <el-empty v-if="scanPaths.length === 0" :description="t('admin.config.noSources')" />
       <div v-else class="path-list">
         <section v-for="source in scanPaths" :key="source.agent_id" class="path-source">
           <div class="path-source__head">
             <strong>{{ source.agent_name }}</strong>
             <span :class="'chip ' + (source.is_available ? 'green' : 'orange')">
-              {{ source.is_available ? '可用' : '未检测到' }}
+              {{ source.is_available ? t('admin.common.available') : t('admin.common.unavailable') }}
             </span>
-            <span class="hint">{{ source.record_count }} 条记录</span>
+            <span class="hint">{{ t('admin.config.recordCount', { n: source.record_count }) }}</span>
           </div>
-          <el-table :data="getSourcePaths(source)" size="small" border empty-text="无路径">
-            <el-table-column prop="type" label="类型" width="130" />
-            <el-table-column prop="path" label="路径" />
+          <el-table :data="getSourcePaths(source)" size="small" border :empty-text="t('admin.config.noPaths')">
+            <el-table-column prop="type" :label="t('admin.common.type')" width="130" />
+            <el-table-column prop="path" :label="t('admin.common.path')" />
           </el-table>
         </section>
       </div>
     </el-card>
 
-    <el-card header="关于" style="margin-top: 20px" v-if="systemInfo">
+    <el-card :header="t('admin.config.about')" style="margin-top: 20px" v-if="systemInfo">
       <div class="about">
         <p class="about-name">Self Evolving Skills</p>
         <p class="about-desc">
-          本地优先的 AI Coding Agent Skills 进化引擎。扫描本机已安装的 AI 编程工具（Claude Code、Codex、Cursor、VSCode 等），
-          收集已有的 Skills、Agents 与会话历史，通过 7 步进化管道自动发现高频重复工作流，生成可安装的 Skill 草稿。
-          所有数据默认留存在本机，不上传任何内容。
+          {{ t('admin.config.aboutDesc') }}
         </p>
         <div class="about-stats">
           <div class="stat-item">

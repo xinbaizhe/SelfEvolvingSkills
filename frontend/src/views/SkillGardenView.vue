@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   deleteWorkflowSkill,
@@ -12,6 +13,7 @@ import {
 import { emitSkillsChanged } from '../composables/useSkillEvents'
 import type { PaginatedResult } from '../api/skills'
 
+const { t } = useI18n()
 const gardenItems = ref<Workflow[]>([])
 const installTargets = ref<SkillInstallTarget[]>([])
 const selectedTargets = ref<Record<number, string>>({})
@@ -76,7 +78,7 @@ async function load() {
 async function handleInstall(workflow: Workflow) {
   const agentId = getTarget(workflow.id)
   if (!agentId) {
-    ElMessage.warning('请先选择要安装到的 Agent')
+    ElMessage.warning(t('workbench.garden.selectTargetFirst'))
     return
   }
 
@@ -87,12 +89,12 @@ async function handleInstall(workflow: Workflow) {
       workflow.status = 'installed'
       setTarget(workflow.id, res.data.agent_id)
       emitSkillsChanged()
-      ElMessage.success(`已安装到 ${res.data.agent_name}: ${res.data.path}`)
+      ElMessage.success(t('workbench.garden.installSuccess', { agent: res.data.agent_name, path: res.data.path }))
     } else {
-      ElMessage.error(res.error || '安装失败')
+      ElMessage.error(res.error || t('workbench.garden.installFailed'))
     }
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '安装失败')
+    ElMessage.error(error instanceof Error ? error.message : t('workbench.garden.installFailed'))
   } finally {
     installingId.value = null
   }
@@ -101,13 +103,13 @@ async function handleInstall(workflow: Workflow) {
 async function handleDelete(workflow: Workflow) {
   const isInstalled = workflow.status === 'installed'
   const message = isInstalled
-    ? `确定要删除 "${workflow.name}" 吗？此操作将删除已安装的 Skill 文件及该记录。`
-    : `确定要删除 "${workflow.name}" 吗？`
+    ? t('workbench.garden.deleteConfirmInstalled', { name: workflow.name })
+    : t('workbench.garden.deleteConfirm', { name: workflow.name })
 
   try {
-    await ElMessageBox.confirm(message, '删除确认', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(message, t('workbench.common.deleteConfirmTitle'), {
+      confirmButtonText: t('common.delete'),
+      cancelButtonText: t('common.cancel'),
       type: 'warning',
     })
   } catch {
@@ -120,12 +122,12 @@ async function handleDelete(workflow: Workflow) {
     if (res.success) {
       gardenItems.value = gardenItems.value.filter((w) => w.id !== workflow.id)
       emitSkillsChanged()
-      ElMessage.success(`已删除 "${workflow.name}"`)
+      ElMessage.success(t('workbench.garden.deletedByName', { name: workflow.name }))
     } else {
-      ElMessage.error(res.error || '删除失败')
+      ElMessage.error(res.error || t('workbench.common.deleteFailed'))
     }
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '删除失败')
+    ElMessage.error(error instanceof Error ? error.message : t('workbench.common.deleteFailed'))
   } finally {
     deletingId.value = null
   }
@@ -138,24 +140,24 @@ onMounted(load)
   <section class="page-view" v-loading="loading">
     <div class="metrics">
       <article class="metric">
-        <label>已生成技能 <span class="chip green">本地</span></label>
+        <label>{{ t('workbench.garden.metricGenerated') }} <span class="chip green">{{ t('workbench.garden.chipLocal') }}</span></label>
         <strong>{{ gardenItems.length }}</strong>
-        <small>管理已安装或待处理的定制技能。</small>
+        <small>{{ t('workbench.garden.metricGeneratedHint') }}</small>
       </article>
       <article class="metric">
-        <label>可安装目标 <span class="chip violet">Agent</span></label>
+        <label>{{ t('workbench.garden.metricTargets') }} <span class="chip violet">Agent</span></label>
         <strong>{{ installTargets.length }}</strong>
-        <small>只显示配置了 skills_path 的 Agent，例如 Claude Code、Codex、Hermes。</small>
+        <small>{{ t('workbench.garden.metricTargetsHint') }}</small>
       </article>
       <article class="metric">
-        <label>总计 <span class="chip">全部</span></label>
+        <label>{{ t('workbench.garden.metricTotal') }} <span class="chip">{{ t('common.all') }}</span></label>
         <strong>{{ gardenItems.length }}</strong>
-        <small>从扫描结果自动生成的技能。</small>
+        <small>{{ t('workbench.garden.metricTotalHint') }}</small>
       </article>
       <article class="metric">
-        <label>预计节省 <span class="chip orange">每周</span></label>
+        <label>{{ t('workbench.garden.metricSaved') }} <span class="chip orange">{{ t('workbench.garden.chipWeekly') }}</span></label>
         <strong>{{ estimatedSavedTotal }}</strong>
-        <small>根据重复任务频率和平均持续时间估算。</small>
+        <small>{{ t('workbench.garden.metricSavedHint') }}</small>
       </article>
     </div>
 
@@ -165,25 +167,25 @@ onMounted(load)
       :closable="false"
       show-icon
       style="margin-bottom: 16px"
-      title="没有可安装目标。请到系统配置/本地数据源中为至少一个 Agent 配置 skills_path。"
+      :title="t('workbench.garden.noTargets')"
     />
 
     <section class="panel">
       <div class="head">
         <div>
-          <h2>技能中心</h2>
-          <p>选择目标 Agent 后安装。不同 Agent 会写入各自的 Skills 目录。</p>
+          <h2>{{ t('workbench.garden.title') }}</h2>
+          <p>{{ t('workbench.garden.subtitle') }}</p>
         </div>
       </div>
       <table v-if="gardenItems.length > 0">
         <thead>
           <tr>
-            <th>技能名称</th>
-            <th>来源 Agent</th>
-            <th>使用情况</th>
-            <th>状态</th>
-            <th>安装目标</th>
-            <th>操作</th>
+            <th>{{ t('workbench.garden.colName') }}</th>
+            <th>{{ t('workbench.garden.colSource') }}</th>
+            <th>{{ t('workbench.garden.colUsage') }}</th>
+            <th>{{ t('workbench.garden.colStatus') }}</th>
+            <th>{{ t('workbench.garden.colTarget') }}</th>
+            <th>{{ t('workbench.common.actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -191,23 +193,23 @@ onMounted(load)
             <td>
               <b>{{ workflow.name }}</b>
               <span v-if="workflow.evolves_skill" class="chip violet" style="margin-left: 6px; font-size: 11px;">
-                升级 · v{{ workflow.iteration_num || '?' }}
+                {{ t('workbench.garden.upgrade', { n: workflow.iteration_num || '?' }) }}
               </span>
               <small>{{ workflow.description }}</small>
             </td>
-            <td>{{ parseSourceAgents(workflow).join(' / ') || '未检测到' }}</td>
-            <td>{{ workflow.frequency }} 次 / {{ workflow.estimated_time_saved }}</td>
+            <td>{{ parseSourceAgents(workflow).join(' / ') || t('workbench.common.notDetected') }}</td>
+            <td>{{ t('workbench.garden.usage', { n: workflow.frequency, time: workflow.estimated_time_saved }) }}</td>
             <td>
-              <span v-if="workflow.evolves_skill" class="chip blue">升级候选</span>
+              <span v-if="workflow.evolves_skill" class="chip blue">{{ t('workbench.garden.upgradeCandidate') }}</span>
               <span v-else :class="'chip ' + (workflow.status === 'installed' ? 'green' : workflow.skill_score > 85 ? 'green' : 'orange')">
-                {{ workflow.status === 'installed' ? '已安装' : workflow.skill_score > 85 ? '推荐安装' : '待审核' }}
+                {{ workflow.status === 'installed' ? t('workbench.common.statusInstalled') : workflow.skill_score > 85 ? t('workbench.common.statusRecommended') : t('workbench.common.statusPendingReview') }}
               </span>
             </td>
             <td style="min-width: 220px">
               <el-select
                 :model-value="getTarget(workflow.id)"
                 @update:model-value="(val: string) => setTarget(workflow.id, val)"
-                placeholder="选择 Agent"
+                :placeholder="t('workbench.garden.selectAgentPlaceholder')"
                 size="small"
                 :disabled="workflow.status === 'installed'"
               >
@@ -226,7 +228,7 @@ onMounted(load)
                 :disabled="workflow.status === 'installed' || installTargets.length === 0"
                 @click="handleInstall(workflow)"
               >
-                {{ workflow.status === 'installed' ? '已安装' : '安装' }}
+                {{ workflow.status === 'installed' ? t('workbench.common.statusInstalled') : t('workbench.garden.install') }}
               </el-button>
               <el-button
                 size="small"
@@ -234,14 +236,14 @@ onMounted(load)
                 :loading="deletingId === workflow.id"
                 @click="handleDelete(workflow)"
               >
-                删除
+                {{ t('common.delete') }}
               </el-button>
             </td>
           </tr>
         </tbody>
       </table>
       <div v-else class="body" style="text-align: center; padding: 40px; color: var(--muted)">
-        暂无已生成技能。请先运行扫描和聚类分析。
+        {{ t('workbench.garden.empty') }}
       </div>
     </section>
   </section>

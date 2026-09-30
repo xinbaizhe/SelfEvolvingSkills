@@ -7,6 +7,8 @@ use std::{
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
+use crate::utils::failure::{failed, failed_with};
+
 use super::file_cleanup::{
     clean_path_contents_best_effort, delete_file_best_effort, disk_usage_for_path,
     scan_full_path_size, DirectoryStats,
@@ -158,21 +160,27 @@ pub(crate) fn delete_disk_usage_path(body: Option<Value>) -> Value {
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
     else {
-        return json!({ "deleted": false, "message": "缺少路径" });
+        return json!({
+            "deleted": false,
+            "message": failed("admin.diskCleanup.missingPath", "缺少路径"),
+        });
     };
 
     if !path.exists() {
         return json!({
             "deleted": false,
             "path": path.to_string_lossy(),
-            "message": "路径不存在",
+            "message": failed("admin.diskCleanup.pathMissing", "路径不存在"),
         });
     }
     if is_protected_delete_target(&path) {
         return json!({
             "deleted": false,
             "path": path.to_string_lossy(),
-            "message": "该路径属于系统保护位置，不能直接清理",
+            "message": failed(
+                "admin.diskCleanup.protected",
+                "该路径属于系统保护位置，不能直接清理",
+            ),
         });
     }
 
@@ -206,7 +214,7 @@ pub(crate) fn delete_disk_usage_path(body: Option<Value>) -> Value {
             "deleted_count": result.deleted_count,
             "failed_count": result.failed_count,
             "failed_paths": result.failed_paths,
-            "message": "清理完成",
+            "message": failed("admin.diskCleanup.cleaned", "清理完成"),
         })
     } else if result.deleted_count > 0 {
         json!({
@@ -218,9 +226,13 @@ pub(crate) fn delete_disk_usage_path(body: Option<Value>) -> Value {
             "deleted_count": result.deleted_count,
             "failed_count": result.failed_count,
             "failed_paths": result.failed_paths,
-            "message": format!(
-                "部分清理完成，已清理 {} 项，{} 项因权限不足或正在使用被跳过",
-                result.deleted_count, result.failed_count
+            "message": failed_with(
+                "admin.diskCleanup.partialCleaned",
+                json!({ "deleted": result.deleted_count, "failed": result.failed_count }),
+                format!(
+                    "部分清理完成，已清理 {} 项，{} 项因权限不足或正在使用被跳过",
+                    result.deleted_count, result.failed_count
+                ),
             ),
         })
     } else {
@@ -233,12 +245,16 @@ pub(crate) fn delete_disk_usage_path(body: Option<Value>) -> Value {
             "failed_count": result.failed_count,
             "failed_paths": result.failed_paths,
             "message": if result.failed_count > 0 {
-                format!(
-                    "清理失败：{} 项因权限不足或正在使用无法删除",
-                    result.failed_count
+                failed_with(
+                    "admin.diskCleanup.cleanFailedSome",
+                    json!({ "failed": result.failed_count }),
+                    format!(
+                        "清理失败：{} 项因权限不足或正在使用无法删除",
+                        result.failed_count
+                    ),
                 )
             } else {
-                "清理失败：没有可删除的内容".to_string()
+                failed("admin.diskCleanup.cleanFailedEmpty", "清理失败：没有可删除的内容")
             },
         })
     }
@@ -252,7 +268,10 @@ pub(crate) fn reveal_disk_usage_path(body: Option<Value>) -> Value {
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
     else {
-        return json!({ "opened": false, "message": "缺少路径" });
+        return json!({
+            "opened": false,
+            "message": failed("admin.diskCleanup.missingPath", "缺少路径"),
+        });
     };
 
     let target = existing_reveal_target(&path);
@@ -260,7 +279,10 @@ pub(crate) fn reveal_disk_usage_path(body: Option<Value>) -> Value {
         return json!({
             "opened": false,
             "path": path.to_string_lossy(),
-            "message": "路径不存在，无法打开所在目录",
+            "message": failed(
+                "admin.diskCleanup.revealPathMissing",
+                "路径不存在，无法打开所在目录",
+            ),
         });
     };
 
@@ -268,12 +290,16 @@ pub(crate) fn reveal_disk_usage_path(body: Option<Value>) -> Value {
         Ok(()) => json!({
             "opened": true,
             "path": target.to_string_lossy(),
-            "message": "已打开所在目录",
+            "message": failed("admin.diskCleanup.revealOpened", "已打开所在目录"),
         }),
         Err(err) => json!({
             "opened": false,
             "path": target.to_string_lossy(),
-            "message": format!("打开所在目录失败：{err}"),
+            "message": failed_with(
+                "admin.diskCleanup.revealFailed",
+                json!({ "error": err.to_string() }),
+                format!("打开所在目录失败：{err}"),
+            ),
         }),
     }
 }

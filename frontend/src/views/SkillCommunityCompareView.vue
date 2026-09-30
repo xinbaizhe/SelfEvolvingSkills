@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { searchCommunitySkills, fetchCommunitySkillDetail, compareCommunitySkill, type CommunitySkill, type CompareResult } from '../api/community'
 import { fetchWorkflows, updateWorkflowDraft, type Workflow } from '../api/workflows'
 import type { PaginatedResult } from '../api/skills'
+import { useBackendText } from '../composables/useBackendText'
 
+const { t } = useI18n()
+const backendText = useBackendText()
 const drafts = ref<Workflow[]>([])
 const selectedDraftId = ref<number | null>(null)
 const communitySkills = ref<CommunitySkill[]>([])
@@ -57,10 +61,10 @@ async function searchSkills() {
       selectedCommunityId.value = communitySkills.value[0]?.id ?? null
       if (communitySkills.value[0]) await loadCommunityDetail(communitySkills.value[0].id)
     } else {
-      ElMessage.warning('未找到相似社区 Skill')
+      ElMessage.warning(t('workbench.compare.noSimilar'))
     }
   } catch {
-    ElMessage.error('社区搜索失败')
+    ElMessage.error(t('workbench.compare.searchFailed'))
   } finally {
     searching.value = false
   }
@@ -80,7 +84,7 @@ async function loadCommunityDetail(id: number) {
       communitySkill.value = res.data
     }
   } catch {
-    ElMessage.error('获取社区 Skill 详情失败')
+    ElMessage.error(t('workbench.compare.detailFailed'))
   } finally {
     loadingCommunity.value = false
   }
@@ -91,10 +95,10 @@ async function runCompare() {
   const community = communitySkill.value
   const communityContent = community?.skill_md_content
     || community?.readme_excerpt
-    || community?.description
+    || (community?.description ? backendText(community.description) : '')
     || ''
   if (!draft?.draft_body || !community || !communityContent) {
-    ElMessage.warning('请确保两端都有内容')
+    ElMessage.warning(t('workbench.compare.bothSidesRequired'))
     return
   }
   comparing.value = true
@@ -103,16 +107,16 @@ async function runCompare() {
     const res = await compareCommunitySkill({
       draft_body: draft.draft_body,
       draft_name: draft.name,
-      community_name: community.name,
+      community_name: backendText(community.name),
       community_content: communityContent,
     })
     if (res.success && res.data) {
       compareResult.value = res.data
     } else {
-      ElMessage.error(res.error || '对比分析失败')
+      ElMessage.error(res.error || t('workbench.compare.compareFailed'))
     }
   } catch {
-    ElMessage.error('对比分析请求失败')
+    ElMessage.error(t('workbench.compare.compareRequestFailed'))
   } finally {
     comparing.value = false
   }
@@ -122,7 +126,7 @@ async function adoptSuggestions() {
   const draft = selectedDraft.value
   if (!draft || !compareResult.value?.suggestions.length) return
 
-  const prefix = `\n\n## 社区参考改进 (来自社区对比)\n\n${compareResult.value.suggestions.map((s) => `- [ ] ${s}`).join('\n')}\n`
+  const prefix = `\n\n## 社区参考改进 (来自社区对比)\n\n${compareResult.value.suggestions.map((s) => `- [ ] ${backendText(s)}`).join('\n')}\n` // i18n-exempt: appended to persisted draft_body (written into the user's Skill content), not UI text
   try {
     const res = await updateWorkflowDraft(draft.id, {
       draft_body: (draft.draft_body || '') + prefix,
@@ -133,21 +137,21 @@ async function adoptSuggestions() {
       if (found) {
         found.draft_body = (draft.draft_body || '') + prefix
       }
-      ElMessage.success('建议已追加到草稿末尾，请在工作台人工审核')
+      ElMessage.success(t('workbench.compare.adoptSuccess'))
     } else {
-      ElMessage.error(res.error || '更新失败')
+      ElMessage.error(res.error || t('workbench.common.updateFailed'))
     }
   } catch {
-    ElMessage.error('更新草稿失败')
+    ElMessage.error(t('workbench.compare.updateDraftFailed'))
   }
 }
 
 function verdictTag(verdict: string) {
   const map: Record<string, { type: string; text: string }> = {
-    local_better: { type: 'success', text: '本地更优' },
-    community_better: { type: 'warning', text: '社区更优' },
-    complementary: { type: 'primary', text: '互补' },
-    neutral: { type: 'info', text: '持平' },
+    local_better: { type: 'success', text: t('workbench.compare.verdictLocalBetter') },
+    community_better: { type: 'warning', text: t('workbench.compare.verdictCommunityBetter') },
+    complementary: { type: 'primary', text: t('workbench.compare.verdictComplementary') },
+    neutral: { type: 'info', text: t('workbench.compare.verdictNeutral') },
   }
   return map[verdict] || { type: 'info', text: verdict }
 }
@@ -162,24 +166,24 @@ function formatStars(stars: number) {
     <div class="toolbar">
       <el-select
         v-model="selectedDraftId"
-        placeholder="选择本地 Skill 草稿"
+        :placeholder="t('workbench.compare.selectDraftPlaceholder')"
         filterable
         style="min-width: 300px"
         @change="searchSkills"
       >
-        <el-option v-for="draft in drafts" :key="draft.id" :label="`${draft.name} (评分 ${draft.skill_score})`" :value="draft.id" />
+        <el-option v-for="draft in drafts" :key="draft.id" :label="t('workbench.compare.draftOption', { name: draft.name, score: draft.skill_score })" :value="draft.id" />
       </el-select>
-      <span v-if="communitySkills.length" class="hint">匹配 {{ communitySkills.length }} 个社区 Skill</span>
+      <span v-if="communitySkills.length" class="hint">{{ t('workbench.compare.matched', { n: communitySkills.length }) }}</span>
     </div>
 
-    <el-empty v-if="!loadingDrafts && drafts.length === 0" description="暂无本地草稿。请先运行进化管道。" />
+    <el-empty v-if="!loadingDrafts && drafts.length === 0" :description="t('workbench.compare.emptyDrafts')" />
 
     <template v-else>
       <!-- Community Skill Picker -->
       <div v-if="communitySkills.length > 1" class="community-selector">
         <el-radio-group v-model="selectedCommunityId" @change="onCommunityChange" size="small">
           <el-radio-button v-for="s in communitySkills" :key="s.id" :value="s.id">
-            {{ s.name }} · {{ formatStars(s.stars) }} ★
+            {{ backendText(s.name) }} · {{ formatStars(s.stars) }} ★
           </el-radio-button>
         </el-radio-group>
       </div>
@@ -188,30 +192,30 @@ function formatStars(stars: number) {
       <div class="compare-layout">
         <section class="panel">
           <div class="head">
-            <h3>本地草稿</h3>
-            <span v-if="selectedDraft" class="chip green">评分 {{ selectedDraft.skill_score }}</span>
+            <h3>{{ t('workbench.compare.localDraft') }}</h3>
+            <span v-if="selectedDraft" class="chip green">{{ t('workbench.compare.score', { score: selectedDraft.skill_score }) }}</span>
           </div>
           <div class="body">
-            <pre class="codebox">{{ selectedDraft?.draft_body || '暂无内容' }}</pre>
+            <pre class="codebox">{{ selectedDraft?.draft_body || t('workbench.compare.noContent') }}</pre>
           </div>
         </section>
 
         <section class="panel" v-loading="loadingCommunity">
           <div class="head">
-            <h3>社区参考</h3>
+            <h3>{{ t('workbench.compare.communityRef') }}</h3>
             <template v-if="communitySkill">
               <span class="chip blue">{{ formatStars(communitySkill.stars) }} ★</span>
-              <a :href="communitySkill.repo_url" target="_blank" rel="noreferrer" style="font-size: 12px;">查看仓库</a>
+              <a :href="communitySkill.repo_url" target="_blank" rel="noreferrer" style="font-size: 12px;">{{ t('workbench.compare.viewRepo') }}</a>
             </template>
           </div>
           <div class="body">
             <pre v-if="communitySkill?.skill_md_content" class="codebox">{{ communitySkill.skill_md_content }}</pre>
             <div v-else-if="communitySkill" class="empty-hint">
-              <p>{{ communitySkill.description || '暂无描述' }}</p>
+              <p>{{ communitySkill.description ? backendText(communitySkill.description) : t('workbench.common.noDescription') }}</p>
               <p class="muted">{{ communitySkill.repo }}</p>
-              <p class="muted">该社区 Skill 暂无 SKILL.md 内容缓存，但可以用描述和 README 摘要进行对比分析。</p>
+              <p class="muted">{{ t('workbench.compare.noContentHint') }}</p>
             </div>
-            <el-empty v-else description="选择社区 Skill 后显示内容" :image-size="60" />
+            <el-empty v-else :description="t('workbench.compare.selectToShow')" :image-size="60" />
           </div>
         </section>
       </div>
@@ -219,31 +223,31 @@ function formatStars(stars: number) {
       <!-- Compare Action -->
       <div v-if="selectedDraft && communitySkill" class="action-bar">
         <el-button type="primary" :loading="comparing" :disabled="!communityContentAvailable" @click="runCompare">
-          {{ compareResult ? '重新对比' : '对比分析' }}
+          {{ compareResult ? t('workbench.compare.recompare') : t('workbench.compare.compare') }}
         </el-button>
-        <span class="hint">调用大模型进行结构化差异分析</span>
+        <span class="hint">{{ t('workbench.compare.actionHint') }}</span>
       </div>
 
       <!-- Results -->
       <section v-if="compareResult" class="results">
         <div v-if="compareResult.summary" class="summary-banner">
-          <strong>{{ compareResult.source === 'llm' ? 'AI 分析' : '结构分析' }}：</strong>{{ compareResult.summary }}
+          <strong>{{ compareResult.source === 'llm' ? t('workbench.compare.aiAnalysis') : t('workbench.compare.structuralAnalysis') }}：</strong>{{ backendText(compareResult.summary) }}
         </div>
 
         <table v-if="compareResult.dimensions.length" class="compare-table">
           <thead>
             <tr>
-              <th style="width: 120px">维度</th>
-              <th>本地草稿</th>
-              <th>社区 Skill</th>
-              <th style="width: 100px">判定</th>
+              <th style="width: 120px">{{ t('workbench.compare.colDimension') }}</th>
+              <th>{{ t('workbench.compare.localDraft') }}</th>
+              <th>{{ t('workbench.compare.communitySkill') }}</th>
+              <th style="width: 100px">{{ t('workbench.compare.colVerdict') }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="dim in compareResult.dimensions" :key="dim.label">
-              <td><b>{{ dim.label }}</b></td>
-              <td>{{ dim.local }}</td>
-              <td>{{ dim.community }}</td>
+            <tr v-for="(dim, index) in compareResult.dimensions" :key="index">
+              <td><b>{{ backendText(dim.label) }}</b></td>
+              <td>{{ backendText(dim.local) }}</td>
+              <td>{{ backendText(dim.community) }}</td>
               <td>
                 <el-tag :type="verdictTag(dim.verdict).type as any" size="small">
                   {{ verdictTag(dim.verdict).text }}
@@ -254,12 +258,12 @@ function formatStars(stars: number) {
         </table>
 
         <div v-if="compareResult.suggestions.length" class="suggestions-card">
-          <h4>改进建议</h4>
+          <h4>{{ t('workbench.compare.suggestions') }}</h4>
           <ul>
-            <li v-for="(s, i) in compareResult.suggestions" :key="i">{{ s }}</li>
+            <li v-for="(s, i) in compareResult.suggestions" :key="i">{{ backendText(s) }}</li>
           </ul>
           <el-button type="success" size="small" @click="adoptSuggestions" style="margin-top: 10px;">
-            采纳建议，追加到本地草稿
+            {{ t('workbench.compare.adopt') }}
           </el-button>
         </div>
       </section>

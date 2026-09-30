@@ -2,15 +2,26 @@ use anyhow::anyhow;
 use serde_json::json;
 
 use crate::services;
+use crate::utils::failure::failed;
 use crate::{open_conn, parse_scope_payload, ApiResponse, SourceUpdate};
 
-fn configured_llm_tuple(conn: &rusqlite::Connection) -> anyhow::Result<(String, String, String, String)> {
+fn configured_llm_tuple(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<(String, String, String, String)> {
     if !services::admin_service::get_config_bool(conn, "llm_enabled", false)? {
-        return Err(anyhow!("大模型未启用，请先到\"资源与配置\"页面启用模型配置"));
+        return Err(anyhow!(failed(
+            "admin.llm.notEnabled",
+            "大模型未启用，请先到\"资源与配置\"页面启用模型配置"
+        )));
     }
     let api_key = services::admin_service::get_config(conn, "llm_api_key")?
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("大模型未配置 API Key，请先在\"资源与配置\"页面设置 API 密钥"))?;
+        .ok_or_else(|| {
+            anyhow!(failed(
+                "admin.llm.missingApiKey",
+                "大模型未配置 API Key，请先在\"资源与配置\"页面设置 API 密钥"
+            ))
+        })?;
     let base_url = services::admin_service::get_config(conn, "llm_base_url")?
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
         .trim_end_matches('/')
@@ -22,7 +33,9 @@ fn configured_llm_tuple(conn: &rusqlite::Connection) -> anyhow::Result<(String, 
     Ok((base_url, api_key, model, api_format))
 }
 
-fn llm_tuple_from_body(body: &Option<serde_json::Value>) -> anyhow::Result<Option<(String, String, String, String)>> {
+fn llm_tuple_from_body(
+    body: &Option<serde_json::Value>,
+) -> anyhow::Result<Option<(String, String, String, String)>> {
     let Some(config) = body
         .as_ref()
         .and_then(|value| value.get("metadata"))
@@ -38,14 +51,24 @@ fn llm_tuple_from_body(body: &Option<serde_json::Value>) -> anyhow::Result<Optio
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("所选评估模型缺少 API Key"))?
+        .ok_or_else(|| {
+            anyhow!(failed(
+                "admin.llm.evalModelMissingApiKey",
+                "所选评估模型缺少 API Key"
+            ))
+        })?
         .to_string();
     let base_url = config
         .get("baseUrl")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("所选评估模型缺少 Base URL"))?
+        .ok_or_else(|| {
+            anyhow!(failed(
+                "admin.llm.evalModelMissingBaseUrl",
+                "所选评估模型缺少 Base URL"
+            ))
+        })?
         .trim_end_matches('/')
         .to_string();
     let model = config
@@ -53,7 +76,12 @@ fn llm_tuple_from_body(body: &Option<serde_json::Value>) -> anyhow::Result<Optio
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("所选评估模型缺少模型标识"))?
+        .ok_or_else(|| {
+            anyhow!(failed(
+                "admin.llm.evalModelMissingModel",
+                "所选评估模型缺少模型标识"
+            ))
+        })?
         .to_string();
     let api_format = config
         .get("apiFormat")
@@ -126,7 +154,8 @@ pub(crate) async fn dispatch_api(
 
     if matches!(
         (method, clean_path),
-        ("POST", "/admin/config/llm/evaluate-directory") | ("POST", "admin/config/llm/evaluate-directory")
+        ("POST", "/admin/config/llm/evaluate-directory")
+            | ("POST", "admin/config/llm/evaluate-directory")
     ) {
         let (base_url, api_key, model, api_format) = match llm_tuple_from_body(&body)? {
             Some(tuple) => tuple,
@@ -178,7 +207,10 @@ pub(crate) async fn dispatch_api(
         return Ok(json!(ApiResponse::<serde_json::Value> {
             success: false,
             data: json!(null),
-            error: Some("磁盘扫描正在进行，请等待本次扫描结束。".to_string()),
+            error: Some(failed(
+                "admin.disk.scanBusy",
+                "磁盘扫描正在进行，请等待本次扫描结束。",
+            )),
         }));
     }
 
@@ -215,7 +247,10 @@ pub(crate) async fn dispatch_api(
             return Ok(json!(ApiResponse::<serde_json::Value> {
                 success: false,
                 data: json!(null),
-                error: Some("暂无空间明细，请先点击「分析磁盘」完成一次扫描。".to_string()),
+                error: Some(failed(
+                    "admin.disk.noDetails",
+                    "暂无空间明细，请先点击「分析磁盘」完成一次扫描。",
+                )),
             }));
         };
         let path = path.unwrap_or_else(|| cache.root_path.clone());
@@ -500,13 +535,10 @@ pub(crate) async fn dispatch_api(
         }
         ("GET", "/admin/daily-report") | ("GET", "admin/daily-report") => {
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            let date = query
-                .search
-                .as_deref()
-                .unwrap_or(&today);
-            Ok(json!(ApiResponse::ok(
-                services::daily_report::get_report(&conn, date)?
-            )))
+            let date = query.search.as_deref().unwrap_or(&today);
+            Ok(json!(ApiResponse::ok(services::daily_report::get_report(
+                &conn, date
+            )?)))
         }
         ("GET", "/admin/system") | ("GET", "admin/system") => {
             services::scan::sync_source_configs(&conn)?;
@@ -623,7 +655,10 @@ pub(crate) async fn dispatch_api(
                 return Ok(json!(ApiResponse::<serde_json::Value> {
                     success: false,
                     data: json!(null),
-                    error: Some("进化管道正在运行中，请等待完成后再启动新的进化。如果确认已中断，请点击「加载状态」后使用「重置卡住的管道」。".to_string()),
+                    error: Some(failed(
+                        "admin.evolution.busy",
+                        "进化管道正在运行中，请等待完成后再启动新的进化。如果确认已中断，请点击「加载状态」后使用「重置卡住的管道」。",
+                    )),
                 }));
             }
             let scope = parse_scope_payload(body)?;
@@ -663,21 +698,43 @@ pub(crate) async fn dispatch_api(
                 .map(|value| json!(ApiResponse::ok(value)))
         }
         ("POST", "/system/database/table") | ("POST", "system/database/table") => {
-            let table = body.as_ref().and_then(|v| v.get("table")).and_then(serde_json::Value::as_str).unwrap_or("");
-            let data = body.as_ref().and_then(|v| v.get("data")).unwrap_or(&serde_json::Value::Null);
+            let table = body
+                .as_ref()
+                .and_then(|v| v.get("table"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let data = body
+                .as_ref()
+                .and_then(|v| v.get("data"))
+                .unwrap_or(&serde_json::Value::Null);
             services::system::insert_row(&conn, table, data)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
         ("PUT", "/system/database/table") | ("PUT", "system/database/table") => {
-            let table = body.as_ref().and_then(|v| v.get("table")).and_then(serde_json::Value::as_str).unwrap_or("");
-            let rowid = body.as_ref().and_then(|v| v.get("rowid")).and_then(serde_json::Value::as_i64).unwrap_or(0);
-            let data = body.as_ref().and_then(|v| v.get("data")).unwrap_or(&serde_json::Value::Null);
+            let table = body
+                .as_ref()
+                .and_then(|v| v.get("table"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let rowid = body
+                .as_ref()
+                .and_then(|v| v.get("rowid"))
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let data = body
+                .as_ref()
+                .and_then(|v| v.get("data"))
+                .unwrap_or(&serde_json::Value::Null);
             services::system::update_row(&conn, table, rowid, data)
                 .map(|value| json!(ApiResponse::ok(value)))
         }
         ("DELETE", "/system/database/table") | ("DELETE", "system/database/table") => {
             let table = query.table.as_deref().unwrap_or("");
-            let rowid = query.rowid.as_deref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            let rowid = query
+                .rowid
+                .as_deref()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
             services::system::delete_row(&conn, table, rowid)
                 .map(|value| json!(ApiResponse::ok(value)))
         }

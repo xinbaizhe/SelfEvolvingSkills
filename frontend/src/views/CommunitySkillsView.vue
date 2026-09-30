@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { searchCommunitySkills, type CommunitySkill, type PaginatedResult } from '../api/community'
 import { getErrorMessage } from '../utils/error'
+import { useBackendText } from '../composables/useBackendText'
 
+const { t } = useI18n()
+const backendText = useBackendText()
 const query = ref('')
 const skills = ref<CommunitySkill[]>([])
 const total = ref(0)
@@ -24,11 +28,11 @@ async function search(showErrors = true) {
       total.value = (res.data as PaginatedResult<CommunitySkill>).total ?? 0
       lastUpdatedAt.value = formatDateTime(new Date())
     } else if (showErrors) {
-      ElMessage.error(res.error || '社区 Skills 推荐失败')
+      ElMessage.error(res.error || t('workbench.community.recommendFailed'))
     }
   } catch (e: unknown) {
     if (showErrors) {
-      ElMessage.error(getErrorMessage(e, '社区 Skills 推荐失败，请检查网络或大模型配置'))
+      ElMessage.error(getErrorMessage(e, t('workbench.community.recommendFailedHint')))
     }
   } finally {
     loading.value = false
@@ -63,7 +67,7 @@ function scheduleFollowupRefresh() {
 }
 
 function showReason(skill: CommunitySkill) {
-  const body = (skill.recommendation_reason || '暂无推荐理由。后台大模型刷新后会补充中文推荐理由。')
+  const body = (skill.recommendation_reason ? backendText(skill.recommendation_reason) : t('workbench.community.noReason'))
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
@@ -71,9 +75,9 @@ function showReason(skill: CommunitySkill) {
     .join('')
   ElMessageBox.alert(
     body,
-    `推荐理由：${skill.name}`,
+    t('workbench.community.reasonTitle', { name: backendText(skill.name) }),
     {
-      confirmButtonText: '知道了',
+      confirmButtonText: t('workbench.community.gotIt'),
       dangerouslyUseHTMLString: true,
     },
   )
@@ -112,23 +116,23 @@ onUnmounted(() => {
   <div class="community-skills">
     <div class="page-header">
       <div>
-        <h2>社区 Skills 推荐</h2>
+        <h2>{{ t('workbench.community.title') }}</h2>
         <p class="subtitle">
-          后台持续补充社区 Skill 推荐，最多保留评分和 stars 排名前 100 条；本页每 10 条分页展示，只做推荐，不安装到 Agent。
+          {{ t('workbench.community.subtitle') }}
         </p>
       </div>
-      <span v-if="lastUpdatedAt" class="updated">更新：{{ lastUpdatedAt }}</span>
+      <span v-if="lastUpdatedAt" class="updated">{{ t('workbench.community.updatedAt', { time: lastUpdatedAt }) }}</span>
     </div>
 
     <div class="toolbar">
       <el-input
         v-model="query"
         class="search-input"
-        placeholder="输入工作流、工具或 Skill 方向..."
+        :placeholder="t('workbench.community.searchPlaceholder')"
         clearable
         @keyup.enter="search()"
       />
-      <el-button type="primary" :loading="loading" @click="search().then(scheduleFollowupRefresh)">刷新推荐</el-button>
+      <el-button type="primary" :loading="loading" @click="search().then(scheduleFollowupRefresh)">{{ t('workbench.community.refreshSuggestions') }}</el-button>
     </div>
 
     <div v-loading="loading" class="skills-grid">
@@ -138,11 +142,11 @@ onUnmounted(() => {
         class="skill-card"
       >
         <div class="card-header">
-          <h4 class="skill-name">{{ skill.name }}</h4>
+          <h4 class="skill-name">{{ backendText(skill.name) }}</h4>
           <el-tag :type="sourceType(skill.source)" size="small">{{ skill.source || 'GitHub' }}</el-tag>
         </div>
 
-        <p class="skill-desc">{{ skill.description || '暂无描述' }}</p>
+        <p class="skill-desc">{{ skill.description ? backendText(skill.description) : t('workbench.common.noDescription') }}</p>
 
         <div class="card-meta">
           <span class="repo">{{ skill.repo }}</span>
@@ -151,27 +155,27 @@ onUnmounted(() => {
         </div>
 
         <div class="score-line">
-          <span>综合 {{ formatScore(skill.weighted_score) }}</span>
-          <span>相关 {{ formatScore(skill.relevance_score) }}</span>
-          <span>质量 {{ formatScore(skill.quality_score) }}</span>
+          <span>{{ t('workbench.community.weighted', { score: formatScore(skill.weighted_score) }) }}</span>
+          <span>{{ t('workbench.community.relevance', { score: formatScore(skill.relevance_score) }) }}</span>
+          <span>{{ t('workbench.community.quality', { score: formatScore(skill.quality_score) }) }}</span>
         </div>
 
         <div class="source-line">
-          <span v-if="skill.fetched_at">推荐刷新：{{ skill.fetched_at }}</span>
-          <span v-if="hasRepositoryUpdatedAt(skill)">仓库更新：{{ skill.pushed_at }}</span>
+          <span v-if="skill.fetched_at">{{ t('workbench.community.fetchedAt', { time: skill.fetched_at }) }}</span>
+          <span v-if="hasRepositoryUpdatedAt(skill)">{{ t('workbench.community.repoUpdated', { time: skill.pushed_at }) }}</span>
         </div>
 
         <div class="card-actions">
           <a :href="skill.repo_url" target="_blank" class="repo-link" rel="noreferrer">
-            <el-button size="small" text>查看来源</el-button>
+            <el-button size="small" text>{{ t('workbench.community.viewSource') }}</el-button>
           </a>
-          <el-button size="small" text type="primary" @click="showReason(skill)">推荐理由</el-button>
+          <el-button size="small" text type="primary" @click="showReason(skill)">{{ t('workbench.community.reason') }}</el-button>
         </div>
       </article>
 
       <div v-if="!loading && recommendedSkills.length === 0" class="empty-state">
-        <p>暂无社区 Skills 推荐</p>
-        <p class="hint">请确认已配置大模型，或输入关键词后刷新。GitHub 轻量补充不会拉取 README/SKILL.md 文件。</p>
+        <p>{{ t('workbench.community.empty') }}</p>
+        <p class="hint">{{ t('workbench.community.emptyHint') }}</p>
       </div>
     </div>
 

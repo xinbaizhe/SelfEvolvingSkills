@@ -1,0 +1,173 @@
+{
+  "core": {
+    "export": {
+      "failed": "导出失败"
+    },
+    "pet": {
+      "breed": {
+        "orange": "橘猫",
+        "black": "黑猫",
+        "white": "白猫",
+        "golden": "金毛",
+        "husky": "哈士奇",
+        "lop": "垂耳兔",
+        "red": "赤狐",
+        "budgie": "虎皮鹦鹉",
+        "panda": "大熊猫"
+      },
+      "desc": {
+        "orange": "中华田园橘",
+        "black": "神秘优雅月光猫",
+        "white": "雪白毛茸茸",
+        "golden": "阳光大金毛",
+        "husky": "二哈本哈",
+        "lop": "乖巧小兔",
+        "red": "聪明红狐狸",
+        "budgie": "绿羽毛小鹦鹉",
+        "panda": "国宝滚滚"
+      },
+      "nameSuffix": {
+        "none": "",
+        "chan": "酱",
+        "kun": "君",
+        "sweetie": "宝贝",
+        "cutie": "小可爱"
+      },
+      "lunar": {
+        "newYearEve": "除夕快乐！🧧",
+        "springFestival": "新春大吉！🧨",
+        "dragonBoat": "端午安康！🎋",
+        "midAutumn": "中秋快乐！🥮"
+      },
+      "smart": {
+        "weekend1": "周末还写代码？休息吧 ☀️",
+        "weekend2": "周末还卷？出去走走 🌿",
+        "commute1": "上班打卡！元气满满 💼",
+        "commute2": "开始搬砖~今天写什么？",
+        "water": "记得喝水！每天2升 💧",
+        "stretch": "起来活动一下 🏃",
+        "lunch1": "午饭时间！🍜",
+        "lunch2": "该吃饭啦 🍱",
+        "afternoon1": "下午好！来杯咖啡 ☕",
+        "afternoon2": "打起精神下午加油",
+        "break1": "摸鱼时间！📱",
+        "break2": "眼保健操时间 👁️",
+        "offwork1": "下班！辛苦了 🎉",
+        "offwork2": "准时下班好习惯 ✨",
+        "overtime1": "还在加班？注意身体 💸",
+        "overtime2": "该吃晚饭了 🍲",
+        "late1": "九点多了！明天再写 😰",
+        "late2": "早点休息！🛏️",
+        "default1": "今天修了几个bug？💪",
+        "default2": "累了摸摸我充电~",
+        "default3": "需要生成日报吗？说\"日报\"就行"
+      },
+      "wokeUp": "呼...睡醒了 ☀️",
+      "greet": "嗨！我是{name}（{breed}）~想问什么？也可以生成日报 📊",
+      "bye": "那我先去玩啦~拜拜👋",
+      "thinking": "让我看看...🤔",
+      "reportStarted": "日报已开始生成！去日报页面查看~📊",
+      "reportFailed": "生成失败...检查AI模型配置？",
+      "aiAsleep": "AI好像睡着了...💤",
+      "chatPlaceholder": "和{name}聊天...",
+      "send": "发送",
+      "query": {
+        "custom": "自定义",
+        "system": "CPU: {cpu}% ({brand}), 内存: {used}MB/{total}MB ({percent}%), 运行: {hours}小时{minutes}分",
+        "database": "数据库 {size}MB, {tables}张表, 共{records}条记录",
+        "skillsAgents": "Skills {skills}个, Agents {agents}个, 会话 {sessions}条",
+        "stats": "Skills {skills}个, Agents {agents}个, 会话 {sessions}个, 使用记录 {usage}条",
+        "skillCount": "共有 {skills} 个 Skills, {agents} 个 Agents~",
+        "modelEnabled": "当前模型: {provider} / {model}, API: {url}",
+        "modelDisabled": "模型未启用，去\"资源与配置\"页面配置吧~"
+      }
+    },
+    "pipeline": {
+      "title": "Skill 进化管道",
+      "subtitle": "选择 Agent 后启动，系统会真实执行：{flow}。",
+      "phase": {
+        "discover": "扫描发现",
+        "referenceRetrieval": "参考检索",
+        "cluster": "聚类分析",
+        "draftGenerate": "生成草稿",
+        "optimize": "智能优化",
+        "qaReview": "质量评审",
+        "diffRecommend": "差异推荐"
+      },
+      "state": {
+        "running": "进行中",
+        "pending": "待启动",
+        "completed": "已完成",
+        "partialFailed": "部分失败"
+      },
+      "evolving": "进化中...",
+      "start": "启动进化",
+      "loadStatus": "加载状态",
+      "resetStuck": "重置卡住的管道",
+      "scope": "扫描范围",
+      "claudeCodeOnly": "只选 Claude Code",
+      "selectAllEnabled": "选择全部已启用",
+      "scopePlaceholder": "选择要扫描的 Agent",
+      "detected": "已检测到",
+      "pathMissing": "未检测到路径",
+      "scopeNote": "长对话会先做本地结构化压缩，只保留目标、工具、错误、结果和关键上下文，用于聚类与草稿生成。",
+      "started": "进化管道已启动，执行 7 步流程：{flow}",
+      "startFailed": "启动进化管道失败",
+      "completed": "进化流程已完成，推荐、草稿和社区对比已刷新。",
+      "aborted": "进化管道中止：数据库错误 — {detail}",
+      "resetDone": "已重置 {count} 个卡住的作业",
+      "resetFailed": "重置失败",
+      "selectAgent": "请至少选择一个 Agent 作为扫描范围",
+      "timeoutWarning": "检测到 {count} 个阶段超时（>10分钟），已自动标记为失败。",
+      "lastCompleted": "上次完成时间：{time}",
+      "progress": {
+        "discovering": "正在检测已安装的 AI 编程助手...",
+        "dbOpenFailed": "数据库打开失败：{detail}",
+        "detectFailed": "检测失败：{detail}",
+        "detectDone": "检测完成，本次将扫描 {count} 个 AI 助手",
+        "skillsFound": "发现 {count} 个 Skills",
+        "agentsFound": "发现 {count} 个 Agents",
+        "historySummarized": "发现 {count} 条历史会话，已生成本地压缩摘要",
+        "communitySearching": "正在检索社区参考 Skills（GitHub / Web / 本地）...",
+        "communityDone": "社区检索完成，新增 {count} 条参考结果",
+        "communityFailed": "社区检索失败：{detail}。管道将继续执行。",
+        "clustering": "正在用本地算法聚类重复工作流...",
+        "clusterDone": "本地聚类完成，识别到 {count} 个候选工作流，正在大模型复核...",
+        "clusterReviewed": "大模型已完成工作流复核与重排序",
+        "clusterLocalOnly": "未启用大模型，使用本地聚类结果",
+        "clusterReviewFailed": "大模型复核失败：{detail}。已回退使用本地聚类结果。",
+        "clusterSaved": "聚类结果已保存",
+        "drafting": "正在基于模板生成 Skill 草稿（纯本地）...",
+        "draftsGenerated": "已生成 {count} 个本地 Skill 草稿",
+        "optimizing": "正在用大模型逐条优化草稿...",
+        "draftsOptimized": "大模型已优化 {count} 个 Skill 草稿",
+        "optimizeLocalOnly": "未启用大模型，使用本地草稿",
+        "optimizeFailed": "大模型草稿优化失败：{detail}。已保留本地草稿。",
+        "variantsGenerated": "已生成 {count} 个 A/B 变体",
+        "reviewing": "Skill Review Agent 正在评审草稿...",
+        "reviewDone": "Skill Review Agent 已评审 {count} 个草稿",
+        "reviewSkipped": "未启用大模型，跳过 QA 评审",
+        "reviewFailed": "Skill Review Agent 评审失败：{detail}。已保留草稿等待人工审核。",
+        "comparing": "正在对比本地草稿与社区 Skills...",
+        "compareDone": "差异对比完成，{count} 个工作流有社区参考",
+        "recommendDone": "推荐建议已生成",
+        "runCompleted": "进化流程完成",
+        "heartbeatOptimizing": "正在优化：{name}...",
+        "heartbeatReviewing": "正在评审：{name}...",
+        "heartbeatRetry": "反馈修正第 {round}/{max} 轮：{name}...",
+        "suffixTimeout": " [超时自动标记为失败]",
+        "suffixReset": " [已手动重置]"
+      }
+    },
+    "history": {
+      "empty": "暂无进化管道操作记录",
+      "total": "共 {count} 次进化记录",
+      "status": {
+        "completed": "完成",
+        "running": "运行中",
+        "failed": "失败",
+        "pending": "待执行"
+      }
+    }
+  }
+}

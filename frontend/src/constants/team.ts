@@ -1,17 +1,17 @@
 export const TEAM_CATEGORY_OPTIONS = [
-  { label: '编程开发', value: 'coding' },
-  { label: '日报数据处理', value: 'daily_report' },
-  { label: '日常办公', value: 'office' },
-  { label: '数据分析', value: 'data' },
-  { label: '测试调试', value: 'testing' },
-  { label: '运维部署', value: 'devops' },
-  { label: '文档编写', value: 'docs' },
-  { label: '设计创意', value: 'design' },
-  { label: '通用', value: 'general' },
-  { label: '其他', value: 'other' },
+  { labelKey: 'team.category.coding', value: 'coding' },
+  { labelKey: 'team.category.dailyReport', value: 'daily_report' },
+  { labelKey: 'team.category.office', value: 'office' },
+  { labelKey: 'team.category.data', value: 'data' },
+  { labelKey: 'team.category.testing', value: 'testing' },
+  { labelKey: 'team.category.devops', value: 'devops' },
+  { labelKey: 'team.category.docs', value: 'docs' },
+  { labelKey: 'team.category.design', value: 'design' },
+  { labelKey: 'team.category.general', value: 'general' },
+  { labelKey: 'team.category.other', value: 'other' },
 ]
 
 export const TEAM_RESOURCE_TYPE_OPTIONS = [
-  { label: 'Skill', value: 'skill' },
-  { label: '工具网址', value: 'url' },
+  { labelKey: 'team.resourceType.skill', value: 'skill' },
+  { labelKey: 'team.resourceType.url', value: 'url' },
 ]

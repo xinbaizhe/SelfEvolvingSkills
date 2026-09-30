@@ -83,6 +83,10 @@ export interface GenStatus {
   report_date?: string
   phase?: string      // "scanning" | "summarizing" | "done" | "error"
   progress?: number   // 0-100
+  // Present on the "already generating" response: the catalog key for
+  // `message`, so the frontend recognises the outcome without reading prose.
+  code?: string
+  params?: Record<string, unknown>
   message?: string
   error?: string
   // included when from_cache=true

@@ -1,5 +1,9 @@
 import { api } from './tauri'
 import type { ApiResponse } from './skills'
+import type { BackendText } from '../composables/useBackendText'
+
+/** A backend prose field: an envelope object, or stored prose the composable reads. */
+type BackendProse = BackendText | string
 
 export interface CommunitySkill {
   id: number
@@ -25,15 +29,15 @@ export interface CommunitySkill {
 
 export interface CompareResult {
   dimensions: CompareDimension[]
-  suggestions: string[]
-  summary?: string
+  suggestions: BackendProse[]
+  summary?: BackendProse
   source: string
 }
 
 export interface CompareDimension {
-  label: string
-  local: string
-  community: string
+  label: BackendProse
+  local: BackendProse
+  community: BackendProse
   verdict: 'local_better' | 'community_better' | 'complementary' | 'neutral'
 }
 

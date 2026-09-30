@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useTeamStore } from '../../stores/useTeamStore'
 import { checkTeamConnection, type ConnectionStatus } from '../../api/team'
 import LoginDialog from './LoginDialog.vue'
 
 defineProps<{ collapsed: boolean }>()
 
+const { t } = useI18n()
 const store = useTeamStore()
 const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
 const connectionStatus = ref<ConnectionStatus | null>(null)
@@ -67,10 +69,10 @@ function statusColor(): string {
 }
 
 function statusTitle(): string {
-  if (!connectionStatus.value) return '检查中...'
-  if (connectionStatus.value.authenticated) return '已连接'
-  if (connectionStatus.value.connected) return 'Token 已过期'
-  return '无法连接服务器'
+  if (!connectionStatus.value) return t('team.sidebar.checking')
+  if (connectionStatus.value.authenticated) return t('team.sidebar.connected')
+  if (connectionStatus.value.connected) return t('team.sidebar.tokenExpired')
+  return t('team.sidebar.disconnected')
 }
 </script>
 
@@ -81,7 +83,7 @@ function statusTitle(): string {
     <template v-if="!store.isAuthenticated">
       <button class="team-login-btn" @click="loginDialog?.open()">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="4.5" width="13" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="9" r="1.5" fill="currentColor"/><path d="M5.5 4.5V3a2 2 0 012-2h1a2 2 0 012 2v1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-        登录团队版
+        {{ t('app.actions.login') }}
       </button>
     </template>
     <template v-else>
@@ -96,7 +98,7 @@ function statusTitle(): string {
           :style="{ background: statusColor() }"
           :title="statusTitle()"
         ></span>
-        <button class="team-logout-btn" @click="handleLogout" title="退出登录">
+        <button class="team-logout-btn" @click="handleLogout" :title="t('team.sidebar.logout')">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h3M11 11l4-3-4-3M15 8H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>

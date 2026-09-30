@@ -1,0 +1,74 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "close": "Close",
+    "delete": "Delete",
+    "edit": "Edit",
+    "search": "Search",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "copy": "Copy",
+    "copied": "Copied",
+    "loading": "Loading…",
+    "empty": "No data",
+    "success": "Done",
+    "failed": "Failed",
+    "yes": "Yes",
+    "no": "No",
+    "all": "All",
+    "unknown": "Unknown",
+    "back": "Back",
+    "detail": "Details",
+    "uptime": {
+      "daysHours": "{days}d {hours}h",
+      "hoursMinutes": "{hours}h {minutes}m",
+      "minutes": "{minutes}m"
+    }
+  },
+  "locale": {
+    "label": "Language",
+    "zh": "中文",
+    "en": "English"
+  },
+  "app": {
+    "brand": "Self Evolving Skills",
+    "tagline": "Distill local Skills from your repetitive workflows",
+    "topbarSubtitle": "Distill reusable Skills from your repetitive workflows",
+    "runtime": "Uptime {duration}",
+    "sidebarToggle": {
+      "expand": "Expand sidebar",
+      "collapse": "Collapse sidebar"
+    },
+    "privacy": {
+      "title": "Local privacy mode",
+      "body": "Scanning, indexing and analysis all run on this machine. Exporting sensitive content always asks for explicit confirmation, and paths and bodies are redacted by default."
+    },
+    "actions": {
+      "login": "Sign in to Team",
+      "scanLocal": "Scan this machine",
+      "generateSkill": "Generate Skill"
+    },
+    "update": {
+      "title": "Update available",
+      "message": "Version {version} is available. Download and install it now?",
+      "confirm": "Update now",
+      "cancel": "Later",
+      "downloading": "Downloading and installing the update…",
+      "installed": "Update installed. Restart the app to apply it."
+    }
+  },
+  "nav": {
+    "admin": "System Admin",
+    "dailyReport": "Daily Report",
+    "workbench": "Skills Workbench",
+    "skills": "My Skills",
+    "agents": "Agents",
+    "resources": "Resources & Config",
+    "community": "Community Skills",
+    "team": "Team Skills",
+    "vulnScanner": "Vulnerability Lookup",
+    "teamModels": "Team Model Management"
+  }
+}

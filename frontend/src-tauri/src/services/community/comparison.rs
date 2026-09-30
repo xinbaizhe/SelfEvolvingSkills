@@ -106,10 +106,20 @@ pub(crate) async fn compare_with_llm(db_path: &Path, body: Option<Value>) -> Res
                 .collect();
             return Ok(json!({
                 "dimensions": [
-                    { "label": "结构对比", "local": format!("{} 个章节", draft_sections.len()), "community": format!("{} 个章节", community_sections.len()), "verdict": "neutral" },
-                    { "label": "内容量", "local": format!("{} 字符", draft_body.chars().count()), "community": format!("{} 字符", community_content.chars().count()), "verdict": "neutral" },
+                    {
+                        "label": utils::field("workbench.compare.structure", json!({}), "结构对比"),
+                        "local": utils::field("workbench.compare.sections", json!({ "count": draft_sections.len() }), format!("{} 个章节", draft_sections.len())),
+                        "community": utils::field("workbench.compare.sections", json!({ "count": community_sections.len() }), format!("{} 个章节", community_sections.len())),
+                        "verdict": "neutral"
+                    },
+                    {
+                        "label": utils::field("workbench.compare.contentVolume", json!({}), "内容量"),
+                        "local": utils::field("workbench.compare.chars", json!({ "count": draft_body.chars().count() }), format!("{} 字符", draft_body.chars().count())),
+                        "community": utils::field("workbench.compare.chars", json!({ "count": community_content.chars().count() }), format!("{} 字符", community_content.chars().count())),
+                        "verdict": "neutral"
+                    },
                 ],
-                "suggestions": ["需要配置 LLM 才能生成智能对比分析"],
+                "suggestions": [utils::field("workbench.compare.needsLlm", json!({}), "需要配置 LLM 才能生成智能对比分析")],
                 "source": "heuristic"
             }));
         }
@@ -142,8 +152,8 @@ pub(crate) async fn compare_with_llm(db_path: &Path, body: Option<Value>) -> Res
     let parsed: Value = serde_json::from_str(&extract_json(&content)).unwrap_or_else(|_| {
         json!({
             "dimensions": [],
-            "suggestions": ["LLM 返回格式异常，请重试"],
-            "summary": "对比分析失败",
+            "suggestions": [utils::field("workbench.compare.formatErrorRetry", json!({}), "LLM 返回格式异常，请重试")],
+            "summary": utils::field("workbench.compare.analysisFailed", json!({}), "对比分析失败"),
             "source": "error"
         })
     });
@@ -260,16 +270,22 @@ Return JSON only:
                 .reason
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| {
-                    "它是什么：这是大模型判断适合当前主题的社区 Skill 或 Agent 指令参考。\n\n对 Skills 工作台有什么用：可用于补充社区参考来源，帮助对比本地生成草稿和外部成熟实践。\n\n适合什么时候看：当你想判断当前本地 Skill 是否应该合并、替换、重写或增加步骤时，可以打开来源核对结构。\n\n建议优先看什么：README、示例 prompt、agent instructions、workflow 或 rules 文件。".to_string()
+                    utils::field_text(
+                        "workbench.community.llmFallbackReason",
+                        json!({}),
+                        "它是什么：这是大模型判断适合当前主题的社区 Skill 或 Agent 指令参考。\n\n对 Skills 工作台有什么用：可用于补充社区参考来源，帮助对比本地生成草稿和外部成熟实践。\n\n适合什么时候看：当你想判断当前本地 Skill 是否应该合并、替换、重写或增加步骤时，可以打开来源核对结构。\n\n建议优先看什么：README、示例 prompt、agent instructions、workflow 或 rules 文件。",
+                    )
                 });
-            let description = format!(
-                "{} 推荐动作：{}。",
-                description,
-                if action == "replace" {
-                    "替换"
-                } else {
-                    "新增"
-                }
+            let (action_code, action_word) = if action == "replace" {
+                ("workbench.community.actionReplace", "替换")
+            } else {
+                ("workbench.community.actionAdd", "新增")
+            };
+            let action_message = format!("{description} 推荐动作：{action_word}。");
+            let description = utils::field_text(
+                action_code,
+                json!({ "description": description }),
+                action_message,
             );
             let score = item
                 .score

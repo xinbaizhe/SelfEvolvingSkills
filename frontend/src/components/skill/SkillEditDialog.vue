@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { updateSkill } from '../../api/skills'
 import { getErrorMessage } from '../../utils/error'
 import type { SkillItem } from '../../api/skills'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   visible: boolean
@@ -42,12 +45,12 @@ async function saveEdit() {
       description: editForm.description || null,
       category: editForm.category || null,
     })
-    if (!res.success) throw new Error(res.error || '更新失败')
-    ElMessage.success('Skill 已更新')
+    if (!res.success) throw new Error(res.error || t('workbench.common.updateFailed'))
+    ElMessage.success(t('workbench.skillEdit.updated'))
     emit('update:visible', false)
     emit('saved')
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '更新失败'))
+    ElMessage.error(getErrorMessage(e, t('workbench.common.updateFailed')))
   } finally {
     saving.value = false
   }
@@ -55,21 +58,21 @@ async function saveEdit() {
 </script>
 
 <template>
-  <el-dialog v-model="dialogVisible" title="编辑 Skill" width="520px" top="10vh" @closed="editOriginalName = ''">
+  <el-dialog v-model="dialogVisible" :title="t('workbench.skillEdit.title')" width="520px" top="10vh" @closed="editOriginalName = ''">
     <el-form label-position="top">
-      <el-form-item label="名称">
-        <el-input v-model="editForm.name" placeholder="Skill 名称" />
+      <el-form-item :label="t('workbench.common.field.name')">
+        <el-input v-model="editForm.name" :placeholder="t('workbench.skillEdit.namePlaceholder')" />
       </el-form-item>
-      <el-form-item label="描述">
-        <el-input v-model="editForm.description" type="textarea" :rows="3" placeholder="简要描述" />
+      <el-form-item :label="t('workbench.common.field.description')">
+        <el-input v-model="editForm.description" type="textarea" :rows="3" :placeholder="t('workbench.common.descriptionPlaceholder')" />
       </el-form-item>
-      <el-form-item label="分类">
-        <el-input v-model="editForm.category" placeholder="如 frontend、backend、devops" />
+      <el-form-item :label="t('workbench.common.field.category')">
+        <el-input v-model="editForm.category" :placeholder="t('workbench.skillEdit.categoryPlaceholder')" />
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button>
+      <el-button @click="emit('update:visible', false)">{{ t('common.cancel') }}</el-button>
+      <el-button type="primary" :loading="saving" @click="saveEdit">{{ t('common.save') }}</el-button>
     </template>
   </el-dialog>
 </template>

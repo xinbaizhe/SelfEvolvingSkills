@@ -1,22 +1,24 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
 import { deleteSource, detectSources, fetchSources, updateSource, type SourceConfig } from '../api/scan'
 
+const { t } = useI18n()
 const sources = ref<SourceConfig[]>([])
 const loading = ref(false)
 
-const pathTypes = [
-  { key: 'skills_path', label: 'Skills 路径' },
-  { key: 'extra_skills_path', label: '额外 Skills 路径' },
-  { key: 'agents_path', label: 'Agent 路径' },
-  { key: 'extra_agents_path', label: '额外 Agent 路径' },
-  { key: 'sessions_path', label: '会话路径' },
-  { key: 'projects_path', label: '项目路径' },
-  { key: 'plugins_path', label: '插件 Skills 路径' },
-  { key: 'memory_path', label: '记忆路径' },
-]
+const pathTypes = computed(() => [
+  { key: 'skills_path', label: t('workbench.sources.pathSkills') },
+  { key: 'extra_skills_path', label: t('workbench.sources.pathExtraSkills') },
+  { key: 'agents_path', label: t('workbench.sources.pathAgents') },
+  { key: 'extra_agents_path', label: t('workbench.sources.pathExtraAgents') },
+  { key: 'sessions_path', label: t('workbench.sources.pathSessions') },
+  { key: 'projects_path', label: t('workbench.sources.pathProjects') },
+  { key: 'plugins_path', label: t('workbench.sources.pathPlugins') },
+  { key: 'memory_path', label: t('workbench.sources.pathMemory') },
+])
 
 async function load() {
   loading.value = true
@@ -33,7 +35,7 @@ async function handleDetect() {
   try {
     const res = await detectSources()
     sources.value = res.data || []
-    ElMessage.success('来源检测完成')
+    ElMessage.success(t('workbench.sources.detected'))
   } finally {
     loading.value = false
   }
@@ -43,7 +45,7 @@ async function handleToggle(source: SourceConfig) {
   const newState = !source.is_enabled
   await updateSource(source.agent_id, { is_enabled: newState })
   source.is_enabled = newState
-  ElMessage.success(`${source.agent_name} 已${newState ? '启用' : '停用'}`)
+  ElMessage.success(t(newState ? 'workbench.sources.enabled' : 'workbench.sources.disabled', { agent: source.agent_name }))
 }
 
 async function choosePath(source: SourceConfig, key: string) {
@@ -54,7 +56,7 @@ async function choosePath(source: SourceConfig, key: string) {
   } else if (api?.selectDirectory) {
     selected = await api.selectDirectory()
   } else {
-    ElMessage.warning('当前环境不支持原生目录选择，请在桌面应用中使用')
+    ElMessage.warning(t('workbench.sources.noNativePicker'))
     return
   }
   if (!selected) return
@@ -64,7 +66,7 @@ async function choosePath(source: SourceConfig, key: string) {
   if (res.success && res.data) {
     source.paths = res.data.paths
     source.detected_path = res.data.detected_path
-    ElMessage.success(`${source.agent_name} 路径已更新`)
+    ElMessage.success(t('workbench.sources.pathUpdated', { agent: source.agent_name }))
   }
 }
 
@@ -73,21 +75,21 @@ async function clearPath(source: SourceConfig, key: string) {
   const res = await updateSource(source.agent_id, { paths: nextPaths })
   if (res.success && res.data) {
     source.paths = res.data.paths
-    ElMessage.success('路径已清空，将使用默认检测路径')
+    ElMessage.success(t('workbench.sources.pathCleared'))
   }
 }
 
 async function resetSource(source: SourceConfig) {
   try {
     await ElMessageBox.confirm(
-      `确定重置 ${source.agent_name} 的自定义路径吗？重置后会回到默认检测路径。`,
-      '确认重置',
-      { confirmButtonText: '重置', cancelButtonText: '取消', type: 'warning' },
+      t('workbench.sources.resetConfirm', { agent: source.agent_name }),
+      t('workbench.sources.resetTitle'),
+      { confirmButtonText: t('workbench.sources.reset'), cancelButtonText: t('common.cancel'), type: 'warning' },
     )
     const res = await deleteSource(source.agent_id)
     if (res.success) {
       await load()
-      ElMessage.success(`${source.agent_name} 自定义路径已重置`)
+      ElMessage.success(t('workbench.sources.resetDone', { agent: source.agent_name }))
     }
   } catch {
     // cancelled
@@ -101,9 +103,9 @@ function formatDate(dateStr: string | null): string {
 }
 
 function statusText(source: SourceConfig): string {
-  if (!source.is_available) return '未检测到'
-  if (!source.is_enabled) return '已停用'
-  return '启用'
+  if (!source.is_available) return t('workbench.common.notDetected')
+  if (!source.is_enabled) return t('workbench.common.statusDisabled')
+  return t('workbench.common.statusEnabled')
 }
 
 function statusClass(source: SourceConfig): string {
@@ -120,10 +122,10 @@ onMounted(load)
     <section class="panel">
       <div class="head">
         <div>
-          <h2>本机 Agent 来源</h2>
-          <p>开启或关闭 Agent 来源，并为每类扫描数据配置真实本机路径。</p>
+          <h2>{{ t('workbench.sources.title') }}</h2>
+          <p>{{ t('workbench.sources.subtitle') }}</p>
         </div>
-        <el-button @click="handleDetect" :loading="loading">重新检测</el-button>
+        <el-button @click="handleDetect" :loading="loading">{{ t('workbench.sources.redetect') }}</el-button>
       </div>
 
       <div class="body">
@@ -131,7 +133,7 @@ onMounted(load)
           <div class="source-head">
             <div>
               <h3>{{ source.agent_name }}</h3>
-              <p>最近活动 {{ formatDate(source.last_activity) }} · {{ source.record_count }} 条记录</p>
+              <p>{{ t('workbench.sources.activity', { date: formatDate(source.last_activity), n: source.record_count }) }}</p>
             </div>
             <div class="source-actions">
               <span :class="'chip ' + statusClass(source)">{{ statusText(source) }}</span>
@@ -141,22 +143,22 @@ onMounted(load)
                 size="small"
                 @change="handleToggle(source)"
               />
-              <el-button size="small" @click="resetSource(source)">重置路径</el-button>
+              <el-button size="small" @click="resetSource(source)">{{ t('workbench.sources.resetPaths') }}</el-button>
             </div>
           </div>
 
           <el-table :data="pathTypes" size="small" border>
-            <el-table-column prop="label" label="类型" width="150" />
-            <el-table-column label="路径">
+            <el-table-column prop="label" :label="t('workbench.common.type')" width="150" />
+            <el-table-column :label="t('workbench.sources.path')">
               <template #default="{ row }">
                 <small class="path-text">{{ source.paths?.[row.key] || '-' }}</small>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="160">
+            <el-table-column :label="t('workbench.common.actions')" width="160">
               <template #default="{ row }">
                 <div class="row-actions">
-                  <el-button size="small" @click="choosePath(source, row.key)">选择</el-button>
-                  <el-button size="small" text @click="clearPath(source, row.key)">清空</el-button>
+                  <el-button size="small" @click="choosePath(source, row.key)">{{ t('workbench.sources.choose') }}</el-button>
+                  <el-button size="small" text @click="clearPath(source, row.key)">{{ t('workbench.sources.clear') }}</el-button>
                 </div>
               </template>
             </el-table-column>

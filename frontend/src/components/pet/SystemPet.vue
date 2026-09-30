@@ -1,32 +1,36 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '../../api/tauri'
 import type { ApiResponse } from '../../api/skills'
 import { generateDailyReport, fetchGenerationStatus, fetchDailyReport, fetchSystemInfo, fetchLlmConfig } from '../../api/admin'
 import { getSystemMonitor, getDatabaseInfo } from '../../api/system'
 import { fetchSummary } from '../../api/stats'
 
+const { t } = useI18n()
+
 type Species='cat'|'dog'|'rabbit'|'fox'|'bird'|'panda'
-interface Breed{breed:string;c:string;c2:string;belly:string;dark:string;ear:string;eye:string;nose:string;desc:string}
+interface Breed{breedKey:string;c:string;c2:string;belly:string;dark:string;ear:string;eye:string;nose:string;descKey:string}
 const BREEDS:Record<Species,Breed[]>={
 cat:[
-  {breed:'橘猫',c:'#e89840',c2:'#d08030',belly:'#fce8d0',dark:'#984810',ear:'#e8a0a0',eye:'#80d040',nose:'#e88888',desc:'中华田园橘'},
-  {breed:'黑猫',c:'#3a3c42',c2:'#2a2c32',belly:'#585a60',dark:'#121418',ear:'#6a4a4a',eye:'#f0d040',nose:'#4a3a3a',desc:'神秘优雅月光猫'},
-  {breed:'白猫',c:'#eae6e0',c2:'#dcd8d2',belly:'#f8f6f2',dark:'#a09890',ear:'#f0c8c0',eye:'#48a8f0',nose:'#f0b8b0',desc:'雪白毛茸茸'},
+  {breedKey:'orange',c:'#e89840',c2:'#d08030',belly:'#fce8d0',dark:'#984810',ear:'#e8a0a0',eye:'#80d040',nose:'#e88888',descKey:'orange'},
+  {breedKey:'black',c:'#3a3c42',c2:'#2a2c32',belly:'#585a60',dark:'#121418',ear:'#6a4a4a',eye:'#f0d040',nose:'#4a3a3a',descKey:'black'},
+  {breedKey:'white',c:'#eae6e0',c2:'#dcd8d2',belly:'#f8f6f2',dark:'#a09890',ear:'#f0c8c0',eye:'#48a8f0',nose:'#f0b8b0',descKey:'white'},
 ],
 dog:[
-  {breed:'金毛',c:'#d8b070',c2:'#c89858',belly:'#f5e8d0',dark:'#785018',ear:'#c09060',eye:'#5a4830',nose:'#1a1816',desc:'阳光大金毛'},
-  {breed:'哈士奇',c:'#707880',c2:'#5a6268',belly:'#e0e2e6',dark:'#383c42',ear:'#5a5a60',eye:'#50a8f0',nose:'#18181a',desc:'二哈本哈'},
+  {breedKey:'golden',c:'#d8b070',c2:'#c89858',belly:'#f5e8d0',dark:'#785018',ear:'#c09060',eye:'#5a4830',nose:'#1a1816',descKey:'golden'},
+  {breedKey:'husky',c:'#707880',c2:'#5a6268',belly:'#e0e2e6',dark:'#383c42',ear:'#5a5a60',eye:'#50a8f0',nose:'#18181a',descKey:'husky'},
 ],
-rabbit:[{breed:'垂耳兔',c:'#c8bab0',c2:'#b0a298',belly:'#f0e8e0',dark:'#887060',ear:'#e0b8b0',eye:'#684030',nose:'#e89898',desc:'乖巧小兔'}],
-fox:[{breed:'赤狐',c:'#e86818',c2:'#d05008',belly:'#fce0c0',dark:'#482008',ear:'#8a3830',eye:'#f8d040',nose:'#1a0808',desc:'聪明红狐狸'}],
-bird:[{breed:'虎皮鹦鹉',c:'#38c868',c2:'#20a850',belly:'#c0f8d8',dark:'#186838',ear:'#0000',eye:'#282828',nose:'#f08020',desc:'绿羽毛小鹦鹉'}],
-panda:[{breed:'大熊猫',c:'#f2f0ee',c2:'#e4e2e0',belly:'#faf8f6',dark:'#282828',ear:'#282828',eye:'#504030',nose:'#1a1a1a',desc:'国宝滚滚'}],
+rabbit:[{breedKey:'lop',c:'#c8bab0',c2:'#b0a298',belly:'#f0e8e0',dark:'#887060',ear:'#e0b8b0',eye:'#684030',nose:'#e89898',descKey:'lop'}],
+fox:[{breedKey:'red',c:'#e86818',c2:'#d05008',belly:'#fce0c0',dark:'#482008',ear:'#8a3830',eye:'#f8d040',nose:'#1a0808',descKey:'red'}],
+bird:[{breedKey:'budgie',c:'#38c868',c2:'#20a850',belly:'#c0f8d8',dark:'#186838',ear:'#0000',eye:'#282828',nose:'#f08020',descKey:'budgie'}],
+panda:[{breedKey:'panda',c:'#f2f0ee',c2:'#e4e2e0',belly:'#faf8f6',dark:'#282828',ear:'#282828',eye:'#504030',nose:'#1a1a1a',descKey:'panda'}],
 }
 const rnd=<T>(a:readonly T[]):T=>a[Math.floor(Math.random()*a.length)]
 const species=ref<Species>(rnd(['cat','dog','rabbit','fox','bird','panda']))
 const b=shallowRef(rnd(BREEDS[species.value]))
-const petName=ref(b.value.breed+rnd(['','酱','君','宝贝','小可爱']))
+const nameSuffix=ref(rnd(['none','chan','kun','sweetie','cutie']))
+const petName=computed(()=>t('core.pet.breed.'+b.value.breedKey)+t('core.pet.nameSuffix.'+nameSuffix.value))
 
 // Movement
 const x=ref(400),y=ref(300);let tx=400,ty=300,vx=0,vy=0,fs=0
@@ -51,40 +55,66 @@ const cb=ref(''),cv=ref(false),cl=ref(false),ci=ref(''),cm=ref(false)
 let ct:any=null,at:any=null,rt:any=null
 function sb(t:string,d=4000){cb.value=t;cv.value=true;if(ct)clearTimeout(ct);ct=setTimeout(()=>{cv.value=false},d)}
 
-const LUNAR:{[k:string]:string}={'2026-02-17':'除夕快乐！🧧','2026-02-18':'新春大吉！🧨','2026-06-19':'端午安康！🎋','2026-09-25':'中秋快乐！🥮'}
+const LUNAR:{[k:string]:string}={'2026-02-17':'core.pet.lunar.newYearEve','2026-02-18':'core.pet.lunar.springFestival','2026-06-19':'core.pet.lunar.dragonBoat','2026-09-25':'core.pet.lunar.midAutumn'}
 function dateKey(d=new Date()):string{return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function isWeekend(d=new Date()):boolean{const w=d.getDay();return w===0||w===6}
 function getSmartMessage():string{
   const n=new Date();const h=n.getHours();const m=n.getMinutes();const dk=dateKey(n)
-  if(LUNAR[dk])return LUNAR[dk]
-  if(isWeekend(n))return rnd(['周末还写代码？休息吧 ☀️','周末还卷？出去走走 🌿'])
-  if(h===9&&m<5)return rnd(['上班打卡！元气满满 💼','开始搬砖~今天写什么？'])
-  if(h===10&&m<10)return rnd(['记得喝水！每天2升 💧','起来活动一下 🏃'])
-  if(h===12&&m<10)return rnd(['午饭时间！🍜','该吃饭啦 🍱'])
-  if(h===14&&m<5)return rnd(['下午好！来杯咖啡 ☕','打起精神下午加油'])
-  if(h===15&&m<10)return rnd(['摸鱼时间！📱','眼保健操时间 👁️'])
-  if(h===18&&m<5)return rnd(['下班！辛苦了 🎉','准时下班好习惯 ✨'])
-  if(h>=18&&h<21)return rnd(['还在加班？注意身体 💸','该吃晚饭了 🍲'])
-  if(h>=21)return rnd(['九点多了！明天再写 😰','早点休息！🛏️'])
-  return rnd(['今天修了几个bug？💪','累了摸摸我充电~','需要生成日报吗？说"日报"就行'])
+  if(LUNAR[dk])return t(LUNAR[dk])
+  if(isWeekend(n))return t(rnd(['core.pet.smart.weekend1','core.pet.smart.weekend2']))
+  if(h===9&&m<5)return t(rnd(['core.pet.smart.commute1','core.pet.smart.commute2']))
+  if(h===10&&m<10)return t(rnd(['core.pet.smart.water','core.pet.smart.stretch']))
+  if(h===12&&m<10)return t(rnd(['core.pet.smart.lunch1','core.pet.smart.lunch2']))
+  if(h===14&&m<5)return t(rnd(['core.pet.smart.afternoon1','core.pet.smart.afternoon2']))
+  if(h===15&&m<10)return t(rnd(['core.pet.smart.break1','core.pet.smart.break2']))
+  if(h===18&&m<5)return t(rnd(['core.pet.smart.offwork1','core.pet.smart.offwork2']))
+  if(h>=18&&h<21)return t(rnd(['core.pet.smart.overtime1','core.pet.smart.overtime2']))
+  if(h>=21)return t(rnd(['core.pet.smart.late1','core.pet.smart.late2']))
+  return t(rnd(['core.pet.smart.default1','core.pet.smart.default2','core.pet.smart.default3']))
 }
 function autoSpeak(){if(cv.value||drag.value||cm.value)return;if(Math.random()<.16)sb(getSmartMessage(),5000)}
 async function hc(){
-  if(mood.value==='sleep'){mood.value='idle';it=0;sb('呼...睡醒了 ☀️');return}
+  if(mood.value==='sleep'){mood.value='idle';it=0;sb(t('core.pet.wokeUp'));return}
   if(cm.value)return
   doJump();sb(getSmartMessage())
 }
 async function dbc(){
   cm.value=!cm.value
-  if(cm.value){mood.value='sit';sb(`嗨！我是${petName.value}（${b.value.breed}）~想问什么？也可以生成日报 📊`,5000)}
-  else{mood.value='idle';sb('那我先去玩啦~拜拜👋',2500)}
+  if(cm.value){mood.value='sit';sb(t('core.pet.greet',{name:petName.value,breed:t('core.pet.breed.'+b.value.breedKey)}),5000)}
+  else{mood.value='idle';sb(t('core.pet.bye'),2500)}
 }
+/**
+ * Keywords the pet matches against what the user *types*, so they must not
+ * follow the interface language: an English-UI user who types 日报 still wants a
+ * daily report, and a Chinese-UI user who types "stats" still wants the stats.
+ * Both keyword sets are therefore always live, and only the reply is translated.
+ *
+ * Order matters - the groups are tried top to bottom and the first hit wins.
+ */
+const INTENT_KEYWORDS: Record<string, string[]> = { // i18n-exempt: matched against user input, deliberately language-independent
+  report: ['日报', 'report', '总结', 'summary', '今天做了什么', 'what did i do today'], // i18n-exempt: user-input keyword, see table comment above
+  systemStatus: ['系统状态', 'system status', '内存', 'memory', '运行状态', 'running status', '系统监控', 'system monitor', 'cpu'], // i18n-exempt: user-input keyword, see table comment above
+  database: ['数据库', 'database', '多少表', 'how many tables', '数据量', 'data volume', 'db'], // i18n-exempt: user-input keyword, see table comment above
+  systemInfo: ['系统信息', 'system info', '运行了多久', 'how long has it been running', '运行时长', 'uptime', '版本', 'version'], // i18n-exempt: user-input keyword, see table comment above
+  modelConfig: ['模型配置', 'model config', '什么模型', 'what model'], // i18n-exempt: user-input keyword, see table comment above
+  modelUsing: ['用的是', 'using'], // i18n-exempt: user-input keyword, see table comment above
+  model: ['模型', 'model'], // i18n-exempt: user-input keyword, see table comment above
+  stats: ['统计', 'stats', '概览', 'overview', '数据总览', 'data overview'], // i18n-exempt: user-input keyword, see table comment above
+  skillCount: ['多少skill', '多少个skill', 'skills数量', '技能数量', 'how many skill', 'how many skills', 'skills count', 'skill count'], // i18n-exempt: user-input keyword, see table comment above
+}
+
+/** True when the message hits any keyword of that intent, in either language. */
+function matchesIntent(msg:string,intent:string):boolean{
+  const m=msg.toLowerCase()
+  return INTENT_KEYWORDS[intent].some(kw=>m.includes(kw))
+}
+
 async function sc(){
-  const msg=ci.value.trim();if(!msg)return;ci.value='';cl.value=true;sb('让我看看...🤔',99999)
+  const msg=ci.value.trim();if(!msg)return;ci.value='';cl.value=true;sb(t('core.pet.thinking'),99999)
 
   // 1. Check: daily report generation
-  if(msg.includes('日报')||msg.includes('总结')||msg.includes('今天做了什么')){
-    try{await generateDailyReport(new Date().toISOString().slice(0,10));sb('日报已开始生成！去日报页面查看~📊',5000)}catch{sb('生成失败...检查AI模型配置？',4000)}
+  if(matchesIntent(msg,'report')){
+    try{await generateDailyReport(new Date().toISOString().slice(0,10));sb(t('core.pet.reportStarted'),5000)}catch{sb(t('core.pet.reportFailed'),4000)}
     cl.value=false;return
   }
 
@@ -93,48 +123,47 @@ async function sc(){
   if(result){sb(result,6000);cl.value=false;return}
 
   // 3. Fallback: LLM chat
-  try{const r=await api<ApiResponse<{reply:string}>>('POST','/admin/pet/chat',null,{message:msg,pet_type:species.value,pet_name:petName.value});if(r.success&&r.data)sb(r.data.reply,6000);else sb(getSmartMessage(),4000)}catch{sb('AI好像睡着了...💤',4000)}finally{cl.value=false}
+  try{const r=await api<ApiResponse<{reply:string}>>('POST','/admin/pet/chat',null,{message:msg,pet_type:species.value,pet_name:petName.value});if(r.success&&r.data)sb(r.data.reply,6000);else sb(getSmartMessage(),4000)}catch{sb(t('core.pet.aiAsleep'),4000)}finally{cl.value=false}
 }
 
 // ── System query intent matching ──
 async function handleSystemQuery(msg:string):Promise<string|null>{
-  const m=msg.toLowerCase()
   try{
     // CPU / memory / system status
-    if(m.includes('系统状态')||m.includes('cpu')||m.includes('内存')||m.includes('运行状态')||m.includes('系统监控')){
+    if(matchesIntent(msg,'systemStatus')){
       const r=await getSystemMonitor();if(!r.success||!r.data)return null
       const d=r.data
-      return `CPU: ${d.cpu_usage_percent}% (${d.cpu_brand.slice(0,30)}), 内存: ${d.memory.used_mb}MB/${d.memory.total_mb}MB (${d.memory.usage_percent}%), 运行: ${Math.floor(d.uptime_seconds/3600)}小时${Math.floor((d.uptime_seconds%3600)/60)}分`}
+      return t('core.pet.query.system',{cpu:d.cpu_usage_percent,brand:d.cpu_brand.slice(0,30),used:d.memory.used_mb,total:d.memory.total_mb,percent:d.memory.usage_percent,hours:Math.floor(d.uptime_seconds/3600),minutes:Math.floor((d.uptime_seconds%3600)/60)})}
 
     // Database info
-    if(m.includes('数据库')||m.includes('多少表')||m.includes('数据量')||m.includes('db')){
+    if(matchesIntent(msg,'database')){
       const r=await getDatabaseInfo();if(!r.success||!r.data)return null
       const d=r.data;const tables=Object.values(d.table_counts).reduce((a:number,b:number)=>a+b,0)
-      return `数据库 ${d.db_size_mb}MB, ${Object.keys(d.table_counts).length}张表, 共${tables.toLocaleString()}条记录`}
+      return t('core.pet.query.database',{size:d.db_size_mb,tables:Object.keys(d.table_counts).length,records:tables.toLocaleString()})}
 
     // System info / uptime
-    if(m.includes('系统信息')||m.includes('运行了多久')||m.includes('运行时长')||m.includes('版本')){
+    if(matchesIntent(msg,'systemInfo')){
       const r=await fetchSystemInfo();if(!r.success||!r.data)return null
       const d=r.data as any
-      return `Skills ${d.total_skills}个, Agents ${d.total_agents}个, 会话 ${d.total_sessions}条`}
+      return t('core.pet.query.skillsAgents',{skills:d.total_skills,agents:d.total_agents,sessions:d.total_sessions})}
 
     // LLM model config
-    if(m.includes('模型配置')||m.includes('用的是')&&m.includes('模型')||m.includes('什么模型')){
+    if(matchesIntent(msg,'modelConfig')||(matchesIntent(msg,'modelUsing')&&matchesIntent(msg,'model'))){
       const r=await fetchLlmConfig();if(!r.success||!r.data)return null
       const d=r.data as any
-      return d.enabled?`当前模型: ${d.provider||'自定义'} / ${d.model}, API: ${d.base_url}`:'模型未启用，去"资源与配置"页面配置吧~'}
+      return d.enabled?t('core.pet.query.modelEnabled',{provider:d.provider||t('core.pet.query.custom'),model:d.model,url:d.base_url}):t('core.pet.query.modelDisabled')}
 
     // Stats summary
-    if(m.includes('统计')||m.includes('概览')||m.includes('数据总览')){
+    if(matchesIntent(msg,'stats')){
       const r=await fetchSummary();if(!r.success||!r.data)return null
       const d=r.data as any
-      return `Skills ${d.total_skills||0}个, Agents ${d.total_agents||0}个, 会话 ${d.total_sessions||0}个, 使用记录 ${d.total_usage||0}条`}
+      return t('core.pet.query.stats',{skills:d.total_skills||0,agents:d.total_agents||0,sessions:d.total_sessions||0,usage:d.total_usage||0})}
 
     // Skills count
-    if(m.includes('多少skill')||m.includes('多少个skill')||m.includes('skills数量')||m.includes('技能数量')){
+    if(matchesIntent(msg,'skillCount')){
       const r=await fetchSummary();if(!r.success||!r.data)return null
       const d=r.data as any
-      return `共有 ${d.total_skills||0} 个 Skills, ${d.total_agents||0} 个 Agents~`}
+      return t('core.pet.query.skillCount',{skills:d.total_skills||0,agents:d.total_agents||0})}
 
   }catch{return null}
   return null
@@ -510,7 +539,7 @@ const walkRot=computed(()=>{
 
   <!-- Zzz / Name / Chat (same as before) -->
   <div class="zzz-wrap" v-if="mood==='sleep'"><span v-for="i in 3":key="i":style="{animationDelay:i*.4+'s'}">Z</span></div>
-  <div class="name-tag" :style="facing==='l'?{transform:'translateX(-50%) scaleX(-1)'}:{}">{{ b.breed }}</div>
+  <div class="name-tag" :style="facing==='l'?{transform:'translateX(-50%) scaleX(-1)'}:{}">{{ t('core.pet.breed.' + b.breedKey) }}</div>
 
   <Transition name="bb"><div class="chat-bubble" v-if="cv" @mousedown.stop :style="facing==='l'?{transform:'translateX(-50%) scaleX(-1)'}:{}">
     <div class="cb-header"><span class="cb-pet-emoji">{{ species==='cat'?'🐱':species==='dog'?'🐶':species==='rabbit'?'🐰':species==='fox'?'🦊':species==='bird'?'🐦':'🐼' }}</span><span class="cb-pet-name">{{ petName }}</span></div>
@@ -519,8 +548,8 @@ const walkRot=computed(()=>{
 
   <div class="chat-input-bar" v-if="cm" @mousedown.stop @click.stop :style="facing==='l'?{transform:'translateX(-50%) scaleX(-1)'}:{}">
     <span class="cib-emoji">{{ species==='cat'?'🐱':species==='dog'?'🐶':species==='rabbit'?'🐰':species==='fox'?'🦊':species==='bird'?'🐦':'🐼' }}</span>
-    <input v-model="ci" :placeholder="'和'+petName+'聊天...'" @keyup.enter="sc" :disabled="cl" class="cib-input"/>
-    <button class="cib-send" @click="sc":disabled="cl">发送</button>
+    <input v-model="ci" :placeholder="t('core.pet.chatPlaceholder', { name: petName })" @keyup.enter="sc" :disabled="cl" class="cib-input"/>
+    <button class="cib-send" @click="sc":disabled="cl">{{ t('core.pet.send') }}</button>
   </div>
 </div>
 </template>

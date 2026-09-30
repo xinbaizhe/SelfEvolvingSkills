@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { DatabaseInfo, TableDetail } from '../../api/system'
 import { getTableDetail, createTableRow, updateTableRow, deleteTableRow } from '../../api/system'
 import type { useScanStore } from '../../stores/useScanStore'
+import { describeError } from '../../utils/error'
 
 interface DbTable {
   name: string
@@ -28,6 +30,8 @@ const emit = defineEmits<{
   (e: 'checkUpdate'): void
 }>()
 
+const { t, te } = useI18n()
+
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detailLabel = ref('')
@@ -35,127 +39,11 @@ const detailData = ref<TableDetail | null>(null)
 const detailPage = ref(1)
 const detailSize = 10
 
-const fieldLabelMap: Record<string, string> = {
-  // Common
-  id: 'ID',
-  name: '名称',
-  description: '描述',
-  created_at: '创建时间',
-  updated_at: '更新时间',
-  // skills
-  origin: '来源',
-  source_type: '来源类型',
-  agent_source: 'Agent 来源',
-  plugin_name: '插件名',
-  file_path: '文件路径',
-  yaml_raw: 'YAML 原始数据',
-  body_text: '正文',
-  body_size: '正文大小',
-  line_count: '行数',
-  file_mtime: '文件修改时间',
-  file_size: '文件大小',
-  file_hash: '文件哈希',
-  category: '分类',
-  category_tags: '分类标签',
-  usage_count: '使用次数',
-  session_count: '会话次数',
-  // agents
-  tools: '工具列表',
-  model: '模型',
-  // sessions
-  session_id: '会话 ID',
-  pid: '进程 ID',
-  cwd: '工作目录',
-  project_name: '项目名',
-  entrypoint: '入口',
-  version: '版本',
-  kind: '类型',
-  started_at: '开始时间',
-  message_count: '消息数',
-  first_prompt: '首次提示词',
-  compressed_summary: '压缩摘要',
-  jsonl_path: 'JSONL 路径',
-  jsonl_size: 'JSONL 大小',
-  // memories
-  mem_type: '记忆类型',
-  origin_session_id: '来源会话 ID',
-  // skill_usage
-  skill_name: 'Skill 名',
-  skill_source_type: 'Skill 来源类型',
-  usage_type: '使用类型',
-  mention_count: '引用次数',
-  first_used_at: '首次使用时间',
-  // scan_jobs
-  scan_type: '扫描类型',
-  status: '状态',
-  completed_at: '完成时间',
-  skills_found: '发现 Skills',
-  agents_found: '发现 Agents',
-  sessions_found: '发现会话数',
-  conversations_analyzed: '分析会话数',
-  memories_found: '发现记忆数',
-  sources_scanned: '扫描源数',
-  errors: '错误信息',
-  config_snapshot: '配置快照',
-  progress: '进度',
-  message: '消息',
-  data: '数据',
-  phase: '阶段',
-  // source_configs
-  agent_id: 'Agent ID',
-  agent_name: 'Agent 名',
-  detected_path: '检测路径',
-  custom_paths: '自定义路径',
-  is_enabled: '是否启用',
-  is_available: '是否可用',
-  record_count: '记录数',
-  last_activity: '最后活动',
-  last_scan_at: '最后扫描时间',
-  // admin_users
-  username: '用户名',
-  password_hash: '密码哈希',
-  is_active: '是否活跃',
-  // community_skills
-  repo_full_name: '仓库全名',
-  repo_url: '仓库 URL',
-  stars: '星标数',
-  skill_md_content: 'Skill 内容',
-  file_url: '文件 URL',
-  installed: '已安装',
-  verified: '已验证',
-  relevance_score: '相关性评分',
-  quality_score: '质量评分',
-  weighted_score: '加权评分',
-  license: '许可证',
-  pushed_at: '推送时间',
-  matched_file: '匹配文件',
-  readme_excerpt: 'README 摘要',
-  source: '来源',
-  recommendation_reason: '推荐理由',
-  topic: '主题',
-  fetched_at: '获取时间',
-  // workflow_clusters
-  frequency: '频率',
-  source_agents: '来源 Agents',
-  estimated_time_saved: '预估节省时间',
-  can_generate_skill: '可生成 Skill',
-  skill_score: 'Skill 评分',
-  draft_body: '草案正文',
-  sample_tasks: '示例任务',
-  recommendation_source: '推荐来源',
-  confidence: '置信度',
-  reasoning: '推理说明',
-  source_skills: '来源 Skills',
-  similar_skills: '相似 Skills',
-  review_score: '审核评分',
-  review_summary: '审核摘要',
-  review_feedback: '审核反馈',
-  // evolution_jobs
-  run_id: '运行 ID',
-}
-
+// DB column name -> admin.maintenance.field.<camelCase>
 function fieldLabel(name: string): string {
-  return fieldLabelMap[name] || name
+  const key = name.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
+  const full = `admin.maintenance.field.${key}`
+  return te(full) ? t(full) : name
 }
 
 async function openDetail(table: DbTable) {
@@ -173,10 +61,10 @@ async function loadDetail(tableName: string) {
     if (res.success) {
       detailData.value = res.data
     } else {
-      ElMessage.error('加载表数据失败')
+      ElMessage.error(t('admin.maintenance.loadDetailFailed'))
     }
   } catch (e) {
-    ElMessage.error('加载表数据出错: ' + String(e))
+    ElMessage.error(t('admin.maintenance.loadDetailError', { error: String(e) }))
   } finally {
     detailLoading.value = false
   }
@@ -197,23 +85,13 @@ function getStatusType(status: string) {
 }
 
 function getStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    completed: '已完成',
-    failed: '失败',
-    running: '运行中',
-    pending: '待处理',
-    cancelled: '已取消',
-  }
-  return labels[status] || status
+  const key = `admin.common.status.${status}`
+  return te(key) ? t(key) : status
 }
 
 function getScanTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    full: '全量扫描',
-    incremental: '增量扫描',
-    manual: '手动扫描',
-  }
-  return labels[type] || type
+  const key = `admin.common.scanType.${type}`
+  return te(key) ? t(key) : type
 }
 
 // ── Inline CRUD ──
@@ -236,21 +114,21 @@ function cancelEdit() {
 
 async function saveEdit() {
   if (!detailData.value || editingRowid.value == null || editingRowid.value <= 0) {
-    ElMessage.warning('无法获取行标识 rowid，请确认后端已更新')
+    ElMessage.warning(t('admin.maintenance.rowidMissing'))
     return
   }
   saving.value = true
   try {
     const res = await updateTableRow(detailData.value.table, editingRowid.value, editingData.value)
     if (res.success) {
-      ElMessage.success('已更新')
+      ElMessage.success(t('admin.maintenance.updated'))
       editingRowid.value = null
       editingData.value = {}
       await loadDetail(detailData.value.table)
     } else {
-      ElMessage.error('更新失败')
+      ElMessage.error(t('admin.maintenance.updateFailed'))
     }
-  } catch (e) { ElMessage.error('更新出错: ' + String(e)) }
+  } catch (e) { ElMessage.error(t('admin.maintenance.updateError', { error: describeError(e) })) }
   finally { saving.value = false }
 }
 
@@ -274,14 +152,14 @@ async function saveAdd() {
   try {
     const res = await createTableRow(detailData.value.table, newRowData.value)
     if (res.success) {
-      ElMessage.success('已新增')
+      ElMessage.success(t('admin.maintenance.added'))
       addingNew.value = false
       newRowData.value = {}
       await loadDetail(detailData.value.table)
     } else {
-      ElMessage.error('新增失败')
+      ElMessage.error(t('admin.maintenance.addFailed'))
     }
-  } catch (e) { ElMessage.error('新增出错: ' + String(e)) }
+  } catch (e) { ElMessage.error(t('admin.maintenance.addError', { error: describeError(e) })) }
   finally { saving.value = false }
 }
 
@@ -289,23 +167,23 @@ async function handleDelete(row: Record<string, unknown>) {
   if (!detailData.value) return
   const rowid = row['rowid'] as number
   if (!rowid || rowid <= 0) {
-    ElMessage.warning('无法获取行标识 rowid，请确认后端已更新')
+    ElMessage.warning(t('admin.maintenance.rowidMissing'))
     return
   }
   try {
-    await ElMessageBox.confirm('确定删除该行数据？此操作不可恢复。', '确认删除', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+    await ElMessageBox.confirm(t('admin.maintenance.deleteConfirm'), t('admin.maintenance.deleteTitle'), { confirmButtonText: t('common.delete'), cancelButtonText: t('common.cancel'), type: 'warning' })
   } catch { return }
 
   saving.value = true
   try {
     const res = await deleteTableRow(detailData.value.table, rowid)
     if (res.success) {
-      ElMessage.success('已删除')
+      ElMessage.success(t('admin.maintenance.deleted'))
       await loadDetail(detailData.value.table)
     } else {
-      ElMessage.error('删除失败')
+      ElMessage.error(t('admin.maintenance.deleteFailed'))
     }
-  } catch (e) { ElMessage.error('删除出错: ' + String(e)) }
+  } catch (e) { ElMessage.error(t('admin.maintenance.deleteError', { error: describeError(e) })) }
   finally { saving.value = false }
 }
 </script>
@@ -313,45 +191,45 @@ async function handleDelete(row: Record<string, unknown>) {
 <template>
   <div class="maintenance-grid">
     <div class="maintenance-item">
-      <h4>扫描本机 Agent 数据</h4>
-      <p>扫描 Skills、Agents、会话和记忆数据，并更新最近扫描记录。</p>
-      <el-button type="primary" :loading="scanStore.scanning" @click="emit('scan')">{{ scanStore.scanning ? '扫描中...' : '开始扫描' }}</el-button>
+      <h4>{{ t('admin.maintenance.scanTitle') }}</h4>
+      <p>{{ t('admin.maintenance.scanDesc') }}</p>
+      <el-button type="primary" :loading="scanStore.scanning" @click="emit('scan')">{{ scanStore.scanning ? t('admin.maintenance.scanning') : t('admin.maintenance.startScan') }}</el-button>
     </div>
     <div class="maintenance-item">
-      <h4>清理日志与历史</h4>
-      <p>保留业务数据，只清理扫描历史、进化记录、聚类和使用记录。</p>
-      <el-button type="warning" :loading="clearing" @click="emit('clearLogs')">清理日志与历史</el-button>
+      <h4>{{ t('admin.maintenance.clearTitle') }}</h4>
+      <p>{{ t('admin.maintenance.clearDesc') }}</p>
+      <el-button type="warning" :loading="clearing" @click="emit('clearLogs')">{{ t('admin.maintenance.clearLogs') }}</el-button>
     </div>
     <div class="maintenance-item maintenance-item--danger">
-      <h4>初始化数据库</h4>
-      <p>清空 Skills、Agents、会话、社区缓存和历史记录，仅保留基础配置。</p>
-      <el-button type="danger" :loading="initializing" @click="emit('initDb')">初始化数据库</el-button>
+      <h4>{{ t('admin.maintenance.initTitle') }}</h4>
+      <p>{{ t('admin.maintenance.initDesc') }}</p>
+      <el-button type="danger" :loading="initializing" @click="emit('initDb')">{{ t('admin.maintenance.initDb') }}</el-button>
     </div>
   </div>
 
   <el-card class="history-card" shadow="never">
-    <template #header>最近扫描历史</template>
-    <el-table :data="scanStore.history" stripe max-height="360" empty-text="暂无扫描记录">
+    <template #header>{{ t('admin.maintenance.historyTitle') }}</template>
+    <el-table :data="scanStore.history" stripe max-height="360" :empty-text="t('admin.maintenance.emptyHistory')">
       <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column prop="scan_type" label="类型" width="100">
+      <el-table-column prop="scan_type" :label="t('admin.common.type')" width="100">
         <template #default="{ row }">{{ getScanTypeLabel(row.scan_type) }}</template>
       </el-table-column>
-      <el-table-column prop="status" label="状态" width="110">
+      <el-table-column prop="status" :label="t('admin.common.statusLabel')" width="110">
         <template #default="{ row }">
           <el-tag :type="getStatusType(row.status) as any">{{ getStatusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="skills_found" label="Skills" width="90" />
       <el-table-column prop="agents_found" label="Agents" width="90" />
-      <el-table-column prop="sessions_found" label="会话" width="90" />
-      <el-table-column prop="conversations_analyzed" label="分析数" width="90" />
-      <el-table-column prop="memories_found" label="记忆" width="80" />
-      <el-table-column prop="started_at" label="开始时间" width="170" />
-      <el-table-column prop="completed_at" label="完成时间" width="170" />
-      <el-table-column prop="errors" label="错误" min-width="200">
+      <el-table-column prop="sessions_found" :label="t('admin.maintenance.sessionsColumn')" width="90" />
+      <el-table-column prop="conversations_analyzed" :label="t('admin.maintenance.analyzedColumn')" width="90" />
+      <el-table-column prop="memories_found" :label="t('admin.maintenance.memoriesColumn')" width="80" />
+      <el-table-column prop="started_at" :label="t('admin.common.startedAt')" width="170" />
+      <el-table-column prop="completed_at" :label="t('admin.common.completedAt')" width="170" />
+      <el-table-column prop="errors" :label="t('admin.maintenance.errorsColumn')" min-width="200">
         <template #default="{ row }">
           <span v-if="row.errors" class="error-text">{{ row.errors }}</span>
-          <span v-else class="ok-text">无</span>
+          <span v-else class="ok-text">{{ t('admin.maintenance.none') }}</span>
         </template>
       </el-table-column>
     </el-table>
@@ -360,36 +238,36 @@ async function handleDelete(row: Record<string, unknown>) {
   <el-card class="history-card" shadow="never" v-if="dbInfo">
     <template #header>
       <div class="db-card-header">
-        <span>数据库表统计</span>
-        <span class="db-card-sub">共 {{ dbTables.length }} 张表 · {{ dbTotalRows.toLocaleString() }} 条记录</span>
+        <span>{{ t('admin.maintenance.dbStatsTitle') }}</span>
+        <span class="db-card-sub">{{ t('admin.maintenance.dbStatsSub', { tables: dbTables.length, rows: dbTotalRows.toLocaleString() }) }}</span>
       </div>
     </template>
     <div class="db-path">{{ dbInfo.db_path }}</div>
     <el-table :data="dbTables" stripe size="small" class="db-table">
-      <el-table-column prop="label" label="表名" min-width="120" />
-      <el-table-column prop="name" label="英文表名" min-width="120">
+      <el-table-column prop="label" :label="t('admin.maintenance.tableName')" min-width="120" />
+      <el-table-column prop="name" :label="t('admin.maintenance.tableNameEn')" min-width="120">
         <template #default="{ row }">
           <code class="db-table-code">{{ row.name }}</code>
         </template>
       </el-table-column>
-      <el-table-column prop="count" label="记录数" min-width="120" sortable align="center">
+      <el-table-column prop="count" :label="t('admin.common.records')" min-width="120" sortable align="center">
         <template #default="{ row }">
           <span class="db-table-count">{{ row.count.toLocaleString() }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" min-width="120" align="center">
+      <el-table-column :label="t('admin.common.action')" min-width="120" align="center">
         <template #default="{ row }">
-          <el-button size="small" type="primary" link @click="openDetail(row)">查看详情</el-button>
+          <el-button size="small" type="primary" link @click="openDetail(row)">{{ t('admin.maintenance.viewDetail') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
   </el-card>
 
-  <el-dialog v-model="detailVisible" :title="`表数据: ${detailLabel}`" width="1060px" top="2vh" destroy-on-close @closed="detailData = null; editingRowid = null; addingNew = false">
+  <el-dialog v-model="detailVisible" :title="t('admin.maintenance.dialogTitle', { label: detailLabel })" width="1060px" top="2vh" destroy-on-close @closed="detailData = null; editingRowid = null; addingNew = false">
     <template #header>
       <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
-        <span>表数据: {{ detailLabel }}</span>
-        <el-button size="small" type="primary" @click="startAdd" :disabled="editingRowid != null">+ 新增一行</el-button>
+        <span>{{ t('admin.maintenance.dialogTitle', { label: detailLabel }) }}</span>
+        <el-button size="small" type="primary" @click="startAdd" :disabled="editingRowid != null">{{ t('admin.maintenance.addRow') }}</el-button>
       </div>
     </template>
 
@@ -400,7 +278,7 @@ async function handleDelete(row: Record<string, unknown>) {
       size="small"
       max-height="380"
       v-loading="detailLoading || saving"
-      empty-text="暂无数据"
+      :empty-text="t('common.empty')"
       class="detail-table"
     >
       <!-- Rowid column -->
@@ -437,15 +315,15 @@ async function handleDelete(row: Record<string, unknown>) {
       </el-table-column>
 
       <!-- Actions column -->
-      <el-table-column label="操作" width="140" align="center" fixed="right">
+      <el-table-column :label="t('admin.common.action')" width="140" align="center" fixed="right">
         <template #default="{ row }">
           <template v-if="editingRowid === row['rowid']">
-            <el-button size="small" type="success" :loading="saving" @click="saveEdit">保存</el-button>
-            <el-button size="small" @click="cancelEdit">取消</el-button>
+            <el-button size="small" type="success" :loading="saving" @click="saveEdit">{{ t('common.save') }}</el-button>
+            <el-button size="small" @click="cancelEdit">{{ t('common.cancel') }}</el-button>
           </template>
           <template v-else>
-            <el-button size="small" type="primary" link :disabled="editingRowid != null" @click="startEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" link :disabled="editingRowid != null" @click="handleDelete(row)">删除</el-button>
+            <el-button size="small" type="primary" link :disabled="editingRowid != null" @click="startEdit(row)">{{ t('common.edit') }}</el-button>
+            <el-button size="small" type="danger" link :disabled="editingRowid != null" @click="handleDelete(row)">{{ t('common.delete') }}</el-button>
           </template>
         </template>
       </el-table-column>
@@ -453,7 +331,7 @@ async function handleDelete(row: Record<string, unknown>) {
 
     <!-- New row form -->
     <div v-if="addingNew" class="new-row-form">
-      <h4>新增记录</h4>
+      <h4>{{ t('admin.maintenance.newRowTitle') }}</h4>
       <div class="new-row-grid">
         <div v-for="col in (detailData?.columns || [])" :key="col.cid" class="new-row-field">
           <template v-if="col.name !== 'rowid'">
@@ -463,13 +341,13 @@ async function handleDelete(row: Record<string, unknown>) {
         </div>
       </div>
       <div class="new-row-actions">
-        <el-button type="primary" size="small" :loading="saving" @click="saveAdd">确认新增</el-button>
-        <el-button size="small" @click="cancelAdd">取消</el-button>
+        <el-button type="primary" size="small" :loading="saving" @click="saveAdd">{{ t('admin.maintenance.confirmAdd') }}</el-button>
+        <el-button size="small" @click="cancelAdd">{{ t('common.cancel') }}</el-button>
       </div>
     </div>
 
     <div class="detail-footer" v-if="detailData">
-      <span class="detail-total">共 {{ detailData.total }} 条</span>
+      <span class="detail-total">{{ t('admin.maintenance.totalRows', { n: detailData.total }) }}</span>
       <el-pagination
         v-model:current-page="detailPage"
         :page-size="detailSize"

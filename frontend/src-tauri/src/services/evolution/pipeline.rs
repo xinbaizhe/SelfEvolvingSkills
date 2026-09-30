@@ -9,6 +9,7 @@ use crate::services::scan;
 use crate::services::workflow::{self};
 use crate::utils::time::now_string;
 
+use super::msg::{self, ProgressMsg};
 use super::optimize;
 use super::status;
 use super::PHASES;
@@ -32,15 +33,24 @@ pub(super) fn phase_update(
     run_id: i64,
     phase: &str,
     progress: i64,
-    message: &str,
+    msg: ProgressMsg,
 ) {
     if let Ok(conn) = db::open_conn(db_path) {
         let now = now_string();
         let _ = conn.execute(
             "UPDATE evolution_jobs SET status = CASE WHEN status = 'pending' THEN 'running' ELSE status END,
-             progress = ?3, message = ?4, started_at = COALESCE(started_at, ?5)
+             progress = ?3, message = ?4, code = ?5, params = ?6,
+             started_at = COALESCE(started_at, ?7)
              WHERE run_id = ?1 AND phase = ?2",
-            params![run_id, phase, progress, message, now],
+            params![
+                run_id,
+                phase,
+                progress,
+                msg.text,
+                msg.code,
+                msg.params.to_string(),
+                now
+            ],
         );
         let _ = conn.execute(
             "UPDATE evolution_jobs SET status = 'completed',
@@ -78,19 +88,55 @@ pub(super) fn phase_update(
             "run_id": run_id,
             "phase": phase,
             "progress": progress,
-            "message": message,
+            "message": msg.text,
+            "code": msg.code,
+            "params": msg.params,
         }),
     );
 }
 
-pub(super) fn emit_only(app: &AppHandle, run_id: i64, phase: &str, progress: i64, message: &str) {
+/// Phase name of the terminal "the run could not continue" event.
+///
+/// The abort deliberately does NOT reuse the phase the run died in. That phase
+/// would be marked `completed` on the frontend (progress 100 reaches its end)
+/// and the failure would vanish without a trace.
+pub(super) const PHASE_ABORTED: &str = "aborted";
+
+/// Emits the terminal event for a run that cannot continue.
+///
+/// The Chinese `message` is still sent alongside the code: it is the fallback
+/// for a code the frontend does not recognise, and it keeps the event readable
+/// in the logs. `detail` fills the code's `{detail}` placeholder.
+pub(super) fn emit_aborted(app: &AppHandle, run_id: i64, message: &str, detail: &str) {
+    let _ = app.emit(
+        "evolution-progress",
+        json!({
+            "run_id": run_id,
+            "phase": PHASE_ABORTED,
+            "progress": 100,
+            "message": message,
+            "code": msg::ABORTED,
+            "params": { "detail": detail },
+        }),
+    );
+}
+
+pub(super) fn emit_only(
+    app: &AppHandle,
+    run_id: i64,
+    phase: &str,
+    progress: i64,
+    msg: ProgressMsg,
+) {
     let _ = app.emit(
         "evolution-progress",
         json!({
             "run_id": run_id,
             "phase": phase,
             "progress": progress,
-            "message": message,
+            "message": msg.text,
+            "code": msg.code,
+            "params": msg.params,
         }),
     );
 }
@@ -158,37 +204,46 @@ pub(crate) fn start_evolution_pipeline(
                 next_run_id,
                 "discover",
                 3,
-                "正在检测已安装的 AI 编程助手...",
+                ProgressMsg::new(msg::DISCOVERING, "正在检测已安装的 AI 编程助手..."),
             );
             let conn2 = match db::open_conn(&db_path_clone) {
                 Ok(c) => c,
                 Err(e) => {
+                    let detail = e.to_string();
                     phase_update(
                         &app_handle,
                         &db_path_clone,
                         next_run_id,
                         "discover",
                         20,
-                        &format!("数据库打开失败：{e}"),
+                        ProgressMsg::with(
+                            msg::DB_OPEN_FAILED,
+                            json!({ "detail": &detail }),
+                            format!("数据库打开失败：{e}"),
+                        ),
                     );
-                    emit_only(
+                    emit_aborted(
                         &app_handle,
                         next_run_id,
-                        "discover",
-                        100,
-                        &format!("进化管道中止：数据库错误 — {e}"),
+                        &format!("进化管道中止：数据库错误 — {detail}"),
+                        &detail,
                     );
                     return;
                 }
             };
             if let Err(e) = scan::sync_source_configs(&conn2) {
+                let detail = e.to_string();
                 phase_update(
                     &app_handle,
                     &db_path_clone,
                     next_run_id,
                     "discover",
                     6,
-                    &format!("检测失败：{}", e),
+                    ProgressMsg::with(
+                        msg::DETECT_FAILED,
+                        json!({ "detail": &detail }),
+                        format!("检测失败：{}", e),
+                    ),
                 );
             }
             let _guard = scan_lock.lock().await;
@@ -205,7 +260,11 @@ pub(crate) fn start_evolution_pipeline(
                 next_run_id,
                 "discover",
                 10,
-                &format!("检测完成，本次将扫描 {} 个 AI 助手", sources.len()),
+                ProgressMsg::with(
+                    msg::DETECT_DONE,
+                    json!({ "count": sources.len() }),
+                    format!("检测完成，本次将扫描 {} 个 AI 助手", sources.len()),
+                ),
             );
 
             let skills = scan::scan_skills(&sources);
@@ -215,7 +274,11 @@ pub(crate) fn start_evolution_pipeline(
                 next_run_id,
                 "discover",
                 14,
-                &format!("发现 {} 个 Skills", skills.len()),
+                ProgressMsg::with(
+                    msg::SKILLS_FOUND,
+                    json!({ "count": skills.len() }),
+                    format!("发现 {} 个 Skills", skills.len()),
+                ),
             );
             let _ = scan::upsert_skills(&conn2, &skills);
 
@@ -226,7 +289,11 @@ pub(crate) fn start_evolution_pipeline(
                 next_run_id,
                 "discover",
                 17,
-                &format!("发现 {} 个 Agents", agents.len()),
+                ProgressMsg::with(
+                    msg::AGENTS_FOUND,
+                    json!({ "count": agents.len() }),
+                    format!("发现 {} 个 Agents", agents.len()),
+                ),
             );
             let _ = scan::upsert_agents(&conn2, &agents);
 
@@ -237,7 +304,11 @@ pub(crate) fn start_evolution_pipeline(
                 next_run_id,
                 "discover",
                 20,
-                &format!("发现 {} 条历史会话，已生成本地压缩摘要", sessions.len()),
+                ProgressMsg::with(
+                    msg::HISTORY_SUMMARIZED,
+                    json!({ "count": sessions.len() }),
+                    format!("发现 {} 条历史会话，已生成本地压缩摘要", sessions.len()),
+                ),
             );
             let _ = scan::upsert_sessions(&conn2, &sessions);
             drop(_guard);
@@ -253,7 +324,10 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "reference_retrieval",
             22,
-            "正在检索社区参考 Skills（GitHub / Web / 本地）...",
+            ProgressMsg::new(
+                msg::COMMUNITY_SEARCHING,
+                "正在检索社区参考 Skills（GitHub / Web / 本地）...",
+            ),
         );
         let community_error = match community::fetch_top_community_skills(&db_path_clone, &[]).await
         {
@@ -264,7 +338,11 @@ pub(crate) fn start_evolution_pipeline(
                     next_run_id,
                     "reference_retrieval",
                     32,
-                    &format!("社区检索完成，新增 {} 条参考结果", count),
+                    ProgressMsg::with(
+                        msg::COMMUNITY_DONE,
+                        json!({ "count": count }),
+                        format!("社区检索完成，新增 {} 条参考结果", count),
+                    ),
                 );
                 None
             }
@@ -276,7 +354,11 @@ pub(crate) fn start_evolution_pipeline(
                     next_run_id,
                     "reference_retrieval",
                     32,
-                    &message,
+                    ProgressMsg::with(
+                        msg::COMMUNITY_FAILED,
+                        json!({ "detail": err.to_string() }),
+                        &message,
+                    ),
                 );
                 Some(message)
             }
@@ -288,20 +370,24 @@ pub(crate) fn start_evolution_pipeline(
         let conn3 = match db::open_conn(&db_path_clone) {
             Ok(c) => c,
             Err(e) => {
+                let detail = e.to_string();
                 phase_update(
                     &app_handle,
                     &db_path_clone,
                     next_run_id,
                     "cluster",
                     50,
-                    &format!("数据库打开失败：{e}"),
+                    ProgressMsg::with(
+                        msg::DB_OPEN_FAILED,
+                        json!({ "detail": &detail }),
+                        format!("数据库打开失败：{e}"),
+                    ),
                 );
-                emit_only(
+                emit_aborted(
                     &app_handle,
                     next_run_id,
-                    "cluster",
-                    100,
-                    &format!("进化管道中止：数据库错误 — {e}"),
+                    &format!("进化管道中止：数据库错误 — {detail}"),
+                    &detail,
                 );
                 return;
             }
@@ -312,7 +398,7 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "cluster",
             34,
-            "正在用本地算法聚类重复工作流...",
+            ProgressMsg::new(msg::CLUSTERING, "正在用本地算法聚类重复工作流..."),
         );
         let mut clusters = workflow::cluster_workflows(&conn3);
         drop(conn3);
@@ -323,9 +409,13 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "cluster",
             42,
-            &format!(
-                "本地聚类完成，识别到 {} 个候选工作流，正在大模型复核...",
-                clusters.len()
+            ProgressMsg::with(
+                msg::CLUSTER_DONE,
+                json!({ "count": clusters.len() }),
+                format!(
+                    "本地聚类完成，识别到 {} 个候选工作流，正在大模型复核...",
+                    clusters.len()
+                ),
             ),
         );
         match optimize::refine_clusters_with_llm(&db_path_clone, &mut clusters).await {
@@ -335,7 +425,7 @@ pub(crate) fn start_evolution_pipeline(
                 next_run_id,
                 "cluster",
                 48,
-                "大模型已完成工作流复核与重排序",
+                ProgressMsg::new(msg::CLUSTER_REVIEWED, "大模型已完成工作流复核与重排序"),
             ),
             Ok(false) => phase_update(
                 &app_handle,
@@ -343,7 +433,7 @@ pub(crate) fn start_evolution_pipeline(
                 next_run_id,
                 "cluster",
                 48,
-                "未启用大模型，使用本地聚类结果",
+                ProgressMsg::new(msg::CLUSTER_LOCAL_ONLY, "未启用大模型，使用本地聚类结果"),
             ),
             Err(err) => {
                 let message = format!("大模型复核失败：{}。已回退使用本地聚类结果。", err);
@@ -354,7 +444,11 @@ pub(crate) fn start_evolution_pipeline(
                     next_run_id,
                     "cluster",
                     48,
-                    &message,
+                    ProgressMsg::with(
+                        msg::CLUSTER_REVIEW_FAILED,
+                        json!({ "detail": err.to_string() }),
+                        &message,
+                    ),
                 );
             }
         }
@@ -363,20 +457,24 @@ pub(crate) fn start_evolution_pipeline(
         let conn4 = match db::open_conn(&db_path_clone) {
             Ok(c) => c,
             Err(e) => {
+                let detail = e.to_string();
                 phase_update(
                     &app_handle,
                     &db_path_clone,
                     next_run_id,
                     "cluster",
                     50,
-                    &format!("数据库打开失败：{e}"),
+                    ProgressMsg::with(
+                        msg::DB_OPEN_FAILED,
+                        json!({ "detail": &detail }),
+                        format!("数据库打开失败：{e}"),
+                    ),
                 );
-                emit_only(
+                emit_aborted(
                     &app_handle,
                     next_run_id,
-                    "cluster",
-                    100,
-                    &format!("进化管道中止：数据库错误 — {e}"),
+                    &format!("进化管道中止：数据库错误 — {detail}"),
+                    &detail,
                 );
                 return;
             }
@@ -388,7 +486,7 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "cluster",
             50,
-            "聚类结果已保存",
+            ProgressMsg::new(msg::CLUSTER_SAVED, "聚类结果已保存"),
         );
 
         // =====================================================================
@@ -400,7 +498,7 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "draft_generate",
             52,
-            "正在基于模板生成 Skill 草稿（纯本地）...",
+            ProgressMsg::new(msg::DRAFTING, "正在基于模板生成 Skill 草稿（纯本地）..."),
         );
         let drafts = workflow::generate_skill_drafts(&conn4, &clusters);
         for cluster in clusters
@@ -437,7 +535,11 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "draft_generate",
             62,
-            &format!("已生成 {} 个本地 Skill 草稿", drafts),
+            ProgressMsg::with(
+                msg::DRAFTS_GENERATED,
+                json!({ "count": drafts }),
+                format!("已生成 {} 个本地 Skill 草稿", drafts),
+            ),
         );
 
         // =====================================================================
@@ -449,7 +551,7 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "optimize",
             64,
-            "正在用大模型逐条优化草稿...",
+            ProgressMsg::new(msg::OPTIMIZING, "正在用大模型逐条优化草稿..."),
         );
         let optimized = match optimize::optimize_drafts_with_llm(
             &db_path_clone,
@@ -466,7 +568,11 @@ pub(crate) fn start_evolution_pipeline(
                         next_run_id,
                         "optimize",
                         78,
-                        &format!("大模型已优化 {} 个 Skill 草稿", count),
+                        ProgressMsg::with(
+                            msg::DRAFTS_OPTIMIZED,
+                            json!({ "count": count }),
+                            format!("大模型已优化 {} 个 Skill 草稿", count),
+                        ),
                     );
                 } else {
                     phase_update(
@@ -475,7 +581,7 @@ pub(crate) fn start_evolution_pipeline(
                         next_run_id,
                         "optimize",
                         78,
-                        "未启用大模型，使用本地草稿",
+                        ProgressMsg::new(msg::OPTIMIZE_LOCAL_ONLY, "未启用大模型，使用本地草稿"),
                     );
                 }
                 count
@@ -492,7 +598,11 @@ pub(crate) fn start_evolution_pipeline(
                     next_run_id,
                     "optimize",
                     78,
-                    &message,
+                    ProgressMsg::with(
+                        msg::OPTIMIZE_FAILED,
+                        json!({ "detail": err.to_string() }),
+                        &message,
+                    ),
                 );
                 0
             }
@@ -507,7 +617,11 @@ pub(crate) fn start_evolution_pipeline(
                         next_run_id,
                         "optimize",
                         77,
-                        &format!("已生成 {} 个 A/B 变体", count),
+                        ProgressMsg::with(
+                            msg::VARIANTS_GENERATED,
+                            json!({ "count": count }),
+                            format!("已生成 {} 个 A/B 变体", count),
+                        ),
                     );
                 }
                 count
@@ -524,7 +638,7 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "qa_review",
             80,
-            "Skill Review Agent 正在评审草稿...",
+            ProgressMsg::new(msg::REVIEWING, "Skill Review Agent 正在评审草稿..."),
         );
         let reviewed =
             match optimize::qa_drafts_with_llm(&db_path_clone, &mut clusters, next_run_id).await {
@@ -536,7 +650,11 @@ pub(crate) fn start_evolution_pipeline(
                             next_run_id,
                             "qa_review",
                             90,
-                            &format!("Skill Review Agent 已评审 {} 个草稿", count),
+                            ProgressMsg::with(
+                                msg::REVIEW_DONE,
+                                json!({ "count": count }),
+                                format!("Skill Review Agent 已评审 {} 个草稿", count),
+                            ),
                         );
                     } else {
                         phase_update(
@@ -545,7 +663,7 @@ pub(crate) fn start_evolution_pipeline(
                             next_run_id,
                             "qa_review",
                             90,
-                            "未启用大模型，跳过 QA 评审",
+                            ProgressMsg::new(msg::REVIEW_SKIPPED, "未启用大模型，跳过 QA 评审"),
                         );
                     }
                     count
@@ -565,7 +683,11 @@ pub(crate) fn start_evolution_pipeline(
                         next_run_id,
                         "qa_review",
                         90,
-                        &message,
+                        ProgressMsg::with(
+                            msg::REVIEW_FAILED,
+                            json!({ "detail": err.to_string() }),
+                            &message,
+                        ),
                     );
                     0
                 }
@@ -577,20 +699,24 @@ pub(crate) fn start_evolution_pipeline(
         let conn5 = match db::open_conn(&db_path_clone) {
             Ok(c) => c,
             Err(e) => {
+                let detail = e.to_string();
                 phase_update(
                     &app_handle,
                     &db_path_clone,
                     next_run_id,
                     "diff_recommend",
                     100,
-                    &format!("数据库打开失败：{e}"),
+                    ProgressMsg::with(
+                        msg::DB_OPEN_FAILED,
+                        json!({ "detail": &detail }),
+                        format!("数据库打开失败：{e}"),
+                    ),
                 );
-                emit_only(
+                emit_aborted(
                     &app_handle,
                     next_run_id,
-                    "diff_recommend",
-                    100,
-                    &format!("进化管道中止：数据库错误 — {e}"),
+                    &format!("进化管道中止：数据库错误 — {detail}"),
+                    &detail,
                 );
                 return;
             }
@@ -601,7 +727,7 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "diff_recommend",
             92,
-            "正在对比本地草稿与社区 Skills...",
+            ProgressMsg::new(msg::COMPARING, "正在对比本地草稿与社区 Skills..."),
         );
         let comparisons = community::compare_with_community(&conn5, &clusters);
         phase_update(
@@ -610,7 +736,11 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "diff_recommend",
             96,
-            &format!("差异对比完成，{} 个工作流有社区参考", comparisons),
+            ProgressMsg::with(
+                msg::COMPARE_DONE,
+                json!({ "count": comparisons }),
+                format!("差异对比完成，{} 个工作流有社区参考", comparisons),
+            ),
         );
 
         let diff_step_id = step_ids["diff_recommend"];
@@ -629,23 +759,31 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "diff_recommend",
             100,
-            "推荐建议已生成",
+            ProgressMsg::new(msg::RECOMMEND_DONE, "推荐建议已生成"),
         );
 
         let completed_at = now_string();
         let _ = conn5.execute(
-            "UPDATE evolution_jobs SET status = 'completed', progress = 100, message = '进化流程完成', completed_at = ?2, data = ?3 WHERE run_id = ?1 AND phase = 'diff_recommend'",
-            params![next_run_id, &completed_at, serde_json::to_string(&json!({
-                "clusters": clusters.len(),
-                "drafts": drafts,
-                "comparisons": comparisons,
-                "optimized": optimized,
-                "reviewed": reviewed,
-                "ab_variants": ab_count,
-                "agent_ids": selected_agent_ids,
-                "llm_error": llm_error,
-                "community_error": community_error,
-            })).unwrap_or_default()],
+            "UPDATE evolution_jobs SET status = 'completed', progress = 100, message = '进化流程完成',
+             code = ?4, params = ?5, completed_at = ?2, data = ?3
+             WHERE run_id = ?1 AND phase = 'diff_recommend'",
+            params![
+                next_run_id,
+                &completed_at,
+                serde_json::to_string(&json!({
+                    "clusters": clusters.len(),
+                    "drafts": drafts,
+                    "comparisons": comparisons,
+                    "optimized": optimized,
+                    "reviewed": reviewed,
+                    "ab_variants": ab_count,
+                    "agent_ids": selected_agent_ids,
+                    "llm_error": llm_error,
+                    "community_error": community_error,
+                })).unwrap_or_default(),
+                msg::RUN_COMPLETED,
+                "{}",
+            ],
         );
         let _ = conn5.execute(
             "UPDATE evolution_steps SET status = 'completed', completed_at = ?2 WHERE run_id = ?1",
@@ -668,7 +806,10 @@ pub(crate) fn start_evolution_pipeline(
             next_run_id,
             "completed",
             100,
-            "自进化流程完成，请在 Skills 工作台查看结果",
+            ProgressMsg::new(
+                msg::RUN_COMPLETED,
+                "自进化流程完成，请在 Skills 工作台查看结果",
+            ),
         );
     });
 

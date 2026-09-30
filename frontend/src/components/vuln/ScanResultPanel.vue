@@ -1,7 +1,17 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import type { VulnScanJob } from '../../api/vuln'
 
 defineProps<{ result: VulnScanJob }>()
+
+const { t } = useI18n()
+
+const SEVERITY_LABEL_KEYS: Record<string, string> = {
+  CRITICAL: 'vuln.common.severity.critical',
+  HIGH: 'vuln.common.severity.high',
+  MEDIUM: 'vuln.common.severity.medium',
+  LOW: 'vuln.common.severity.low',
+}
 
 function severityType(s: string): string {
   const map: Record<string, string> = { CRITICAL: 'danger', HIGH: 'warning', MEDIUM: '', LOW: 'info' }
@@ -9,8 +19,8 @@ function severityType(s: string): string {
 }
 
 function severityLabel(s: string): string {
-  const map: Record<string, string> = { CRITICAL: '严重', HIGH: '高危', MEDIUM: '中危', LOW: '低危' }
-  return map[s] || s
+  const key = SEVERITY_LABEL_KEYS[s]
+  return key ? t(key) : s
 }
 
 function confidenceClass(c: number): string {
@@ -19,8 +29,8 @@ function confidenceClass(c: number): string {
   return 'conf-low'
 }
 
-function scanTypeLabel(t: string): string {
-  return t === 'url' ? '网址扫描' : '代码扫描'
+function scanTypeLabel(type: string): string {
+  return t(type === 'url' ? 'vuln.common.scanType.url' : 'vuln.common.scanType.code')
 }
 </script>
 
@@ -28,7 +38,7 @@ function scanTypeLabel(t: string): string {
   <div class="result-section">
     <div class="result-header">
       <div>
-        <h3>扫描详情</h3>
+        <h3>{{ t('vuln.common.scanDetail') }}</h3>
         <p class="result-target">
           <el-tag size="small" :type="result.scanType === 'url' ? 'primary' : 'success'">{{ scanTypeLabel(result.scanType) }}</el-tag>
           {{ result.target }}
@@ -36,27 +46,27 @@ function scanTypeLabel(t: string): string {
       </div>
       <div class="result-summary">
         <div class="finding-counts">
-          <div class="finding-badge badge-danger"><span class="badge-count">{{ result.criticalCount }}</span><span class="badge-label">严重</span></div>
-          <div class="finding-badge badge-warning"><span class="badge-count">{{ result.highCount }}</span><span class="badge-label">高危</span></div>
-          <div class="finding-badge"><span class="badge-count">{{ result.mediumCount }}</span><span class="badge-label">中危</span></div>
-          <div class="finding-badge badge-info"><span class="badge-count">{{ result.lowCount }}</span><span class="badge-label">低危</span></div>
+          <div class="finding-badge badge-danger"><span class="badge-count">{{ result.criticalCount }}</span><span class="badge-label">{{ t('vuln.common.severity.critical') }}</span></div>
+          <div class="finding-badge badge-warning"><span class="badge-count">{{ result.highCount }}</span><span class="badge-label">{{ t('vuln.common.severity.high') }}</span></div>
+          <div class="finding-badge"><span class="badge-count">{{ result.mediumCount }}</span><span class="badge-label">{{ t('vuln.common.severity.medium') }}</span></div>
+          <div class="finding-badge badge-info"><span class="badge-count">{{ result.lowCount }}</span><span class="badge-label">{{ t('vuln.common.severity.low') }}</span></div>
         </div>
       </div>
     </div>
 
     <div v-if="result.findings.length === 0" class="empty-state safe-state">
-      <p class="safe-text">未发现安全漏洞</p>
+      <p class="safe-text">{{ t('vuln.common.noVulnerabilities') }}</p>
     </div>
     <div v-else class="findings-table-wrapper">
       <table class="findings-table">
         <thead>
           <tr>
-            <th style="width:72px">严重程度</th>
-            <th style="width:110px">类型</th>
-            <th style="width:180px">位置</th>
-            <th>描述</th>
-            <th>修复建议</th>
-            <th style="width:72px">置信度</th>
+            <th style="width:72px">{{ t('vuln.common.table.severity') }}</th>
+            <th style="width:110px">{{ t('vuln.common.table.type') }}</th>
+            <th style="width:180px">{{ t('vuln.common.table.location') }}</th>
+            <th>{{ t('vuln.common.table.description') }}</th>
+            <th>{{ t('vuln.common.table.suggestion') }}</th>
+            <th style="width:72px">{{ t('vuln.common.table.confidence') }}</th>
           </tr>
         </thead>
         <tbody>

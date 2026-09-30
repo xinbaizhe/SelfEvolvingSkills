@@ -528,6 +528,19 @@ fn migrate_evolution_jobs(conn: &Connection) -> Result<()> {
              UPDATE evolution_jobs SET run_id = id WHERE run_id IS NULL;",
         )?;
     }
+    // Machine-readable form of the progress message, so the history view can
+    // render a run in the interface language instead of replaying whatever
+    // language the backend wrote at the time.
+    //
+    // `message` keeps holding the prose and is NOT backfilled: rows recorded
+    // before these columns existed have no code, and the frontend falls back to
+    // their stored prose. Older history therefore stays as it was written.
+    let _ = conn.execute("ALTER TABLE evolution_jobs ADD COLUMN code TEXT", []);
+    let _ = conn.execute("ALTER TABLE evolution_jobs ADD COLUMN params TEXT", []);
+    // The two status transitions that append a marker to an existing message
+    // (stale-job cleanup, manual reset) cannot be expressed by `code`, which
+    // belongs to the message the phase itself wrote. They get their own slot.
+    let _ = conn.execute("ALTER TABLE evolution_jobs ADD COLUMN suffix_code TEXT", []);
     Ok(())
 }
 

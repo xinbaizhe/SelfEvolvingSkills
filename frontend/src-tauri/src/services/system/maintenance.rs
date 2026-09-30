@@ -1,6 +1,8 @@
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+use crate::utils::failure::failed;
+
 pub(crate) fn clear_all_data(conn: &Connection) -> Value {
     let tables = [
         "skills",
@@ -39,7 +41,10 @@ pub(crate) fn clear_logs(conn: &Connection) -> Value {
     let cleared = clear_tables(conn, &tables);
     json!({
         "cleared_tables": cleared,
-        "message": "扫描历史、进化记录、工作流聚类、使用记录已清空。Skills、Agents、会话、记忆、日报、社区缓存和所有配置已保留。"
+        "message": failed(
+            "admin.maintenance.logsCleared",
+            "扫描历史、进化记录、工作流聚类、使用记录已清空。Skills、Agents、会话、记忆、日报、社区缓存和所有配置已保留。",
+        )
     })
 }
 
@@ -75,7 +80,10 @@ pub(crate) fn initialize_database(conn: &Connection) -> Value {
 
     json!({
         "cleared_tables": cleared,
-        "message": "数据库已初始化。已保留管理员、系统配置和数据源配置。业务数据、Skills、Agents、会话、记忆、社区缓存与历史记录已清空。"
+        "message": failed(
+            "admin.maintenance.dbInitialized",
+            "数据库已初始化。已保留管理员、系统配置和数据源配置。业务数据、Skills、Agents、会话、记忆、社区缓存与历史记录已清空。",
+        )
     })
 }
 

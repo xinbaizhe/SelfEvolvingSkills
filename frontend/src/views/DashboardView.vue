@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { fetchSummary, fetchTopSkills, type SummaryStats } from '../api/stats'
 import { fetchSources, type SourceConfig } from '../api/scan'
 import { fetchWorkflows, type Workflow } from '../api/workflows'
@@ -7,8 +8,10 @@ import type { PaginatedResult } from '../api/skills'
 
 interface LogEntry {
   time: string
-  title: string
-  body: string
+  titleKey: string
+  bodyKey?: string
+  bodyParams?: Record<string, unknown>
+  bodyText?: string
 }
 
 interface TopSkill {
@@ -18,6 +21,7 @@ interface TopSkill {
   category?: string
 }
 
+const { t } = useI18n()
 const summary = ref<SummaryStats | null>(null)
 const sources = ref<SourceConfig[]>([])
 const workflows = ref<Workflow[]>([])
@@ -37,10 +41,17 @@ const estimatedSaved = computed(() => {
   return `${hours.toFixed(1)}h`
 })
 
-function addLog(title: string, body: string) {
+function addLog(titleKey: string, body: { key: string; params?: Record<string, unknown> } | { text: string }) {
   const now = new Date()
   const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
-  logs.value.unshift({ time: stamp, title, body })
+  const entry: LogEntry = { time: stamp, titleKey }
+  if ('key' in body) {
+    entry.bodyKey = body.key
+    entry.bodyParams = body.params
+  } else {
+    entry.bodyText = body.text
+  }
+  logs.value.unshift(entry)
   if (logs.value.length > 20) logs.value.pop()
 }
 
@@ -62,17 +73,17 @@ async function load() {
     }
     if (skillsRes.success && skillsRes.data) topSkills.value = skillsRes.data as TopSkill[]
 
-    addLog('刷新完成', `发现 ${availableAgentCount.value} 个本地 Agent，${candidateWorkflows.value.length} 个可生成 Skill 的工作流。`)
+    addLog('admin.overview.logRefreshDone', { key: 'admin.overview.logRefreshBody', params: { agents: availableAgentCount.value, workflows: candidateWorkflows.value.length } })
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : String(error)
-    addLog('加载失败', loadError.value)
+    addLog('admin.overview.logLoadFailed', { text: loadError.value })
   } finally {
     loading.value = false
   }
 }
 
 onMounted(() => {
-  addLog('启动', 'Self Evolving Skills 已就绪。')
+  addLog('admin.overview.logStartup', { key: 'admin.overview.logStartupBody' })
   load()
 })
 </script>
@@ -90,24 +101,24 @@ onMounted(() => {
 
     <div class="metrics">
       <article class="metric">
-        <label>已发现 Agent <span class="chip green">本地</span></label>
+        <label>{{ t('admin.overview.discoveredAgents') }} <span class="chip green">{{ t('admin.overview.local') }}</span></label>
         <strong>{{ availableAgentCount }}</strong>
-        <small>已启用 {{ enabledAgentCount }} 个数据源，可在系统配置里调整。</small>
+        <small>{{ t('admin.overview.enabledSourcesHint', { n: enabledAgentCount }) }}</small>
       </article>
       <article class="metric">
-        <label>历史任务 <span class="chip">本机</span></label>
+        <label>{{ t('admin.overview.historyTasks') }} <span class="chip">{{ t('admin.overview.thisMachine') }}</span></label>
         <strong>{{ summary?.total_sessions ?? 0 }}</strong>
-        <small>扫描本地会话记录，仅保留工作流指纹和摘要信息。</small>
+        <small>{{ t('admin.overview.historyTasksHint') }}</small>
       </article>
       <article class="metric">
-        <label>重复工作流 <span class="chip violet">已聚类</span></label>
+        <label>{{ t('admin.overview.repeatedWorkflows') }} <span class="chip violet">{{ t('admin.overview.clustered') }}</span></label>
         <strong>{{ workflows.length }}</strong>
-        <small>{{ candidateWorkflows.length }} 个可直接生成 Skill 草稿。</small>
+        <small>{{ t('admin.overview.candidatesHint', { n: candidateWorkflows.length }) }}</small>
       </article>
       <article class="metric">
-        <label>预计节省时间 <span class="chip orange">每周</span></label>
+        <label>{{ t('admin.overview.estimatedSaved') }} <span class="chip orange">{{ t('admin.overview.weekly') }}</span></label>
         <strong>{{ estimatedSaved }}</strong>
-        <small>根据重复任务频率和平均耗时估算。</small>
+        <small>{{ t('admin.overview.estimatedSavedHint') }}</small>
       </article>
     </div>
 
@@ -115,10 +126,10 @@ onMounted(() => {
       <section class="panel">
         <div class="head">
           <div>
-            <h2>推荐技能</h2>
-            <p>点击候选工作流可查看来源任务、草稿、测试样本和导出格式。</p>
+            <h2>{{ t('admin.overview.recommendedSkills') }}</h2>
+            <p>{{ t('admin.overview.recommendedSkillsHint') }}</p>
           </div>
-          <span v-if="candidateWorkflows.length > 0" class="chip green">可审查</span>
+          <span v-if="candidateWorkflows.length > 0" class="chip green">{{ t('admin.overview.reviewable') }}</span>
         </div>
         <div class="body">
           <article
@@ -131,16 +142,16 @@ onMounted(() => {
             </div>
             <div>
               <h3>{{ workflow.name }}</h3>
-              <p>{{ workflow.description || '暂无描述' }}</p>
+              <p>{{ workflow.description || t('admin.common.noDescription') }}</p>
             </div>
             <div class="score">
-              评分 {{ workflow.skill_score }}
+              {{ t('admin.overview.score', { score: workflow.skill_score }) }}
               <div class="bar"><span :style="{ width: workflow.skill_score + '%' }"></span></div>
             </div>
-            <div class="meta">{{ workflow.frequency }} 次<br>{{ workflow.estimated_time_saved || '-' }}</div>
+            <div class="meta">{{ t('admin.overview.times', { n: workflow.frequency }) }}<br>{{ workflow.estimated_time_saved || '-' }}</div>
           </article>
           <div v-if="candidateWorkflows.length === 0" class="empty-block">
-            暂无候选项。请先在系统管理中运行扫描，再生成工作流聚类。
+            {{ t('admin.overview.noCandidates') }}
           </div>
         </div>
       </section>
@@ -149,31 +160,31 @@ onMounted(() => {
         <section class="panel">
           <div class="head">
             <div>
-              <h2>本地扫描流程</h2>
-              <p>自动发现路径、扫描、脱敏、聚类并生成待审查 Skill 草稿。</p>
+              <h2>{{ t('admin.overview.localScanFlow') }}</h2>
+              <p>{{ t('admin.overview.localScanFlowHint') }}</p>
             </div>
           </div>
           <div class="body">
             <article class="node">
               <div class="node-icon"></div>
-              <div><b>发现本地路径</b><span>检测 Hermes、Claude Code、Codex、VSCode、Cursor 等历史目录。</span></div>
-              <span class="chip green">就绪</span>
+              <div><b>{{ t('admin.overview.discoverPaths') }}</b><span>{{ t('admin.overview.discoverPathsHint') }}</span></div>
+              <span class="chip green">{{ t('admin.overview.ready') }}</span>
             </article>
             <article class="node">
               <div class="node-icon"></div>
-              <div><b>解析历史记录</b><span>提取用户目标、工具调用、输出摘要和成功信号。</span></div>
-              <span class="chip green">就绪</span>
+              <div><b>{{ t('admin.overview.parseHistory') }}</b><span>{{ t('admin.overview.parseHistoryHint') }}</span></div>
+              <span class="chip green">{{ t('admin.overview.ready') }}</span>
             </article>
             <article class="node">
               <div class="node-icon"></div>
-              <div><b>本地脱敏处理</b><span>替换 Token、邮箱、客户名称、绝对路径和私有代码片段。</span></div>
-              <span class="chip green">默认</span>
+              <div><b>{{ t('admin.overview.localRedaction') }}</b><span>{{ t('admin.overview.localRedactionHint') }}</span></div>
+              <span class="chip green">{{ t('admin.overview.default') }}</span>
             </article>
             <article class="node">
               <div class="node-icon"></div>
-              <div><b>工作流聚类</b><span>按目标、输入、输出、工具和重复频率进行聚类。</span></div>
+              <div><b>{{ t('admin.overview.workflowClustering') }}</b><span>{{ t('admin.overview.workflowClusteringHint') }}</span></div>
               <span :class="'chip ' + (workflows.length > 0 ? 'green' : 'orange')">
-                {{ workflows.length > 0 ? '已完成' : '待处理' }}
+                {{ workflows.length > 0 ? t('admin.common.status.completed') : t('admin.common.status.pending') }}
               </span>
             </article>
           </div>
@@ -182,15 +193,15 @@ onMounted(() => {
         <section class="panel">
           <div class="head">
             <div>
-              <h2>扫描日志</h2>
-              <p>记录本地发现、脱敏和生成操作。</p>
+              <h2>{{ t('admin.overview.scanLog') }}</h2>
+              <p>{{ t('admin.overview.scanLogHint') }}</p>
             </div>
           </div>
           <div class="body log">
-            <div v-if="logs.length === 0" class="empty-block">暂无日志</div>
+            <div v-if="logs.length === 0" class="empty-block">{{ t('admin.overview.noLogs') }}</div>
             <div v-for="(log, index) in logs" :key="index" class="log-item">
               <time>{{ log.time }}</time>
-              <div><b>{{ log.title }}</b>{{ log.body }}</div>
+              <div><b>{{ t(log.titleKey) }}</b>{{ log.bodyKey ? t(log.bodyKey, log.bodyParams || {}) : log.bodyText }}</div>
             </div>
           </div>
         </section>
@@ -201,13 +212,13 @@ onMounted(() => {
       <section class="panel">
         <div class="head">
           <div>
-            <h2>自动发现的本地数据源</h2>
-            <p>扫描前需要用户确认。</p>
+            <h2>{{ t('admin.overview.autoSources') }}</h2>
+            <p>{{ t('admin.overview.autoSourcesHint') }}</p>
           </div>
         </div>
         <table>
           <thead>
-            <tr><th>数据源</th><th>路径</th><th>记录数</th><th>状态</th></tr>
+            <tr><th>{{ t('admin.overview.thSource') }}</th><th>{{ t('admin.common.path') }}</th><th>{{ t('admin.common.records') }}</th><th>{{ t('admin.common.statusLabel') }}</th></tr>
           </thead>
           <tbody>
             <tr v-for="source in sources" :key="source.agent_id">
@@ -216,29 +227,29 @@ onMounted(() => {
               <td>{{ source.record_count }}</td>
               <td>
                 <span :class="'chip ' + (source.is_enabled ? 'green' : 'orange')">
-                  {{ source.is_enabled ? '已启用' : source.is_available ? '已禁用' : '未检测到' }}
+                  {{ source.is_enabled ? t('admin.common.enabled') : source.is_available ? t('admin.overview.sourceDisabled') : t('admin.common.unavailable') }}
                 </span>
               </td>
             </tr>
           </tbody>
         </table>
-        <div v-if="sources.length === 0" class="empty-block">暂无数据源。请进入系统管理执行扫描。</div>
+        <div v-if="sources.length === 0" class="empty-block">{{ t('admin.overview.noSources') }}</div>
       </section>
 
       <section class="panel">
         <div class="head">
           <div>
-            <h2>热门 Skills</h2>
-            <p>按本地使用频率排序。</p>
+            <h2>{{ t('admin.overview.hotSkills') }}</h2>
+            <p>{{ t('admin.overview.hotSkillsHint') }}</p>
           </div>
         </div>
         <div class="body">
           <article v-for="skill in topSkills.slice(0, 5)" :key="skill.name" class="node">
             <div class="node-icon"></div>
-            <div><b>{{ skill.name }}</b><span>{{ skill.description || skill.category || '暂无描述' }}</span></div>
+            <div><b>{{ skill.name }}</b><span>{{ skill.description || skill.category || t('admin.common.noDescription') }}</span></div>
             <span class="chip">{{ skill.usage_count ?? 0 }}</span>
           </article>
-          <div v-if="topSkills.length === 0" class="empty-block">暂无 Skills。扫描后会在这里显示。</div>
+          <div v-if="topSkills.length === 0" class="empty-block">{{ t('admin.overview.noSkills') }}</div>
         </div>
       </section>
     </div>

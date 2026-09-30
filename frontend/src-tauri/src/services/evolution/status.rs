@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::db;
 use crate::utils::time::now_string;
 
+use super::msg::{self, ProgressMsg};
 use super::PHASES;
 
 pub(crate) fn has_incomplete_run(conn: &Connection) -> bool {
@@ -34,25 +35,39 @@ pub(crate) fn cleanup_stale_jobs(conn: &Connection) -> i64 {
         let sql = format!(
             "UPDATE evolution_jobs
              SET status = 'failed', completed_at = ?1,
-                 message = COALESCE(message, '') || ' [超时自动标记为失败]'
+                 message = COALESCE(message, '') || ' [超时自动标记为失败]',
+                 suffix_code = ?3
              WHERE phase = ?2 AND status IN ('running', 'pending')
                AND started_at IS NOT NULL
                AND datetime(started_at, '+{timeout_min} minutes') < datetime(?1)"
         );
-        if let Ok(count) = conn.execute(&sql, params![now, phase]) {
+        if let Ok(count) = conn.execute(&sql, params![now, phase, msg::SUFFIX_TIMEOUT]) {
             total += count as i64;
         }
     }
     total
 }
 
-pub(super) fn heartbeat_phase(db_path: &Path, run_id: i64, phase: &str, message: &str) {
+/// Refreshes a phase's liveness and its message.
+///
+/// Unlike [`phase_update`](super::pipeline::phase_update) this writes no event:
+/// it only exists so the history view can show what a long phase is doing when
+/// the user comes back later. The code travels with the message for the same
+/// reason it does there.
+pub(super) fn heartbeat_phase(db_path: &Path, run_id: i64, phase: &str, msg: ProgressMsg) {
     if let Ok(conn) = db::open_conn(db_path) {
         let now = now_string();
         let _ = conn.execute(
-            "UPDATE evolution_jobs SET started_at = ?2, message = ?3
-             WHERE run_id = ?1 AND phase = ?4 AND status = 'running'",
-            params![run_id, now, message, phase],
+            "UPDATE evolution_jobs SET started_at = ?2, message = ?3, code = ?4, params = ?5
+             WHERE run_id = ?1 AND phase = ?6 AND status = 'running'",
+            params![
+                run_id,
+                now,
+                msg.text,
+                msg.code,
+                msg.params.to_string(),
+                phase
+            ],
         );
     }
 }
@@ -98,9 +113,11 @@ pub(crate) fn reset_stuck_evolution(conn: &Connection) -> Value {
     let stuck: i64 = conn
         .execute(
             "UPDATE evolution_jobs
-             SET status = 'failed', completed_at = ?1, message = COALESCE(message, '') || ' [已手动重置]'
+             SET status = 'failed', completed_at = ?1,
+                 message = COALESCE(message, '') || ' [已手动重置]',
+                 suffix_code = ?2
              WHERE status IN ('running', 'pending')",
-            params![now],
+            params![now, msg::SUFFIX_RESET],
         )
         .unwrap_or(0) as i64;
     json!({ "reset": stuck, "message": format!("已重置 {} 个卡住的作业", stuck) })
@@ -155,11 +172,15 @@ pub(crate) fn get_evolution_status(conn: &Connection) -> Value {
 
 fn get_run_phases(conn: &Connection, run_id: i64) -> Result<Vec<Value>> {
     let mut stmt = conn.prepare(
-        "SELECT id, phase, status, progress, message, started_at, completed_at
+        "SELECT id, phase, status, progress, message, started_at, completed_at,
+                code, params, suffix_code
              FROM evolution_jobs WHERE run_id = ?1 ORDER BY id",
     )?;
     let rows: Vec<Value> = stmt
         .query_map(params![run_id], |row| {
+            // `code` is NULL for phases recorded before codes existed; the
+            // history view falls back to `message` for those.
+            let params: Option<String> = row.get::<_, Option<String>>(8)?;
             Ok(json!({
                 "id": row.get::<_, i64>(0)?,
                 "phase": row.get::<_, String>(1)?,
@@ -168,6 +189,9 @@ fn get_run_phases(conn: &Connection, run_id: i64) -> Result<Vec<Value>> {
                 "message": row.get::<_, Option<String>>(4)?,
                 "started_at": row.get::<_, Option<String>>(5)?,
                 "completed_at": row.get::<_, Option<String>>(6)?,
+                "code": row.get::<_, Option<String>>(7)?,
+                "params": params.as_deref().and_then(|raw| serde_json::from_str::<Value>(raw).ok()),
+                "suffix_code": row.get::<_, Option<String>>(9)?,
             }))
         })?
         .filter_map(|r| r.ok())

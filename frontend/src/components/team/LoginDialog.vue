@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useTeamStore } from '../../stores/useTeamStore'
 
+const { t } = useI18n()
 const store = useTeamStore()
 const visible = ref(false)
 const form = reactive({ serverUrl: '', username: '', password: '' })
@@ -25,7 +27,7 @@ function close() {
 
 async function doLogin() {
   if (!form.serverUrl || !form.username || !form.password) {
-    localError.value = '请填写完整信息'
+    localError.value = t('team.loginDialog.incomplete')
     return
   }
   loading.value = true
@@ -36,7 +38,7 @@ async function doLogin() {
       visible.value = false
       emit('loggedIn')
     } else {
-      localError.value = store.error || '登录失败'
+      localError.value = store.error || t('team.loginDialog.loginFailed')
     }
   } finally {
     loading.value = false
@@ -50,7 +52,7 @@ defineExpose({ open })
   <Teleport to="body">
     <div v-if="visible" class="login-overlay" @click.self="close" @keydown.escape="close">
       <div class="login-panel">
-        <button class="close-btn" @click="close" title="关闭">
+        <button class="close-btn" @click="close" :title="t('common.close')">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M5 5l10 10M15 5l-10 10" />
           </svg>
@@ -67,21 +69,21 @@ defineExpose({ open })
                 <path d="M14 18v4M26 18v4M16 26h8" stroke="currentColor" stroke-width="1.2" opacity="0.5"/>
               </svg>
             </div>
-            <h2>团队版登录</h2>
-            <p>连接到团队服务器，同步共享 Skills 和模型配置</p>
+            <h2>{{ t('team.loginDialog.title') }}</h2>
+            <p>{{ t('team.loginDialog.subtitle') }}</p>
           </div>
           <div class="tips">
             <div class="tip-item">
               <span class="tip-num">1</span>
-              <span>确保团队服务器已启动</span>
+              <span>{{ t('team.loginDialog.tip1') }}</span>
             </div>
             <div class="tip-item">
               <span class="tip-num">2</span>
-              <span>输入管理员提供的账号密码</span>
+              <span>{{ t('team.loginDialog.tip2') }}</span>
             </div>
             <div class="tip-item">
               <span class="tip-num">3</span>
-              <span>登录后可浏览、安装、分享 Skills</span>
+              <span>{{ t('team.loginDialog.tip3') }}</span>
             </div>
           </div>
         </div>
@@ -89,29 +91,29 @@ defineExpose({ open })
         <div class="panel-right">
           <form class="login-form" @submit.prevent="doLogin">
             <div class="form-group">
-              <label>服务器地址</label>
+              <label>{{ t('team.loginDialog.serverUrl') }}</label>
               <input
                 v-model="form.serverUrl"
                 type="text"
-                placeholder="输入服务器地址"
+                :placeholder="t('team.loginDialog.serverUrlPlaceholder')"
                 autocomplete="url"
               />
             </div>
             <div class="form-group">
-              <label>用户名</label>
+              <label>{{ t('team.loginDialog.username') }}</label>
               <input
                 v-model="form.username"
                 type="text"
-                placeholder="输入用户名"
+                :placeholder="t('team.loginDialog.usernamePlaceholder')"
                 autocomplete="username"
               />
             </div>
             <div class="form-group">
-              <label>密码</label>
+              <label>{{ t('team.loginDialog.password') }}</label>
               <input
                 v-model="form.password"
                 type="password"
-                placeholder="输入密码"
+                :placeholder="t('team.loginDialog.passwordPlaceholder')"
                 autocomplete="current-password"
                 @keyup.enter="doLogin"
               />
@@ -120,9 +122,9 @@ defineExpose({ open })
             <div v-if="localError" class="form-error">{{ localError }}</div>
 
             <div class="form-actions">
-              <button type="button" class="btn-cancel" @click="close">取消</button>
+              <button type="button" class="btn-cancel" @click="close">{{ t('common.cancel') }}</button>
               <button type="submit" class="btn-submit" :disabled="loading">
-                {{ loading ? '登录中...' : '登录' }}
+                {{ loading ? t('team.loginDialog.loggingIn') : t('team.loginDialog.login') }}
               </button>
             </div>
           </form>

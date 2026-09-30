@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import WorkflowsView from './WorkflowsView.vue'
 import SkillDraftsView from './SkillDraftsView.vue'
 import SkillGardenView from './SkillGardenView.vue'
@@ -8,6 +9,7 @@ import SkillCommunityCompareView from './SkillCommunityCompareView.vue'
 import EvolutionPipeline from '../components/evolution/EvolutionPipeline.vue'
 import EvolutionHistory from '../components/evolution/EvolutionHistory.vue'
 
+const { t } = useI18n()
 const route = useRoute()
 const activeTab = ref('pipeline')
 const refreshKey = ref(0)
@@ -36,28 +38,28 @@ watch(() => route.query.tab, syncTabFromRoute)
   <section class="page-view workbench-view">
     <div class="page-head">
       <div>
-        <h2>Skills 工作台</h2>
-        <p>从真实本机会话中发现重复工作流，生成 Skill 草稿，对比社区参考，再审核安装到目标 Agent。</p>
+        <h2>{{ t('workbench.skillsWorkbench.title') }}</h2>
+        <p>{{ t('workbench.skillsWorkbench.subtitle') }}</p>
       </div>
     </div>
 
     <el-tabs v-model="activeTab" class="workspace-tabs">
-      <el-tab-pane label="进化管道" name="pipeline">
+      <el-tab-pane :label="t('workbench.skillsWorkbench.tabPipeline')" name="pipeline">
         <EvolutionPipeline @started="handlePipelineStarted" @completed="handlePipelineCompleted" />
       </el-tab-pane>
-      <el-tab-pane label="推荐" name="recommend">
+      <el-tab-pane :label="t('workbench.skillsWorkbench.tabRecommend')" name="recommend">
         <WorkflowsView :key="`recommend-${refreshKey}`" />
       </el-tab-pane>
-      <el-tab-pane label="草稿" name="drafts">
+      <el-tab-pane :label="t('workbench.skillsWorkbench.tabDrafts')" name="drafts">
         <SkillDraftsView :key="`drafts-${refreshKey}`" />
       </el-tab-pane>
-      <el-tab-pane label="社区对比" name="compare">
+      <el-tab-pane :label="t('workbench.skillsWorkbench.tabCompare')" name="compare">
         <SkillCommunityCompareView :key="`compare-${refreshKey}`" />
       </el-tab-pane>
-      <el-tab-pane label="已生成" name="garden">
+      <el-tab-pane :label="t('workbench.skillsWorkbench.tabGarden')" name="garden">
         <SkillGardenView :key="`garden-${refreshKey}`" />
       </el-tab-pane>
-      <el-tab-pane label="操作记录" name="history">
+      <el-tab-pane :label="t('workbench.skillsWorkbench.tabHistory')" name="history">
         <EvolutionHistory :key="`history-${refreshKey}`" />
       </el-tab-pane>
     </el-tabs>

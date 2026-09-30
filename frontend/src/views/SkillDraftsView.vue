@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteWorkflowDraft, fetchWorkflows, updateWorkflowDraft, type SkillReviewFeedback, type Workflow } from '../api/workflows'
 import { getErrorMessage } from '../utils/error'
 import type { PaginatedResult } from '../api/skills'
+
+const { t } = useI18n()
 
 const drafts = ref<Workflow[]>([])
 const loading = ref(false)
@@ -34,11 +37,11 @@ const reviewFeedback = computed<SkillReviewFeedback | null>(() => selectedDraft.
 const reviewSections = computed(() => {
   const feedback = reviewFeedback.value || {}
   return [
-    { key: 'safety', title: '安全', items: feedback.safety || [] },
-    { key: 'performance', title: '性能', items: feedback.performance || [] },
-    { key: 'functionality', title: '功能', items: feedback.functionality || [] },
-    { key: 'writing', title: '写法', items: feedback.writing || [] },
-    { key: 'improvements', title: '怎么改进', items: feedback.improvements || [] },
+    { key: 'safety', titleKey: 'workbench.common.review.safety', items: feedback.safety || [] },
+    { key: 'performance', titleKey: 'workbench.common.review.performance', items: feedback.performance || [] },
+    { key: 'functionality', titleKey: 'workbench.common.review.functionality', items: feedback.functionality || [] },
+    { key: 'writing', titleKey: 'workbench.common.review.writing', items: feedback.writing || [] },
+    { key: 'improvements', titleKey: 'workbench.common.review.improvements', items: feedback.improvements || [] },
   ]
 })
 
@@ -72,11 +75,11 @@ function viewDraft(draft: Workflow) {
 
 function sourceLabel(draft: Workflow) {
   const source = draft.recommendation_source || ''
-  if (source === 'manual-existing-skill') return '手动进化'
-  if (source === 'llm') return '进化管道推荐 · 大模型复核'
-  if (source.includes('workflow') || source.includes('local')) return '进化管道推荐'
-  if (source.includes('existing')) return '已存在自动进化'
-  return '来源未标注'
+  if (source === 'manual-existing-skill') return t('workbench.drafts.sourceManual')
+  if (source === 'llm') return t('workbench.drafts.sourceLlm')
+  if (source.includes('workflow') || source.includes('local')) return t('workbench.drafts.sourcePipeline')
+  if (source.includes('existing')) return t('workbench.drafts.sourceExisting')
+  return t('workbench.drafts.sourceUnknown')
 }
 
 function sourceType(draft: Workflow) {
@@ -89,22 +92,22 @@ function sourceType(draft: Workflow) {
 
 function statusLabel(status?: string | null) {
   const map: Record<string, string> = {
-    pending: '待审核',
-    edited: '已手动编辑',
-    installed: '已安装',
-    'manual-draft': '手动草稿',
+    pending: t('workbench.drafts.statusPending'),
+    edited: t('workbench.drafts.statusEdited'),
+    installed: t('workbench.drafts.statusInstalled'),
+    'manual-draft': t('workbench.drafts.statusManualDraft'),
   }
-  return map[status || ''] || status || '待审核'
+  return map[status || ''] || status || t('workbench.drafts.statusPending')
 }
 
 function reviewVerdictLabel(verdict?: string) {
   const map: Record<string, string> = {
-    install: '建议安装',
-    revise: '建议修改',
-    merge: '建议合并',
-    discard: '建议丢弃',
+    install: t('workbench.common.review.verdictInstall'),
+    revise: t('workbench.common.review.verdictRevise'),
+    merge: t('workbench.common.review.verdictMerge'),
+    discard: t('workbench.common.review.verdictDiscard'),
   }
-  return map[verdict || ''] || verdict || '等待评审'
+  return map[verdict || ''] || verdict || t('workbench.common.review.verdictPending')
 }
 
 function reviewScoreType(score?: number | null) {
@@ -122,13 +125,13 @@ async function saveDraft() {
       draft_body: editBody.value,
       description: selectedDraft.value.description,
     })
-    if (!res.success || !res.data) throw new Error(res.error || '保存失败')
+    if (!res.success || !res.data) throw new Error(res.error || t('workbench.common.saveFailed'))
     selectedDraft.value = res.data
     const index = drafts.value.findIndex((draft) => draft.id === res.data!.id)
     if (index >= 0) drafts.value[index] = res.data
-    ElMessage.success('草稿已保存')
+    ElMessage.success(t('workbench.drafts.saved'))
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '保存失败'))
+    ElMessage.error(getErrorMessage(e, t('workbench.common.saveFailed')))
   } finally {
     saving.value = false
   }
@@ -137,20 +140,20 @@ async function saveDraft() {
 async function removeDraft() {
   if (!selectedDraft.value) return
   try {
-    await ElMessageBox.confirm(`确定删除草稿「${selectedDraft.value.name}」吗？`, '删除草稿', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(t('workbench.drafts.deleteConfirm', { name: selectedDraft.value.name }), t('workbench.drafts.deleteTitle'), {
+      confirmButtonText: t('common.delete'),
+      cancelButtonText: t('common.cancel'),
       type: 'warning',
     })
     deleting.value = true
     const id = selectedDraft.value.id
     const res = await deleteWorkflowDraft(id)
-    if (!res.success) throw new Error(res.error || '删除失败')
+    if (!res.success) throw new Error(res.error || t('workbench.common.deleteFailed'))
     drafts.value = drafts.value.filter((draft) => draft.id !== id)
     selectedDraft.value = drafts.value[0] || null
-    ElMessage.success('草稿已删除')
+    ElMessage.success(t('workbench.drafts.deleted'))
   } catch (e: unknown) {
-    if (e !== 'cancel') ElMessage.error(getErrorMessage(e, '删除失败'))
+    if (e !== 'cancel') ElMessage.error(getErrorMessage(e, t('workbench.common.deleteFailed')))
   } finally {
     deleting.value = false
   }
@@ -171,19 +174,19 @@ onMounted(load)
         :class="'filter-tag' + (activeFilter === 'manual' ? ' active' : '')"
         effect="plain"
         @click="setFilter('manual')"
-      >手动进化 {{ manualCount }}</el-tag>
+      >{{ t('workbench.common.filterManual', { n: manualCount }) }}</el-tag>
       <el-tag
         :class="'filter-tag' + (activeFilter === 'pipeline' ? ' active' : '')"
         effect="plain"
         @click="setFilter('pipeline')"
-      >进化管道推荐 {{ pipelineCount }}</el-tag>
+      >{{ t('workbench.common.filterPipeline', { n: pipelineCount }) }}</el-tag>
       <el-tag
         type="success"
         :class="'filter-tag' + (activeFilter === 'llm' ? ' active' : '')"
         effect="plain"
         @click="setFilter('llm')"
-      >大模型复核 {{ llmCount }}</el-tag>
-      <el-tag v-if="activeFilter" class="filter-tag" effect="plain" @click="setFilter(null)">显示全部 ({{ drafts.length }})</el-tag>
+      >{{ t('workbench.common.filterLlm', { n: llmCount }) }}</el-tag>
+      <el-tag v-if="activeFilter" class="filter-tag" effect="plain" @click="setFilter(null)">{{ t('workbench.common.showAllCount', { n: drafts.length }) }}</el-tag>
     </div>
 
     <div v-if="filteredDrafts.length > 0" class="draft-layout">
@@ -198,11 +201,11 @@ onMounted(load)
             <h3>{{ draft.name }}</h3>
             <el-tag size="small" :type="sourceType(draft)">{{ sourceLabel(draft) }}</el-tag>
           </div>
-          <p>{{ draft.description || '暂无描述' }}</p>
+          <p>{{ draft.description || t('workbench.common.noDescription') }}</p>
           <div class="draft-meta">
             <span>{{ statusLabel(draft.status) }}</span>
-            <span>推荐 {{ draft.skill_score }}</span>
-            <span v-if="draft.review_score != null">评审 {{ draft.review_score }}</span>
+            <span>{{ t('workbench.drafts.recommendScore', { score: draft.skill_score }) }}</span>
+            <span v-if="draft.review_score != null">{{ t('workbench.drafts.reviewScore', { score: draft.review_score }) }}</span>
           </div>
         </article>
       </div>
@@ -210,31 +213,31 @@ onMounted(load)
       <section v-if="selectedDraft" class="panel draft-editor">
         <div class="head">
           <div>
-            <h2>Skill 草稿：{{ selectedDraft.name }}</h2>
+            <h2>{{ t('workbench.drafts.editorTitle', { name: selectedDraft.name }) }}</h2>
             <p>{{ selectedDraft.description }}</p>
           </div>
           <div class="actions">
             <el-tag :type="sourceType(selectedDraft)">{{ sourceLabel(selectedDraft) }}</el-tag>
-            <el-button size="small" :loading="saving" @click="saveDraft">保存</el-button>
-            <el-button size="small" type="danger" :loading="deleting" @click="removeDraft">删除</el-button>
+            <el-button size="small" :loading="saving" @click="saveDraft">{{ t('common.save') }}</el-button>
+            <el-button size="small" type="danger" :loading="deleting" @click="removeDraft">{{ t('common.delete') }}</el-button>
           </div>
         </div>
 
         <div class="body draft-review-grid">
           <div class="draft-pane">
             <div class="pane-title">
-              <h3>自己的草稿</h3>
-              <span>可直接编辑 SKILL.md</span>
+              <h3>{{ t('workbench.drafts.ownDraft') }}</h3>
+              <span>{{ t('workbench.drafts.editHint') }}</span>
             </div>
             <el-input
               v-model="editBody"
               type="textarea"
               :rows="24"
               resize="vertical"
-              placeholder="编辑 SKILL.md 草稿内容"
+              :placeholder="t('workbench.drafts.editPlaceholder')"
             />
             <div v-if="selectedSampleTasks.length" class="source-tasks">
-              <p>来源任务</p>
+              <p>{{ t('workbench.drafts.sourceTasks') }}</p>
               <ul>
                 <li v-for="task in selectedSampleTasks" :key="task">{{ task }}</li>
               </ul>
@@ -243,26 +246,26 @@ onMounted(load)
 
           <aside class="review-pane">
             <div class="pane-title">
-              <h3>改进意见</h3>
+              <h3>{{ t('workbench.common.review.title') }}</h3>
               <span>Skill Review Agent</span>
             </div>
             <div v-if="selectedDraft.review_score != null || reviewFeedback" class="review-summary">
               <el-tag :type="reviewScoreType(selectedDraft.review_score)">
-                {{ selectedDraft.review_score ?? '-' }} 分
+                {{ t('workbench.common.review.score', { score: selectedDraft.review_score ?? '-' }) }}
               </el-tag>
               <el-tag type="info">{{ reviewVerdictLabel(reviewFeedback?.verdict) }}</el-tag>
-              <p>{{ selectedDraft.review_summary || '暂无总结' }}</p>
+              <p>{{ selectedDraft.review_summary || t('workbench.common.review.summaryEmpty') }}</p>
             </div>
             <div v-if="reviewFeedback" class="review-sections">
               <section v-for="section in reviewSections" :key="section.key" class="review-section">
-                <h4>{{ section.title }}</h4>
+                <h4>{{ t(section.titleKey) }}</h4>
                 <ul v-if="section.items.length">
                   <li v-for="item in section.items" :key="item">{{ item }}</li>
                 </ul>
-                <p v-else>暂无明显问题。</p>
+                <p v-else>{{ t('workbench.common.review.noIssues') }}</p>
               </section>
             </div>
-            <el-empty v-else description="暂无评审意见。运行进化管道并启用大模型后会自动生成。" />
+            <el-empty v-else :description="t('workbench.common.review.emptyDescription')" />
           </aside>
         </div>
       </section>
@@ -270,14 +273,14 @@ onMounted(load)
 
     <div v-else-if="activeFilter" class="panel">
       <div class="body empty-state">
-        <p>该筛选条件下暂无草稿。</p>
-        <el-button link type="primary" @click="setFilter(null)">显示全部</el-button>
+        <p>{{ t('workbench.drafts.emptyFiltered') }}</p>
+        <el-button link type="primary" @click="setFilter(null)">{{ t('workbench.common.showAll') }}</el-button>
       </div>
     </div>
 
     <div v-else class="panel">
       <div class="body empty-state">
-        暂无 Skill 草稿。可以在"进化管道"启动自动流程，也可以到"已存在 Skills"中点击单个 Skill 右上角的"进化"手动创建草稿。
+        {{ t('workbench.drafts.empty') }}
       </div>
     </div>
   </section>

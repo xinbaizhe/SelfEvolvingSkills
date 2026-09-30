@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { SkillDetail } from '../../api/skills'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   visible: boolean
@@ -25,22 +28,22 @@ function formatSize(bytes: number) {
 
 <template>
   <el-dialog v-model="dialogVisible" :title="detail?.name" width="800px" top="5vh">
-    <div v-if="loading" class="empty-state">加载中...</div>
+    <div v-if="loading" class="empty-state">{{ t('common.loading') }}</div>
     <div v-else-if="detail">
       <el-descriptions :column="2" border size="small">
-        <el-descriptions-item label="名称">{{ detail.name }}</el-descriptions-item>
-        <el-descriptions-item label="分类">{{ detail.category }}</el-descriptions-item>
-        <el-descriptions-item label="来源">{{ detail.source_type }}</el-descriptions-item>
-        <el-descriptions-item label="原始来源">{{ detail.origin || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="插件">{{ detail.plugin_name || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="使用次数">{{ detail.usage_count }}</el-descriptions-item>
-        <el-descriptions-item label="文件大小">{{ formatSize(detail.file_size) }}</el-descriptions-item>
-        <el-descriptions-item label="行数">{{ detail.line_count }}</el-descriptions-item>
-        <el-descriptions-item label="文件路径" :span="2">{{ detail.file_path }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.common.field.name')">{{ detail.name }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.common.field.category')">{{ detail.category }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.common.field.source')">{{ detail.source_type }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.skillDetail.origin')">{{ detail.origin || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.skillDetail.plugin')">{{ detail.plugin_name || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.common.field.usageCount')">{{ detail.usage_count }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.common.field.fileSize')">{{ formatSize(detail.file_size) }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.skillDetail.lineCount')">{{ detail.line_count }}</el-descriptions-item>
+        <el-descriptions-item :label="t('workbench.common.field.filePath')" :span="2">{{ detail.file_path }}</el-descriptions-item>
       </el-descriptions>
       <div class="detail-section">
-        <h4>Markdown 内容预览</h4>
-        <div class="code-preview">{{ detail.body_text || '无内容' }}</div>
+        <h4>{{ t('workbench.skillDetail.markdownPreview') }}</h4>
+        <div class="code-preview">{{ detail.body_text || t('workbench.common.noContent') }}</div>
       </div>
     </div>
   </el-dialog>

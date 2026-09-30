@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import i18n from '../i18n'
 
 export interface TeamSession {
   username: string
@@ -136,19 +137,19 @@ export interface PostItem {
 
 export async function fetchDeptTree() {
   const res = await teamApiGet<RuoyiResponse<DeptTreeNode[]>>('/team/deptTree')
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data
 }
 
 export async function fetchAllPosts() {
   const res = await teamApiGet<RuoyiResponse<PostItem[]>>('/team/posts')
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data
 }
 
 export async function fetchAllRoles() {
   const res = await teamApiGet<RuoyiResponse<RoleItem[]>>('/team/roles')
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data
 }
 
@@ -160,7 +161,7 @@ export async function fetchTeamSkills(params?: Record<string, string>) {
 
 export async function fetchTeamSkillDetail(id: number) {
   const res = await teamApiGet<RuoyiResponse<TeamSkill>>(`/team/skills/${id}`)
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data
 }
 
@@ -171,7 +172,7 @@ export async function shareSkillToTeam(skill: {
   zipFileName?: string; zipBase64?: string; usageGuide?: string
 }) {
   const res = await teamApiPost<RuoyiResponse<TeamSkill>>('/team/skills', skill)
-  if (res.code !== 200) throw new Error(res.msg || '分享失败')
+  if (res.code !== 200) throw new Error(res.msg || i18n.global.t('team.api.shareFailed'))
   return res.data
 }
 
@@ -183,20 +184,20 @@ export async function downloadTeamSkillZip(skillId: number) {
 
 export async function fetchTeamStats() {
   const res = await teamApiGet<RuoyiResponse<{ totalSkills: number; totalInstalls: number }>>('/team/skills/stats')
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data
 }
 
 export async function fetchTeamProfile() {
   const res = await teamApiGet<RuoyiResponse<TeamProfile>>('/team/profile')
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data
 }
 
 export async function fetchAvailableModels(name?: string) {
   const query = name?.trim() ? '?' + new URLSearchParams({ name: name.trim() }).toString() : ''
   const res = await teamApiGet<RuoyiResponse<TeamModelConfig[]>>(`/team/models/available${query}`)
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data
 }
 
@@ -218,13 +219,13 @@ export async function sharePersonalModel(model: {
 
 export async function fetchMyPersonalModels() {
   const res = await teamApiGet<RuoyiResponse<TeamModelConfig[]>>('/team/models/personal/my')
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data
 }
 
 export async function destroyPersonalModel(id: number) {
   const res = await teamApiDelete<RuoyiResponse<null>>(`/team/models/personal/${id}`)
-  if (res.code !== 200) throw new Error(res.msg || '销毁失败')
+  if (res.code !== 200) throw new Error(res.msg || i18n.global.t('team.api.destroyFailed'))
 }
 
 export interface TeamUserItem {
@@ -279,7 +280,7 @@ export async function fetchEvolutions(params?: Record<string, string>) {
 
 export async function fetchEvolutionsBySkill(skillId: number) {
   const res = await teamApiGet<RuoyiResponse<TeamEvolution[]>>(`/team/evolutions/skill/${skillId}`)
-  if (res.code !== 200) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200) throw new Error(res.msg || i18n.global.t('team.api.queryFailed'))
   return res.data ?? []
 }
 
@@ -287,13 +288,13 @@ export async function submitEvolution(evolution: {
   skillId: number; proposedChange: string; reason: string; previousVersion?: string
 }) {
   const res = await teamApiPost<RuoyiResponse<TeamEvolution>>('/team/evolutions', evolution)
-  if (res.code !== 200) throw new Error(res.msg || '提交失败')
+  if (res.code !== 200) throw new Error(res.msg || i18n.global.t('team.api.submitFailed'))
   return res.data
 }
 
 export async function approveEvolution(id: number, body: { status: string; reviewComment?: string }) {
   const res = await teamApiPost<RuoyiResponse<null>>(`/team/evolutions/${id}/approve`, body)
-  if (res.code !== 200) throw new Error(res.msg || '操作失败')
+  if (res.code !== 200) throw new Error(res.msg || i18n.global.t('team.api.operationFailed'))
 }
 
 // ---- Offline cache ----

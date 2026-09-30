@@ -1,5 +1,6 @@
 import { teamApiGet, teamApiPost, teamApiDelete } from './team'
 import { invoke } from '@tauri-apps/api/core'
+import i18n from '../i18n'
 
 export interface VulnFinding {
   severity: string
@@ -115,7 +116,7 @@ export async function scanUrlWithAgent(
       agentCredentials: credentials,
     },
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '扫描失败，Agent 未启用')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.agentScanFailed'))
   return res.data
 }
 
@@ -137,7 +138,7 @@ export async function scanUrl(url: string, options: VulnScanOptions = {}): Promi
       portSpec: options.portSpec,
     },
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '扫描失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.scanFailed'))
   return res.data
 }
 
@@ -190,7 +191,7 @@ export async function scanCode(path: string, options: VulnScanOptions = {}): Pro
     '/vuln/scan-code',
     { path, modelType: options.modelType, modelId: options.modelId ? String(options.modelId) : undefined },
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '扫描失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.scanFailed'))
   return res.data
 }
 
@@ -198,7 +199,7 @@ export async function fetchScanResult(jobId: number): Promise<VulnScanJob> {
   const res = await teamApiGet<{ code: number; msg: string; data: VulnScanJob }>(
     `/vuln/scan/${jobId}`,
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '获取失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.fetchFailed'))
   return res.data
 }
 
@@ -211,14 +212,14 @@ export async function fetchScanHistory(pageNum = 1, pageSize = 10): Promise<Pagi
   const res = await teamApiGet<{ code: number; msg: string; rows: VulnScanJob[]; total: number }>(
     `/vuln/history?pageNum=${pageNum}&pageSize=${pageSize}`,
   )
-  if (res.code !== 200) throw new Error(res.msg || '获取历史失败')
+  if (res.code !== 200) throw new Error(res.msg || i18n.global.t('vuln.api.historyFetchFailed'))
   return { items: res.rows ?? [], total: res.total ?? 0 }
 }
 
 export async function fetchVulnIntel(params?: Record<string, string>): Promise<VulnIntel[]> {
   const query = params ? '?' + new URLSearchParams(params).toString() : ''
   const res = await teamApiGet<{ code: number; msg: string; data: VulnIntel[] }>(`/vuln/intel/list${query}`)
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '查询失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.queryFailed'))
   return res.data
 }
 
@@ -227,7 +228,7 @@ export async function uploadManifest(name: string, files: { name: string; conten
     '/vuln/monitor/upload',
     { name, files },
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '上传失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.uploadFailed'))
   return res.data
 }
 
@@ -235,7 +236,7 @@ export async function fetchDepSnapshots(): Promise<DepSnapshot[]> {
   const res = await teamApiGet<{ code: number; msg: string; data: DepSnapshot[] }>(
     '/vuln/monitor/snapshots',
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '获取失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.fetchFailed'))
   return res.data
 }
 
@@ -243,7 +244,7 @@ export async function fetchDepDeps(snapshotId: number, name: string): Promise<De
   const res = await teamApiGet<{ code: number; msg: string; data: DepSnapshot[] }>(
     `/vuln/monitor/${snapshotId}/deps?name=${encodeURIComponent(name)}`,
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '获取失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.fetchFailed'))
   return res.data
 }
 
@@ -251,7 +252,7 @@ export async function fetchDepFindings(depId: number): Promise<DepFinding[]> {
   const res = await teamApiGet<{ code: number; msg: string; data: DepFinding[] }>(
     `/vuln/monitor/dep/${depId}/findings`,
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '获取失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.fetchFailed'))
   return res.data
 }
 
@@ -260,7 +261,7 @@ export async function refreshDepSnapshot(id: number): Promise<DepFinding[]> {
     `/vuln/monitor/${id}/refresh`,
     {},
   )
-  if (res.code !== 200 || !res.data) throw new Error(res.msg || '刷新失败')
+  if (res.code !== 200 || !res.data) throw new Error(res.msg || i18n.global.t('vuln.api.refreshFailed'))
   return res.data
 }
 
@@ -268,5 +269,5 @@ export async function deleteDepSnapshot(id: number): Promise<void> {
   const res = await teamApiDelete<{ code: number; msg: string }>(
     `/vuln/monitor/${id}`,
   )
-  if (res.code !== 200) throw new Error(res.msg || '删除失败')
+  if (res.code !== 200) throw new Error(res.msg || i18n.global.t('vuln.api.deleteFailed'))
 }

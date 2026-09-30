@@ -1,3 +1,4 @@
+use super::msg::{self, ProgressMsg};
 use super::*;
 
 // ============================
@@ -201,7 +202,16 @@ fn heartbeat_updates_started_at() {
     insert_running_job(&conn, 1, "optimize", old_time);
 
     let db_path = _dir.path().join("test.db");
-    status::heartbeat_phase(&db_path, 1, "optimize", "heartbeat test");
+    status::heartbeat_phase(
+        &db_path,
+        1,
+        "optimize",
+        ProgressMsg::with(
+            msg::HEARTBEAT_OPTIMIZING,
+            serde_json::json!({ "name": "test" }),
+            "heartbeat test",
+        ),
+    );
 
     let new_time: String = conn
         .query_row(

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod msg;
 mod optimize;
 mod pipeline;
 mod status;
@@ -35,14 +36,21 @@ pub(super) struct SkillReviewResponse {
     pub(super) improvements: Option<Vec<String>>,
 }
 
+/// Phase name, display label, start progress, end progress.
+///
+/// The label is the phase's own identifier rather than prose: the status
+/// endpoint returns it in `steps[].label`, but no frontend reader renders that
+/// field - `EvolutionPipeline.vue` and `EvolutionHistory.vue` each map the
+/// phase name through their own catalog entries. A label no screen shows is not
+/// worth a translation, so it stays language-neutral.
 pub(super) const PHASES: &[(&str, &str, i64, i64)] = &[
-    ("discover", "扫描发现", 0, 20),
-    ("reference_retrieval", "参考检索", 20, 32),
-    ("cluster", "聚类分析", 32, 50),
-    ("draft_generate", "生成草稿", 50, 62),
-    ("optimize", "智能优化", 62, 78),
-    ("qa_review", "质量评审", 78, 90),
-    ("diff_recommend", "差异推荐", 90, 100),
+    ("discover", "discover", 0, 20),
+    ("reference_retrieval", "reference_retrieval", 20, 32),
+    ("cluster", "cluster", 32, 50),
+    ("draft_generate", "draft_generate", 50, 62),
+    ("optimize", "optimize", 62, 78),
+    ("qa_review", "qa_review", 78, 90),
+    ("diff_recommend", "diff_recommend", 90, 100),
 ];
 
 /// Minimum QA review score before auto re-optimization kicks in

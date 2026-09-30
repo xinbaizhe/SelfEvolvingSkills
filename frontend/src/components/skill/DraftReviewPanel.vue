@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { SkillReviewFeedback, Workflow } from '../../api/workflows'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   draft: Workflow
@@ -11,22 +14,22 @@ const reviewFeedback = computed<SkillReviewFeedback | null>(() => props.draft.re
 const reviewSections = computed(() => {
   const feedback = reviewFeedback.value || {}
   return [
-    { key: 'safety', title: '安全', items: feedback.safety || [] },
-    { key: 'performance', title: '性能', items: feedback.performance || [] },
-    { key: 'functionality', title: '功能', items: feedback.functionality || [] },
-    { key: 'writing', title: '写法', items: feedback.writing || [] },
-    { key: 'improvements', title: '怎么改进', items: feedback.improvements || [] },
+    { key: 'safety', titleKey: 'workbench.common.review.safety', items: feedback.safety || [] },
+    { key: 'performance', titleKey: 'workbench.common.review.performance', items: feedback.performance || [] },
+    { key: 'functionality', titleKey: 'workbench.common.review.functionality', items: feedback.functionality || [] },
+    { key: 'writing', titleKey: 'workbench.common.review.writing', items: feedback.writing || [] },
+    { key: 'improvements', titleKey: 'workbench.common.review.improvements', items: feedback.improvements || [] },
   ]
 })
 
 function reviewVerdictLabel(verdict?: string) {
   const map: Record<string, string> = {
-    install: '建议安装',
-    revise: '建议修改',
-    merge: '建议合并',
-    discard: '建议丢弃',
+    install: t('workbench.common.review.verdictInstall'),
+    revise: t('workbench.common.review.verdictRevise'),
+    merge: t('workbench.common.review.verdictMerge'),
+    discard: t('workbench.common.review.verdictDiscard'),
   }
-  return map[verdict || ''] || verdict || '等待评审'
+  return map[verdict || ''] || verdict || t('workbench.common.review.verdictPending')
 }
 
 function reviewScoreType(score?: number | null) {
@@ -40,26 +43,26 @@ function reviewScoreType(score?: number | null) {
 <template>
   <aside class="review-pane">
     <div class="pane-title">
-      <h3>改进意见</h3>
+      <h3>{{ t('workbench.common.review.title') }}</h3>
       <span>Skill Review Agent</span>
     </div>
     <div v-if="draft.review_score != null || reviewFeedback" class="review-summary">
       <el-tag :type="reviewScoreType(draft.review_score)">
-        {{ draft.review_score ?? '-' }} 分
+        {{ t('workbench.common.review.score', { score: draft.review_score ?? '-' }) }}
       </el-tag>
       <el-tag type="info">{{ reviewVerdictLabel(reviewFeedback?.verdict) }}</el-tag>
-      <p>{{ draft.review_summary || '暂无总结' }}</p>
+      <p>{{ draft.review_summary || t('workbench.common.review.summaryEmpty') }}</p>
     </div>
     <div v-if="reviewFeedback" class="review-sections">
       <section v-for="section in reviewSections" :key="section.key" class="review-section">
-        <h4>{{ section.title }}</h4>
+        <h4>{{ t(section.titleKey) }}</h4>
         <ul v-if="section.items.length">
           <li v-for="item in section.items" :key="item">{{ item }}</li>
         </ul>
-        <p v-else>暂无明显问题。</p>
+        <p v-else>{{ t('workbench.common.review.noIssues') }}</p>
       </section>
     </div>
-    <el-empty v-else description="暂无评审意见。运行进化管道并启用大模型后会自动生成。" />
+    <el-empty v-else :description="t('workbench.common.review.emptyDescription')" />
   </aside>
 </template>
 

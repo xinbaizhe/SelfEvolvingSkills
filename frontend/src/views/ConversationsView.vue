@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { fetchSessions, fetchSessionDetail } from '../api/stats'
 import { getErrorMessage } from '../utils/error'
@@ -26,6 +27,7 @@ interface SessionDetail extends SessionItem {
 }
 
 const router = useRouter()
+const { t } = useI18n()
 
 const sessions = ref<SessionItem[]>([])
 const total = ref(0)
@@ -47,10 +49,10 @@ async function loadSessions() {
       sessions.value = (res.data as PaginatedResult<SessionItem>).items ?? []
       total.value = (res.data as PaginatedResult<SessionItem>).total ?? 0
     } else {
-      ElMessage.error('会话列表加载失败')
+      ElMessage.error(t('workbench.conversations.loadFailed'))
     }
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载失败'))
+    ElMessage.error(getErrorMessage(e, t('workbench.common.loadFailed')))
   } finally {
     loading.value = false
   }
@@ -65,7 +67,7 @@ async function showDetail(sessionId: string) {
     if (res.success) {
       currentSession.value = res.data as SessionDetail
     } else {
-      ElMessage.error('会话详情加载失败')
+      ElMessage.error(t('workbench.conversations.detailFailed'))
     }
   } finally {
     detailLoading.value = false
@@ -105,29 +107,29 @@ function onPageChange() {
   <section class="page-view">
     <div class="page-headline">
       <div>
-        <h2>会话历史</h2>
-        <p>浏览本地 Agent 的会话记录，查看工作流指纹和摘要信息。</p>
+        <h2>{{ t('workbench.conversations.title') }}</h2>
+        <p>{{ t('workbench.conversations.subtitle') }}</p>
       </div>
       <div class="headline-right">
-        <span class="count-badge">{{ total }} 条会话</span>
-        <el-button size="small" @click="router.push('/admin')">返回</el-button>
+        <span class="count-badge">{{ t('workbench.conversations.count', { n: total }) }}</span>
+        <el-button size="small" @click="router.push('/admin')">{{ t('common.back') }}</el-button>
       </div>
     </div>
 
-    <el-table :data="sessions" v-loading="loading" stripe height="calc(100vh - 240px)" empty-text="暂无会话数据，请先执行扫描">
+    <el-table :data="sessions" v-loading="loading" stripe height="calc(100vh - 240px)" :empty-text="t('workbench.conversations.empty')">
       <el-table-column prop="agent_source" label="Agent" width="120" />
-      <el-table-column prop="project_name" label="项目" width="180" show-overflow-tooltip />
-      <el-table-column prop="first_prompt" label="首条请求" min-width="260" show-overflow-tooltip />
-      <el-table-column prop="message_count" label="消息数" width="90" />
-      <el-table-column label="文件大小" width="100">
+      <el-table-column prop="project_name" :label="t('workbench.conversations.colProject')" width="180" show-overflow-tooltip />
+      <el-table-column prop="first_prompt" :label="t('workbench.conversations.colFirstPrompt')" min-width="260" show-overflow-tooltip />
+      <el-table-column prop="message_count" :label="t('workbench.conversations.colMessageCount')" width="90" />
+      <el-table-column :label="t('workbench.common.field.fileSize')" width="100">
         <template #default="{ row }">{{ formatBytes(row.jsonl_size) }}</template>
       </el-table-column>
-      <el-table-column label="开始时间" width="170">
+      <el-table-column :label="t('workbench.conversations.colStartedAt')" width="170">
         <template #default="{ row }">{{ formatDateTime(row.started_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="90" fixed="right">
+      <el-table-column :label="t('workbench.common.actions')" width="90" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="showDetail(row.session_id)">详情</el-button>
+          <el-button link type="primary" @click="showDetail(row.session_id)">{{ t('common.detail') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -144,28 +146,28 @@ function onPageChange() {
       />
     </div>
 
-    <el-dialog v-model="detailVisible" title="会话详情" width="760px" append-to-body destroy-on-close>
+    <el-dialog v-model="detailVisible" :title="t('workbench.conversations.detailTitle')" width="760px" append-to-body destroy-on-close>
       <div v-loading="detailLoading">
         <el-descriptions v-if="currentSession" :column="1" border size="small">
-          <el-descriptions-item label="会话 ID">{{ currentSession.session_id }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.conversations.fieldSessionId')">{{ currentSession.session_id }}</el-descriptions-item>
           <el-descriptions-item label="Agent">{{ currentSession.agent_source || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="项目">{{ currentSession.project_name || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="工作目录">{{ currentSession.cwd || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="入口">{{ currentSession.entrypoint || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="版本">{{ currentSession.version || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="类型">{{ currentSession.kind || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="开始时间">{{ formatDateTime(currentSession.started_at) }}</el-descriptions-item>
-          <el-descriptions-item label="消息数">{{ currentSession.message_count ?? 0 }}</el-descriptions-item>
-          <el-descriptions-item label="JSONL 文件">{{ currentSession.jsonl_path || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="文件大小">{{ formatBytes(currentSession.jsonl_size) }}</el-descriptions-item>
-          <el-descriptions-item label="首条用户请求">
-            <pre class="session-text">{{ currentSession.first_prompt || '未提取到首条用户请求' }}</pre>
+          <el-descriptions-item :label="t('workbench.conversations.colProject')">{{ currentSession.project_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.conversations.fieldCwd')">{{ currentSession.cwd || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.conversations.fieldEntrypoint')">{{ currentSession.entrypoint || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.common.field.version')">{{ currentSession.version || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.common.type')">{{ currentSession.kind || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.conversations.colStartedAt')">{{ formatDateTime(currentSession.started_at) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.conversations.colMessageCount')">{{ currentSession.message_count ?? 0 }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.conversations.fieldJsonl')">{{ currentSession.jsonl_path || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.common.field.fileSize')">{{ formatBytes(currentSession.jsonl_size) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.conversations.fieldFirstPrompt')">
+            <pre class="session-text">{{ currentSession.first_prompt || t('workbench.conversations.noFirstPrompt') }}</pre>
           </el-descriptions-item>
-          <el-descriptions-item label="压缩摘要">
-            <pre class="session-text">{{ currentSession.compressed_summary || '暂无压缩摘要' }}</pre>
+          <el-descriptions-item :label="t('workbench.conversations.fieldSummary')">
+            <pre class="session-text">{{ currentSession.compressed_summary || t('workbench.conversations.noSummary') }}</pre>
           </el-descriptions-item>
         </el-descriptions>
-        <div v-else-if="!detailLoading" class="empty-state">暂无数据</div>
+        <div v-else-if="!detailLoading" class="empty-state">{{ t('common.empty') }}</div>
       </div>
     </el-dialog>
   </section>

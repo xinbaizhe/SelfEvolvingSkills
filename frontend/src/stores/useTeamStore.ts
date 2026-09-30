@@ -6,6 +6,7 @@ import {
   getTeamSession,
   type TeamSession,
 } from '../api/team'
+import { describeError } from '../utils/error'
 
 export const useTeamStore = defineStore('team', () => {
   const authenticated = ref(false)
@@ -27,7 +28,7 @@ export const useTeamStore = defineStore('team', () => {
       setSession(session)
       return true
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e)
+      error.value = describeError(e)
       return false
     } finally {
       loading.value = false

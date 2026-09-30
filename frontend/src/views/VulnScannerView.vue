@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { useTeamStore } from '../stores/useTeamStore'
 import { useVulnStore } from '../stores/useVulnStore'
@@ -13,6 +14,7 @@ import ScanProgressPanel from '../components/vuln/ScanProgressPanel.vue'
 import ScanResultPanel from '../components/vuln/ScanResultPanel.vue'
 import type { VulnScanJob, VulnFinding, AgentCredential } from '../api/vuln'
 
+const { t } = useI18n()
 const store = useTeamStore()
 const vulnStore = useVulnStore()
 const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
@@ -73,38 +75,41 @@ function removeCredential(idx: number) {
   agentCredentials.value = agentCredentials.value.filter((_, i) => i !== idx)
 }
 
+// Step ids are stable identifiers; their display text lives in
+// `vuln.common.steps.*`. Keywords below match the backend's Chinese progress
+// log lines (see VulnScanServiceImpl), so they stay Chinese on purpose.
 const scanSteps = [
-  '校验目标',
-  '加载登录态',
-  '策略配置',
-  '爬取入口',
-  'SQL/XSS/SSRF等注入检测',
-  '敏感路径/端口检测',
-  'TLS/证书检查',
-  '系统漏洞检测',
-  'AI 多角色智能发现',
-  'AI 多角色复核',
-  '保存结果',
+  'validate',
+  'loginState',
+  'strategy',
+  'crawl',
+  'injection',
+  'sensitivePaths',
+  'tls',
+  'systemVulns',
+  'aiDiscover',
+  'aiReview',
+  'save',
 ]
 
 const scanProfileOptions = [
   {
     value: 'quick',
-    label: '快速',
-    title: '快速扫描',
-    description: '少量页面、常见端口、基础安全头和敏感路径检查，适合先判断目标是否有明显问题。',
+    labelKey: 'vuln.common.profile.quick.label',
+    titleKey: 'vuln.common.profile.quick.title',
+    descriptionKey: 'vuln.common.profile.quick.description',
   },
   {
     value: 'standard',
-    label: '标准',
-    title: '标准扫描',
-    description: '默认模式，爬取更多入口，执行 SQL/XSS/CSRF/SSRF/NoSQL/SSTI/LFI、系统漏洞检测（HTTP方法/CRLF/Host头/默认凭据/源码泄露），6角色 AI 并行复核。',
+    labelKey: 'vuln.common.profile.standard.label',
+    titleKey: 'vuln.common.profile.standard.title',
+    descriptionKey: 'vuln.common.profile.standard.description',
   },
   {
     value: 'deep',
-    label: '深度',
-    title: '深度扫描',
-    description: '更多页面、更全端口集合、更完整敏感路径和全部 payload 变种 + 6角色 AI 并行发现与复核，适合正式排查但耗时更长。',
+    labelKey: 'vuln.common.profile.deep.label',
+    titleKey: 'vuln.common.profile.deep.title',
+    descriptionKey: 'vuln.common.profile.deep.description',
   },
 ] as const
 
@@ -113,31 +118,31 @@ const selectedScanProfile = computed(() =>
 )
 
 const scanStepDescriptions: Record<string, string> = {
-  校验目标: '校验 URL、目录路径、模型配置和扫描参数是否可用。',
-  加载登录态: '装载 Cookie、Authorization 和自定义请求头，用于访问需要登录的页面。',
-  策略配置: '按快速、标准、深度模式确定爬取深度、页面数量、payload 和敏感路径范围。',
-  爬取入口: '请求目标页面并收集同源链接、表单、参数和可测试入口。',
-  'SQL/XSS/SSRF等注入检测': '对 URL 参数和表单输入点执行 SQL 注入（含盲注/堆叠）、XSS、CSRF、SSRF、NoSQL、SSTI、LFI 全部注入类型检测。',
-  '敏感路径/端口检测': '探测常见敏感路径（Swagger、Actuator、配置文件等），扫描目标 IP 开放端口并识别服务用途。',
-  'TLS/证书检查': '检查 HTTPS 证书有效性、TLS 协议版本、自签名证书等传输层安全问题。',
-  '系统漏洞检测': 'HTTP 方法探测（TRACE/PUT/DELETE）、CRLF 注入、Host 头注入、默认凭据爆破（18组常见凭据）、源码泄露路径扫描。',
-  'AI 多角色智能发现': '注入专家/认证审计/信息泄露/HTTP配置/客户端安全/基础设施 6角色并行分析原始响应，发现规则扫描遗漏的漏洞。',
-  'AI 多角色复核': '6个安全角色并行复核候选漏洞，各角色验证领域内漏洞真实性，去重汇总结果。',
-  保存结果: '保存扫描结果、统计分级数量，并写入扫描历史。',
+  validate: 'vuln.scanner.stepDesc.validate',
+  loginState: 'vuln.scanner.stepDesc.loginState',
+  strategy: 'vuln.scanner.stepDesc.strategy',
+  crawl: 'vuln.scanner.stepDesc.crawl',
+  injection: 'vuln.scanner.stepDesc.injection',
+  sensitivePaths: 'vuln.scanner.stepDesc.sensitivePaths',
+  tls: 'vuln.scanner.stepDesc.tls',
+  systemVulns: 'vuln.scanner.stepDesc.systemVulns',
+  aiDiscover: 'vuln.scanner.stepDesc.aiDiscover',
+  aiReview: 'vuln.scanner.stepDesc.aiReview',
+  save: 'vuln.scanner.stepDesc.save',
 }
 
 const scanStepKeywords: Record<string, string[]> = {
-  校验目标: ['校验目标', '准备扫描目标', '规范化 URL', '目标'],
-  加载登录态: ['加载登录态', 'Cookie', 'Authorization', '自定义请求头', '登录态'],
-  策略配置: ['扫描策略', '快速扫描', '标准扫描', '深度扫描', 'maxDepth', 'maxPages'],
-  爬取入口: ['爬取页面', '爬取入口', '读取源码文件', '读取文件'],
-  'SQL/XSS/SSRF等注入检测': ['SQL 注入', 'XSS', 'CSRF', 'SSRF', 'NoSQL', 'SSTI', 'LFI', 'SQL错误', '布尔盲注', '反射型', '模板注入', '文件包含', '目录穿越'],
-  '敏感路径/端口检测': ['敏感路径', 'heapdump', 'swagger', 'api-docs', 'actuator', '端口扫描', '开放端口', 'TCP'],
-  'TLS/证书检查': ['TLS 检查', 'HTTPS', '证书', 'SSL'],
-  '系统漏洞检测': ['系统漏洞检测', 'HTTP 方法', 'CRLF', 'Host头', 'Host 头', '默认凭据', '源码泄露', '方法探测', '误报控制'],
-  'AI 多角色智能发现': ['AI 智能发现', '6角色并行分析', '大模型额外发现'],
-  'AI 多角色复核': ['AI 复核', '6角色并行复核', '模型复核'],
-  保存结果: ['保存结果', '保存扫描结果', '扫描完成'],
+  validate: ['校验目标', '准备扫描目标', '规范化 URL', '目标'], // i18n-exempt: matches Chinese SSE progress lines emitted by the Java backend, never rendered
+  loginState: ['加载登录态', 'Cookie', 'Authorization', '自定义请求头', '登录态'], // i18n-exempt: backend SSE progress keyword matcher
+  strategy: ['扫描策略', '快速扫描', '标准扫描', '深度扫描', 'maxDepth', 'maxPages'], // i18n-exempt: backend SSE progress keyword matcher
+  crawl: ['爬取页面', '爬取入口', '读取源码文件', '读取文件'], // i18n-exempt: backend SSE progress keyword matcher
+  injection: ['SQL 注入', 'XSS', 'CSRF', 'SSRF', 'NoSQL', 'SSTI', 'LFI', 'SQL错误', '布尔盲注', '反射型', '模板注入', '文件包含', '目录穿越'], // i18n-exempt: backend SSE progress keyword matcher
+  sensitivePaths: ['敏感路径', 'heapdump', 'swagger', 'api-docs', 'actuator', '端口扫描', '开放端口', 'TCP'], // i18n-exempt: backend SSE progress keyword matcher
+  tls: ['TLS 检查', 'HTTPS', '证书', 'SSL'], // i18n-exempt: backend SSE progress keyword matcher
+  systemVulns: ['系统漏洞检测', 'HTTP 方法', 'CRLF', 'Host头', 'Host 头', '默认凭据', '源码泄露', '方法探测', '误报控制'], // i18n-exempt: backend SSE progress keyword matcher
+  aiDiscover: ['AI 智能发现', '6角色并行分析', '大模型额外发现'], // i18n-exempt: backend SSE progress keyword matcher
+  aiReview: ['AI 复核', '6角色并行复核', '模型复核'], // i18n-exempt: backend SSE progress keyword matcher
+  save: ['保存结果', '保存扫描结果', '扫描完成'], // i18n-exempt: backend SSE progress keyword matcher
 }
 
 const filteredModels = computed(() => {
@@ -159,14 +164,16 @@ function severityType(severity: string): string {
   return map[severity] || 'info'
 }
 
+const SEVERITY_LABEL_KEYS: Record<string, string> = {
+  CRITICAL: 'vuln.common.severity.critical',
+  HIGH: 'vuln.common.severity.high',
+  MEDIUM: 'vuln.common.severity.medium',
+  LOW: 'vuln.common.severity.low',
+}
+
 function severityLabel(severity: string): string {
-  const map: Record<string, string> = {
-    CRITICAL: '严重',
-    HIGH: '高危',
-    MEDIUM: '中危',
-    LOW: '低危',
-  }
-  return map[severity] || severity
+  const key = SEVERITY_LABEL_KEYS[severity]
+  return key ? t(key) : severity
 }
 
 function confidenceClass(confidence: number): string {
@@ -176,12 +183,17 @@ function confidenceClass(confidence: number): string {
 }
 
 function scanTypeLabel(type: string): string {
-  return type === 'url' ? '网址扫描' : '代码扫描'
+  return t(type === 'url' ? 'vuln.common.scanType.url' : 'vuln.common.scanType.code')
+}
+
+function modelLabel(model: TeamModelConfig): string {
+  const name = model.id === -1 ? t('vuln.scanner.localModelConfig') : model.name
+  return `${name} / ${model.model}`
 }
 
 async function handleUrlScan() {
   if (!urlInput.value.trim()) {
-    ElMessage.warning('请输入网址')
+    ElMessage.warning(t('vuln.scanner.enterUrl'))
     return
   }
   if (!await validateEvaluationModel()) return
@@ -217,7 +229,7 @@ async function handleUrlScan() {
         await reviewResultWithLocalModel(result)
       }
       scanStep.value = scanSteps.length
-      ElMessage.success(`扫描完成，发现 ${result.totalFindings} 个漏洞`)
+      ElMessage.success(t('vuln.scanner.scanComplete', { n: result.totalFindings }))
     } catch (e) {
       scanStep.value = scanSteps.length
       ElMessage.error(getErrorMessage(e))
@@ -245,7 +257,7 @@ watch(progressRef, (messages) => {
 
 async function handleCodeScan() {
   if (!dirInput.value.trim()) {
-    ElMessage.warning('请选择或输入目录路径')
+    ElMessage.warning(t('vuln.scanner.enterDir'))
     return
   }
   if (!await validateEvaluationModel()) return
@@ -259,7 +271,7 @@ async function handleCodeScan() {
         await reviewResultWithLocalModel(result)
       }
       scanStep.value = scanSteps.length
-      ElMessage.success(`扫描完成，发现 ${result.totalFindings} 个漏洞`)
+      ElMessage.success(t('vuln.scanner.scanComplete', { n: result.totalFindings }))
     } catch (e) {
       scanStep.value = scanSteps.length
       ElMessage.error(getErrorMessage(e))
@@ -282,7 +294,7 @@ async function loadModels() {
   } catch (e) {
     modelLoadError.value = getErrorMessage(e)
     models.value = []
-    ElMessage.error(`部门模型加载失败：${modelLoadError.value}`)
+    ElMessage.error(t('vuln.scanner.deptModelLoadFailed', { error: modelLoadError.value }))
   } finally {
     modelLoading.value = false
   }
@@ -308,7 +320,7 @@ async function loadLocalResourceModel() {
     localLlmConfig.value = data as Record<string, unknown>
     localResourceModel.value = {
       id: -1,
-      name: '资源与配置的模型配置',
+      name: '',
       provider: data.provider || data.api_format || 'custom',
       baseUrl: data.base_url,
       model: data.model,
@@ -340,21 +352,21 @@ async function reviewResultWithLocalModel(result: VulnScanJob) {
       penalties: result.findings.map(item => `${item.severity} ${item.type}: ${item.description}`),
     },
     content: [
-      `# 漏洞扫描结果`,
-      `目标: ${result.target}`,
-      `类型: ${result.scanType}`,
+      `# 漏洞扫描结果`, // i18n-exempt: LLM evaluation payload sent to evaluateShareResource, not UI
+      `目标: ${result.target}`, // i18n-exempt: LLM evaluation payload
+      `类型: ${result.scanType}`, // i18n-exempt: LLM evaluation payload
       '',
       ...result.findings.map(item => [
         `## ${item.severity} ${item.type}`,
-        `位置: ${item.location}`,
-        `描述: ${item.description}`,
-        `建议: ${item.suggestion}`,
+        `位置: ${item.location}`, // i18n-exempt: LLM evaluation payload
+        `描述: ${item.description}`, // i18n-exempt: LLM evaluation payload
+        `建议: ${item.suggestion}`, // i18n-exempt: LLM evaluation payload
       ].join('\n')),
     ].join('\n\n'),
   }
   const res = await evaluateShareResource(payload)
   if (!res.success) {
-    throw new Error(res.error || '资源与配置中的模型复核失败')
+    throw new Error(res.error || t('vuln.scanner.localModelReviewFailed'))
   }
   const data = res.data as {
     score?: number
@@ -366,13 +378,18 @@ async function reviewResultWithLocalModel(result: VulnScanJob) {
     requiredChanges?: string[]
   }
   const lines = [
-    '10. AI 多角色复核：调用资源与配置的本地模型复核漏洞扫描结果',
-    `AI 复核：综合分 ${data.score ?? '-'}，安全分 ${data.securityScore ?? '-'}，性能分 ${data.performanceScore ?? '-'}`,
-    data.summary ? `AI 复核：${data.summary}` : '',
-    ...(data.risks || []).map(item => `AI 风险：${item}`),
-    ...(data.suggestions || []).map(item => `AI 建议：${item}`),
-    ...(data.requiredChanges || []).map(item => `AI 必改：${item}`),
+    t('vuln.scanner.localReviewLog'),
+    t('vuln.scanner.aiReviewScores', {
+      score: data.score ?? '-',
+      security: data.securityScore ?? '-',
+      performance: data.performanceScore ?? '-',
+    }),
+    data.summary ? t('vuln.scanner.aiReviewSummary', { summary: data.summary }) : '',
+    ...(data.risks || []).map(item => t('vuln.scanner.aiRisk', { item })),
+    ...(data.suggestions || []).map(item => t('vuln.scanner.aiSuggestion', { item })),
+    ...(data.requiredChanges || []).map(item => t('vuln.scanner.aiRequiredChange', { item })),
   ].filter(Boolean)
+  localReviewLines.value = [...localReviewLines.value, ...lines]
   result.progressText = [result.progressText, ...lines].filter(Boolean).join('\n')
 }
 
@@ -380,11 +397,11 @@ async function validateEvaluationModel(): Promise<boolean> {
   if (modelType.value === 'department') {
     const model = filteredModels.value.find(item => item.id === modelId.value)
     if (!model) {
-      ElMessage.error('请选择部门模型')
+      ElMessage.error(t('vuln.scanner.selectDeptModel'))
       return false
     }
     if (!model.baseUrl || !model.model || !model.apiKeyHash) {
-      ElMessage.error('部门模型配置有问题，请检查部门模型的 Base URL、模型名称和 API-Key')
+      ElMessage.error(t('vuln.scanner.deptModelInvalid'))
       return false
     }
     return true
@@ -392,11 +409,11 @@ async function validateEvaluationModel(): Promise<boolean> {
 
   await loadLocalResourceModel()
   if (!localResourceModel.value || !localLlmConfig.value) {
-    ElMessage.error('资源与配置中的模型配置未启用或不完整，请检查模型配置')
+    ElMessage.error(t('vuln.scanner.localModelInvalid'))
     return false
   }
   if (!localResourceModel.value.apiKeyHash) {
-    ElMessage.error('资源与配置中的模型缺少 API-Key，请检查模型配置')
+    ElMessage.error(t('vuln.scanner.localModelMissingKey'))
     return false
   }
   const payload = {
@@ -409,10 +426,10 @@ async function validateEvaluationModel(): Promise<boolean> {
   }
   try {
     const res = await testLlmConnection(payload)
-    if (!res.success) throw new Error(res.error || '模型连接测试失败')
+    if (!res.success) throw new Error(res.error || t('vuln.scanner.modelTestFailed'))
     return true
   } catch (e) {
-    ElMessage.error(`资源与配置中的模型配置有问题：${getErrorMessage(e)}`)
+    ElMessage.error(t('vuln.scanner.modelConfigBroken', { detail: getErrorMessage(e) }))
     return false
   }
 }
@@ -466,18 +483,34 @@ function progressLines(text?: string): string[] {
   return text.split('\n').map(line => line.trim()).filter(Boolean)
 }
 
+/**
+ * Lines this view writes itself after a local-model review that are folded into
+ * the scan's progress text.
+ *
+ * They are attributed to their step by identity rather than by keyword:
+ * `scanStepKeywords` describes the backend's log lines, which are always
+ * Chinese, whereas these are rendered in the interface language and would fall
+ * through to "Other" in every non-Chinese locale.
+ */
+const localReviewLines = ref<string[]>([])
+
 function buildScanProgressGroups(result?: VulnScanJob | null) {
   const lines = progressLines(result?.progressText)
   const streamLines = vulnStore.scanning ? vulnStore.scanProgress : []
   const allLines = streamLines.length > 0 ? streamLines : lines
+  const localReview = new Set(localReviewLines.value)
   const grouped = scanSteps.map((step, index) => {
-    const stepLines = allLines.filter(line => lineBelongsToStep(line, step))
+    const stepLines = allLines.filter(line => {
+      if (localReview.has(line)) return step === 'aiReview'
+      return lineBelongsToStep(line, step)
+    })
     const doneByResult = !!result
-      const active = !result && vulnStore.scanning && index === Math.max(scanStep.value - 1, 0)
+    const active = !result && vulnStore.scanning && index === Math.max(scanStep.value - 1, 0)
     return {
       step,
       index,
-      description: scanStepDescriptions[step],
+      labelKey: `vuln.common.steps.${step}`,
+      descriptionKey: scanStepDescriptions[step],
       lines: stepLines,
       status: doneByResult ? 'done' : active ? 'running' : index < scanStep.value ? 'done' : 'pending',
     }
@@ -487,9 +520,10 @@ function buildScanProgressGroups(result?: VulnScanJob | null) {
   const unmatched = allLines.filter(line => !matched.has(line))
   if (unmatched.length) {
     grouped.push({
-      step: '其他执行记录',
+      step: 'other',
       index: grouped.length,
-      description: '后端返回但无法归类到固定阶段的执行记录。',
+      labelKey: 'vuln.scanner.otherSteps',
+      descriptionKey: 'vuln.scanner.otherStepsDesc',
       lines: unmatched,
       status: 'done',
     })
@@ -499,6 +533,8 @@ function buildScanProgressGroups(result?: VulnScanJob | null) {
 
 function lineBelongsToStep(line: string, step: string): boolean {
   const normalized = line.replace(/^\d+[.、]\s*/, '')
+  // Kept as-is: backend lines are Chinese narration, so this rarely fires, but
+  // tightening the matcher is not what this change is about.
   if (normalized.startsWith(step)) return true
   return (scanStepKeywords[step] || []).some(keyword => normalized.includes(keyword))
 }
@@ -534,12 +570,12 @@ async function handleDepDrop(event: DragEvent) {
 
 async function handleDepUpload() {
   if (!depMonitorName.value.trim() || depUploadFiles.value.length === 0) {
-    ElMessage.warning('请输入项目名称并选择依赖文件')
+    ElMessage.warning(t('vuln.scanner.enterProjectAndFiles'))
     return
   }
   const result = await vulnStore.uploadMonitor(depMonitorName.value.trim(), depUploadFiles.value)
   if (result) {
-    ElMessage.success(`已解析 ${result.deps.length} 个依赖包，已查询关联漏洞`)
+    ElMessage.success(t('vuln.scanner.depParsed', { n: result.deps.length }))
     depUploadFiles.value = []
   } else if (vulnStore.error) {
     ElMessage.error(vulnStore.error)
@@ -559,12 +595,12 @@ onMounted(() => {
   <div class="page-view">
     <div class="page-header">
       <div>
-        <h2>漏洞查询</h2>
-        <p class="subtitle">输入网址进行安全漏洞扫描，或选择本地目录扫描代码中的安全漏洞。</p>
+        <h2>{{ t('vuln.scanner.title') }}</h2>
+        <p class="subtitle">{{ t('vuln.scanner.subtitle') }}</p>
       </div>
       <div class="header-actions">
         <el-button @click="toggleHistory">
-          {{ showHistory ? '返回扫描' : '扫描历史' }}
+          {{ showHistory ? t('vuln.scanner.backToScan') : t('vuln.scanner.history') }}
         </el-button>
       </div>
     </div>
@@ -573,36 +609,36 @@ onMounted(() => {
       <span class="offline-icon">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9s3.36 7.5 7.5 7.5 7.5-3.36 7.5-7.5S13.14 1.5 9 1.5zM9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </span>
-      离线模式 — 无法连接到服务器，请确认服务已启动。接口恢复后页面将自动重试。
-      <el-button size="small" @click="vulnStore.loadHistory()">重试</el-button>
+      {{ t('vuln.scanner.offline') }}
+      <el-button size="small" @click="vulnStore.loadHistory()">{{ t('common.retry') }}</el-button>
     </div>
 
     <template v-if="!store.isAuthenticated">
       <div class="login-prompt">
         <div class="login-card">
-          <h3>登录团队版</h3>
-          <p>登录后可以使用漏洞扫描功能，对网址和代码进行安全分析。</p>
-          <el-button type="primary" size="large" @click="loginDialog?.open()">登录团队版</el-button>
+          <h3>{{ t('vuln.scanner.loginTitle') }}</h3>
+          <p>{{ t('vuln.scanner.loginBody') }}</p>
+          <el-button type="primary" size="large" @click="loginDialog?.open()">{{ t('app.actions.login') }}</el-button>
         </div>
       </div>
     </template>
 
     <template v-else-if="showHistory">
       <section class="history-section">
-        <h3 class="section-title">扫描历史</h3>
+        <h3 class="section-title">{{ t('vuln.scanner.historyTitle') }}</h3>
         <div v-if="vulnStore.history.length === 0 && !vulnStore.offline" class="empty-state">
-          <p>暂无扫描记录</p>
+          <p>{{ t('vuln.scanner.noHistory') }}</p>
         </div>
 
         <!-- History detail view -->
         <div v-if="vulnStore.selectedHistoryJob" class="history-detail-view">
           <div class="detail-back-row">
-            <el-button size="small" @click="vulnStore.clearHistoryDetail()">&larr; 返回历史列表</el-button>
+            <el-button size="small" @click="vulnStore.clearHistoryDetail()">&larr; {{ t('vuln.scanner.backToHistory') }}</el-button>
           </div>
           <div class="result-section">
             <div class="result-header">
               <div>
-                <h3>扫描详情</h3>
+                <h3>{{ t('vuln.common.scanDetail') }}</h3>
                 <p class="result-target">
                   <el-tag size="small" :type="vulnStore.selectedHistoryJob.scanType === 'url' ? 'primary' : 'success'">
                     {{ scanTypeLabel(vulnStore.selectedHistoryJob.scanType) }}
@@ -614,19 +650,19 @@ onMounted(() => {
                 <div class="finding-counts">
                   <div class="finding-badge badge-danger">
                     <span class="badge-count">{{ vulnStore.selectedHistoryJob.criticalCount }}</span>
-                    <span class="badge-label">严重</span>
+                    <span class="badge-label">{{ t('vuln.common.severity.critical') }}</span>
                   </div>
                   <div class="finding-badge badge-warning">
                     <span class="badge-count">{{ vulnStore.selectedHistoryJob.highCount }}</span>
-                    <span class="badge-label">高危</span>
+                    <span class="badge-label">{{ t('vuln.common.severity.high') }}</span>
                   </div>
                   <div class="finding-badge">
                     <span class="badge-count">{{ vulnStore.selectedHistoryJob.mediumCount }}</span>
-                    <span class="badge-label">中危</span>
+                    <span class="badge-label">{{ t('vuln.common.severity.medium') }}</span>
                   </div>
                   <div class="finding-badge badge-info">
                     <span class="badge-count">{{ vulnStore.selectedHistoryJob.lowCount }}</span>
-                    <span class="badge-label">低危</span>
+                    <span class="badge-label">{{ t('vuln.common.severity.low') }}</span>
                   </div>
                 </div>
               </div>
@@ -634,10 +670,10 @@ onMounted(() => {
             <div class="history-progress-panel">
               <div class="scan-progress-header">
                 <div>
-                  <h3>执行记录</h3>
+                  <h3>{{ t('vuln.scanner.executionLog') }}</h3>
                   <p>{{ vulnStore.selectedHistoryJob.target }}</p>
                 </div>
-                <el-tag type="success" effect="light">已入库</el-tag>
+                <el-tag type="success" effect="light">{{ t('vuln.scanner.saved') }}</el-tag>
               </div>
               <div class="scan-progress-grid">
                 <section
@@ -649,13 +685,13 @@ onMounted(() => {
                   <div class="scan-step-head">
                     <span class="scan-step-index">{{ group.index + 1 }}</span>
                     <div>
-                      <h4>{{ group.step }}</h4>
-                      <p>{{ group.description }}</p>
+                      <h4>{{ t(group.labelKey) }}</h4>
+                      <p>{{ t(group.descriptionKey) }}</p>
                     </div>
-                    <el-tag size="small" type="success">完成</el-tag>
+                    <el-tag size="small" type="success">{{ t('vuln.common.done') }}</el-tag>
                   </div>
                   <div class="scan-step-lines">
-                    <div v-if="group.lines.length === 0" class="scan-step-empty">该步骤未返回明细</div>
+                    <div v-if="group.lines.length === 0" class="scan-step-empty">{{ t('vuln.scanner.noStepDetail') }}</div>
                     <div
                       v-for="(line, lineIndex) in group.lines"
                       :key="`${group.step}-${lineIndex}-${line}`"
@@ -669,18 +705,18 @@ onMounted(() => {
               </div>
             </div>
             <div v-if="vulnStore.selectedHistoryJob.findings.length === 0" class="empty-state safe-state">
-              <p class="safe-text">未发现安全漏洞</p>
+              <p class="safe-text">{{ t('vuln.common.noVulnerabilities') }}</p>
             </div>
             <div v-else class="findings-table-wrapper">
               <table class="findings-table">
                 <thead>
                   <tr>
-                    <th style="width:72px">严重程度</th>
-                    <th style="width:110px">类型</th>
-                    <th style="width:180px">位置</th>
-                    <th>描述</th>
-                    <th>修复建议</th>
-                    <th style="width:72px">置信度</th>
+                    <th style="width:72px">{{ t('vuln.common.table.severity') }}</th>
+                    <th style="width:110px">{{ t('vuln.common.table.type') }}</th>
+                    <th style="width:180px">{{ t('vuln.common.table.location') }}</th>
+                    <th>{{ t('vuln.common.table.description') }}</th>
+                    <th>{{ t('vuln.common.table.suggestion') }}</th>
+                    <th style="width:72px">{{ t('vuln.common.table.confidence') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -720,10 +756,10 @@ onMounted(() => {
                   <span class="history-target">{{ job.target }}</span>
                 </div>
                 <div class="history-meta">
-                  <span>共 {{ job.totalFindings }} 个漏洞</span>
-                  <span v-if="job.criticalCount" class="count-danger">严重 {{ job.criticalCount }}</span>
-                  <span v-if="job.highCount" class="count-warning">高危 {{ job.highCount }}</span>
-                  <span v-if="job.mediumCount" class="count-default">中危 {{ job.mediumCount }}</span>
+                  <span>{{ t('vuln.scanner.totalFindings', { n: job.totalFindings }) }}</span>
+                  <span v-if="job.criticalCount" class="count-danger">{{ t('vuln.common.severity.critical') }} {{ job.criticalCount }}</span>
+                  <span v-if="job.highCount" class="count-warning">{{ t('vuln.common.severity.high') }} {{ job.highCount }}</span>
+                  <span v-if="job.mediumCount" class="count-default">{{ t('vuln.common.severity.medium') }} {{ job.mediumCount }}</span>
                   <span>{{ formatTime(job.createdAt) }}</span>
                 </div>
               </div>
@@ -750,22 +786,22 @@ onMounted(() => {
           <el-segmented
             v-model="modelType"
             :options="[
-              { label: '部门模型', value: 'department' },
-              { label: '资源与配置的模型配置', value: 'personal' },
+              { label: t('vuln.scanner.deptModel'), value: 'department' },
+              { label: t('vuln.scanner.localModelConfig'), value: 'personal' },
             ]"
             @change="modelId = filteredModels[0]?.id"
           />
-          <el-select v-model="modelId" placeholder="选择评估模型" style="width: 280px">
-            <el-option v-for="model in filteredModels" :key="model.id" :label="`${model.name} / ${model.model}`" :value="model.id" />
+          <el-select v-model="modelId" :placeholder="t('vuln.scanner.selectModel')" style="width: 280px">
+            <el-option v-for="model in filteredModels" :key="model.id" :label="modelLabel(model)" :value="model.id" />
           </el-select>
-          <el-button size="small" :loading="modelLoading" @click="loadModels">刷新模型</el-button>
+          <el-button size="small" :loading="modelLoading" @click="loadModels">{{ t('vuln.scanner.refreshModels') }}</el-button>
           <span v-if="modelType === 'department' && !modelLoading && filteredModels.length === 0" class="model-warning">
-            {{ modelLoadError ? `部门模型加载失败：${modelLoadError}` : '未查询到可用部门模型' }}
+            {{ modelLoadError ? t('vuln.scanner.deptModelLoadFailed', { error: modelLoadError }) : t('vuln.scanner.noDeptModel') }}
           </span>
         </div>
 
         <el-tabs v-model="activeTab" class="scan-tabs">
-          <el-tab-pane label="网址扫描" name="url">
+          <el-tab-pane :label="t('vuln.common.scanType.url')" name="url">
             <UrlScanForm
               v-model="urlInput"
               :scanning="vulnStore.scanning"
@@ -786,11 +822,11 @@ onMounted(() => {
             />
           </el-tab-pane>
 
-          <el-tab-pane label="代码扫描" name="code">
+          <el-tab-pane :label="t('vuln.common.scanType.code')" name="code">
             <div class="scan-input-row">
               <el-input
                 v-model="dirInput"
-                placeholder="输入或选择本地目录路径"
+                :placeholder="t('vuln.scanner.dirPlaceholder')"
                 size="large"
                 clearable
                 @keyup.enter="handleCodeScan"
@@ -807,56 +843,56 @@ onMounted(() => {
                 :loading="vulnStore.scanning"
                 @click="handleCodeScan"
               >
-                {{ vulnStore.scanning ? '扫描中...' : '开始扫描' }}
+                {{ vulnStore.scanning ? t('vuln.common.scanning') : t('vuln.common.startScan') }}
               </el-button>
             </div>
-            <p class="scan-hint">系统会扫描目录下的源代码文件，检测硬编码密钥、SQL 注入、XSS、命令注入、路径遍历、不安全加密、XXE、反序列化、JWT 安全、原型污染、LDAP/XPath 注入等漏洞。</p>
+            <p class="scan-hint">{{ t('vuln.scanner.codeHint') }}</p>
           </el-tab-pane>
 
-          <el-tab-pane label="漏洞列表" name="intel">
+          <el-tab-pane :label="t('vuln.scanner.intelTab')" name="intel">
             <div class="intel-panel" v-loading="vulnStore.intelLoading">
               <div class="intel-header">
                 <div>
-                  <h3>漏洞列表</h3>
-                  <p>公开漏洞情报由后台每半小时自动更新，这里仅提供查询。</p>
+                  <h3>{{ t('vuln.scanner.intelTitle') }}</h3>
+                  <p>{{ t('vuln.scanner.intelSubtitle') }}</p>
                 </div>
               </div>
               <div class="intel-filters">
-                <el-input v-model="intelQuery" placeholder="CVE / 厂商 / 产品" clearable style="width: 220px" />
-                <el-select v-model="intelType" placeholder="漏洞类型" clearable filterable allow-create style="width: 170px">
-                  <el-option label="SQL注入" value="SQL注入" />
-                  <el-option label="XSS" value="XSS" />
-                  <el-option label="远程代码执行" value="远程代码执行" />
-                  <el-option label="权限提升" value="权限提升" />
-                  <el-option label="系统漏洞" value="系统漏洞" />
-                  <el-option label="供应链投毒" value="供应链投毒" />
+                <el-input v-model="intelQuery" :placeholder="t('vuln.scanner.intelSearchPlaceholder')" clearable style="width: 220px" />
+                <el-select v-model="intelType" :placeholder="t('vuln.scanner.intelTypePlaceholder')" clearable filterable allow-create style="width: 170px">
+                  <el-option :label="t('vuln.scanner.intelType.sqlInjection')" value="SQL注入" /><!-- i18n-exempt: backend vulnType field value, not display text -->
+                  <el-option :label="t('vuln.scanner.intelType.xss')" value="XSS" />
+                  <el-option :label="t('vuln.scanner.intelType.rce')" value="远程代码执行" /><!-- i18n-exempt: backend vulnType field value, not display text -->
+                  <el-option :label="t('vuln.scanner.intelType.privesc')" value="权限提升" /><!-- i18n-exempt: backend vulnType field value, not display text -->
+                  <el-option :label="t('vuln.scanner.intelType.systemVuln')" value="系统漏洞" /><!-- i18n-exempt: backend vulnType field value, not display text -->
+                  <el-option :label="t('vuln.scanner.intelType.supplyChain')" value="供应链投毒" /><!-- i18n-exempt: backend vulnType field value, not display text -->
                 </el-select>
-                <el-select v-model="intelSeverity" placeholder="等级" clearable filterable allow-create style="width: 130px">
-                  <el-option label="严重" value="CRITICAL" />
-                  <el-option label="高危" value="HIGH" />
-                  <el-option label="中危" value="MEDIUM" />
-                  <el-option label="低危" value="LOW" />
+                <el-select v-model="intelSeverity" :placeholder="t('vuln.scanner.severityPlaceholder')" clearable filterable allow-create style="width: 130px">
+                  <el-option :label="t('vuln.common.severity.critical')" value="CRITICAL" />
+                  <el-option :label="t('vuln.common.severity.high')" value="HIGH" />
+                  <el-option :label="t('vuln.common.severity.medium')" value="MEDIUM" />
+                  <el-option :label="t('vuln.common.severity.low')" value="LOW" />
                 </el-select>
-                <el-date-picker v-model="intelStartDate" format="YYYY-MM-DD" value-format="YYYY-MM-DD" type="date" placeholder="开始时间" style="width: 150px" />
-                <el-date-picker v-model="intelEndDate" format="YYYY-MM-DD" value-format="YYYY-MM-DD" type="date" placeholder="结束时间" style="width: 150px" />
-                <el-button type="primary" @click="queryIntel">查询</el-button>
+                <el-date-picker v-model="intelStartDate" format="YYYY-MM-DD" value-format="YYYY-MM-DD" type="date" :placeholder="t('vuln.scanner.startDate')" style="width: 150px" />
+                <el-date-picker v-model="intelEndDate" format="YYYY-MM-DD" value-format="YYYY-MM-DD" type="date" :placeholder="t('vuln.scanner.endDate')" style="width: 150px" />
+                <el-button type="primary" @click="queryIntel">{{ t('vuln.scanner.query') }}</el-button>
               </div>
               <el-table :data="pagedIntel" size="small" class="intel-table">
                 <el-table-column prop="cveId" label="CVE" width="150" />
-                <el-table-column prop="vulnType" label="漏洞类型" width="130" />
-                <el-table-column label="投毒" width="80">
+                <el-table-column prop="vulnType" :label="t('vuln.scanner.colVulnType')" width="130" />
+                <el-table-column :label="t('vuln.scanner.poisoning')" width="80">
                   <template #default="{ row }">
-                    <el-tag v-if="row.isPoisoning" type="danger" size="small" effect="dark">投毒</el-tag>
+                    <el-tag v-if="row.isPoisoning" type="danger" size="small" effect="dark">{{ t('vuln.scanner.poisoning') }}</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="severity" label="等级" width="90">
+                <el-table-column prop="severity" :label="t('vuln.scanner.colSeverity')" width="90">
                   <template #default="{ row }">{{ severityLabel(row.severity) }}</template>
                 </el-table-column>
-                <el-table-column prop="ecosystem" label="生态" width="90" show-overflow-tooltip />
-                <el-table-column prop="vendorProject" label="厂商" width="150" show-overflow-tooltip />
-                <el-table-column prop="product" label="产品" width="150" show-overflow-tooltip />
-                <el-table-column prop="title" label="漏洞名称" min-width="260" show-overflow-tooltip />
-                <el-table-column prop="publishedAt" label="发布时间" width="160">
+                <el-table-column prop="ecosystem" :label="t('vuln.scanner.colEcosystem')" width="90" show-overflow-tooltip />
+                <el-table-column prop="vendorProject" :label="t('vuln.scanner.colVendor')" width="150" show-overflow-tooltip />
+                <el-table-column prop="product" :label="t('vuln.scanner.colProduct')" width="150" show-overflow-tooltip />
+                <el-table-column prop="title" :label="t('vuln.scanner.colTitle')" min-width="260" show-overflow-tooltip />
+                <el-table-column prop="publishedAt" :label="t('vuln.scanner.colPublishedAt')" width="160">
                   <template #default="{ row }">{{ formatTime(row.publishedAt) }}</template>
                 </el-table-column>
               </el-table>
@@ -872,7 +908,7 @@ onMounted(() => {
             </div>
           </el-tab-pane>
 
-          <el-tab-pane label="依赖监控" name="monitor">
+          <el-tab-pane :label="t('vuln.scanner.monitorTab')" name="monitor">
             <div class="dep-monitor-panel" v-loading="vulnStore.depLoading">
               <!-- Upload area -->
               <div v-if="!vulnStore.snapshots.length && depUploadFiles.length === 0" class="dep-upload-area">
@@ -880,48 +916,48 @@ onMounted(() => {
                   @dragover.prevent
                   @drop.prevent="handleDepDrop">
                   <p class="upload-icon">+</p>
-                  <p>拖拽依赖清单文件到此处，或点击下方选择</p>
-                  <p class="upload-hint">支持 package.json / pom.xml / go.mod / Cargo.toml / composer.json / requirements.txt / *.csproj / build.gradle</p>
+                  <p>{{ t('vuln.scanner.dropHint') }}</p>
+                  <p class="upload-hint">{{ t('vuln.scanner.uploadFormats') }}</p>
                 </div>
                 <div class="dep-upload-row">
                   <input type="file" multiple @change="handleDepFilesSelected" accept=".json,.xml,.toml,.txt,.gradle,.kts,.mod,.csproj" style="display:none" ref="depFileInput" />
-                  <el-button @click="depFileInput?.click()">选择文件</el-button>
+                  <el-button @click="depFileInput?.click()">{{ t('vuln.scanner.chooseFile') }}</el-button>
                 </div>
               </div>
 
               <!-- Selected files preview -->
               <div v-if="depUploadFiles.length > 0" class="dep-files-preview">
-                <h4>已选择 {{ depUploadFiles.length }} 个文件</h4>
+                <h4>{{ t('vuln.scanner.selectedFiles', { n: depUploadFiles.length }) }}</h4>
                 <ul>
-                  <li v-for="(f, i) in depUploadFiles" :key="i">{{ f.name }} ({{ f.content.length }} 字符)</li>
+                  <li v-for="(f, i) in depUploadFiles" :key="i">{{ f.name }} ({{ t('vuln.scanner.charCount', { n: f.content.length }) }})</li>
                 </ul>
                 <div class="dep-upload-form">
-                  <el-input v-model="depMonitorName" placeholder="项目名称" style="width: 260px" size="small" />
-                  <el-button type="primary" size="small" @click="handleDepUpload" :loading="vulnStore.depLoading">上传并分析</el-button>
-                  <el-button size="small" @click="depUploadFiles = []">取消</el-button>
+                  <el-input v-model="depMonitorName" :placeholder="t('vuln.scanner.projectName')" style="width: 260px" size="small" />
+                  <el-button type="primary" size="small" @click="handleDepUpload" :loading="vulnStore.depLoading">{{ t('vuln.scanner.uploadAnalyze') }}</el-button>
+                  <el-button size="small" @click="depUploadFiles = []">{{ t('common.cancel') }}</el-button>
                 </div>
               </div>
 
               <!-- Snapshots list -->
               <div v-if="vulnStore.snapshots.length > 0" class="dep-snapshots">
                 <div class="dep-snapshots-header">
-                  <h3>监控快照 ({{ vulnStore.snapshots.length }})</h3>
-                  <el-button size="small" @click="depUploadFiles = []; vulnStore.clearDepDetail()">+ 新建</el-button>
+                  <h3>{{ t('vuln.scanner.snapshots', { n: vulnStore.snapshots.length }) }}</h3>
+                  <el-button size="small" @click="depUploadFiles = []; vulnStore.clearDepDetail()">+ {{ t('vuln.scanner.newSnapshot') }}</el-button>
                 </div>
                 <div class="dep-snapshot-cards">
                   <div v-for="snap in vulnStore.snapshots" :key="snap.id" class="dep-snapshot-card">
                     <div class="dep-snapshot-main">
                       <div class="dep-snapshot-name">{{ snap.name }}</div>
                       <div class="dep-snapshot-meta">
-                        <span :class="{ 'count-danger': snap.poisoningCount > 0 }">投毒 {{ snap.poisoningCount }}</span>
-                        <span>漏洞 {{ snap.vulnCount }}</span>
+                        <span :class="{ 'count-danger': snap.poisoningCount > 0 }">{{ t('vuln.scanner.poisoning') }} {{ snap.poisoningCount }}</span>
+                        <span>{{ t('vuln.scanner.vulnLabel') }} {{ snap.vulnCount }}</span>
                         <span>{{ formatTime(snap.lastCheckedAt || snap.createdAt) }}</span>
                       </div>
                     </div>
                     <div class="dep-snapshot-actions">
-                      <el-button size="small" @click="vulnStore.loadDepDeps(snap.id, snap.name).then(() => expandedDepId = snap.id)">查看依赖</el-button>
-                      <el-button size="small" type="warning" :loading="vulnStore.depLoading" @click="vulnStore.refreshSnapshot(snap.id)">刷新</el-button>
-                      <el-button size="small" type="danger" @click="vulnStore.removeSnapshot(snap.id)">删除</el-button>
+                      <el-button size="small" @click="vulnStore.loadDepDeps(snap.id, snap.name).then(() => expandedDepId = snap.id)">{{ t('vuln.scanner.viewDeps') }}</el-button>
+                      <el-button size="small" type="warning" :loading="vulnStore.depLoading" @click="vulnStore.refreshSnapshot(snap.id)">{{ t('common.refresh') }}</el-button>
+                      <el-button size="small" type="danger" @click="vulnStore.removeSnapshot(snap.id)">{{ t('common.delete') }}</el-button>
                     </div>
                   </div>
                 </div>
@@ -929,44 +965,44 @@ onMounted(() => {
 
               <!-- Expanded dependency details -->
               <div v-if="expandedDepId && vulnStore.currentSnapshotDeps.length > 0" class="dep-detail">
-                <h4>依赖清单</h4>
+                <h4>{{ t('vuln.scanner.depList') }}</h4>
                 <el-table :data="vulnStore.currentSnapshotDeps" size="small">
-                  <el-table-column prop="ecosystem" label="生态" width="90" />
-                  <el-table-column prop="packageName" label="包名" min-width="220" show-overflow-tooltip />
-                  <el-table-column prop="version" label="版本" width="140" show-overflow-tooltip />
-                  <el-table-column label="投毒" width="70">
+                  <el-table-column prop="ecosystem" :label="t('vuln.scanner.colEcosystem')" width="90" />
+                  <el-table-column prop="packageName" :label="t('vuln.scanner.colPackage')" min-width="220" show-overflow-tooltip />
+                  <el-table-column prop="version" :label="t('vuln.scanner.colVersion')" width="140" show-overflow-tooltip />
+                  <el-table-column :label="t('vuln.scanner.poisoning')" width="70">
                     <template #default="{ row }">
                       <el-tag v-if="row.poisoningCount > 0" type="danger" size="small" effect="dark">{{ row.poisoningCount }}</el-tag>
                       <span v-else>-</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="漏洞" width="70">
+                  <el-table-column :label="t('vuln.scanner.vulnLabel')" width="70">
                     <template #default="{ row }">{{ row.vulnCount > 0 ? row.vulnCount : '-' }}</template>
                   </el-table-column>
-                  <el-table-column label="操作" width="80">
+                  <el-table-column :label="t('vuln.scanner.colActions')" width="80">
                     <template #default="{ row }">
-                      <el-button size="small" @click="vulnStore.loadDepFindings(row.id)">详情</el-button>
+                      <el-button size="small" @click="vulnStore.loadDepFindings(row.id)">{{ t('common.detail') }}</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
 
                 <!-- Findings sub-table -->
                 <div v-if="vulnStore.depFindings.length > 0" class="dep-findings">
-                  <h5>关联漏洞/投毒 ({{ vulnStore.depFindings.length }})</h5>
+                  <h5>{{ t('vuln.scanner.relatedFindings', { n: vulnStore.depFindings.length }) }}</h5>
                   <el-table :data="vulnStore.depFindings" size="small">
-                    <el-table-column label="投毒" width="70">
+                    <el-table-column :label="t('vuln.scanner.poisoning')" width="70">
                       <template #default="{ row }">
-                        <el-tag v-if="row.isPoisoning" type="danger" size="small" effect="dark">投毒</el-tag>
+                        <el-tag v-if="row.isPoisoning" type="danger" size="small" effect="dark">{{ t('vuln.scanner.poisoning') }}</el-tag>
                       </template>
                     </el-table-column>
-                    <el-table-column prop="severity" label="等级" width="80">
+                    <el-table-column prop="severity" :label="t('vuln.scanner.colSeverity')" width="80">
                       <template #default="{ row }">{{ severityLabel(row.severity) }}</template>
                     </el-table-column>
                     <el-table-column prop="cveId" label="ID" width="160" show-overflow-tooltip />
-                    <el-table-column prop="title" label="标题" min-width="260" show-overflow-tooltip />
-                    <el-table-column label="来源" width="80">
+                    <el-table-column prop="title" :label="t('vuln.scanner.colHeading')" min-width="260" show-overflow-tooltip />
+                    <el-table-column :label="t('vuln.scanner.colSource')" width="80">
                       <template #default="{ row }">
-                        <a v-if="row.referenceUrl" :href="row.referenceUrl" target="_blank" class="ref-link">链接</a>
+                        <a v-if="row.referenceUrl" :href="row.referenceUrl" target="_blank" class="ref-link">{{ t('vuln.scanner.link') }}</a>
                       </template>
                     </el-table-column>
                   </el-table>

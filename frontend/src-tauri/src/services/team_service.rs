@@ -1,3 +1,4 @@
+use crate::utils::failure::{failed, failed_with};
 use crate::AppState;
 
 use base64::Engine;
@@ -63,7 +64,9 @@ impl TeamState {
     async fn try_refresh_token(&self) -> Result<String, String> {
         let (url, token) = {
             let session = self.session.lock().map_err(|e| e.to_string())?;
-            let session = session.as_ref().ok_or("未登录")?;
+            let session = session
+                .as_ref()
+                .ok_or_else(|| failed("team.notLoggedIn", "未登录"))?;
             (session.server_url.clone(), session.access_token.clone())
         };
 
@@ -73,10 +76,16 @@ impl TeamState {
             .header(AUTHORIZATION, format!("Bearer {}", token))
             .send()
             .await
-            .map_err(|e| format!("刷新请求失败: {}", e))?;
+            .map_err(|e| {
+                failed_with(
+                    "team.refreshFailed",
+                    serde_json::json!({ "detail": e.to_string() }),
+                    format!("刷新请求失败: {}", e),
+                )
+            })?;
 
         if !resp.status().is_success() {
-            return Err("Token 已过期，请重新登录".to_string());
+            return Err(failed("team.tokenExpired", "Token 已过期，请重新登录"));
         }
 
         let data: Value = resp.json().await.map_err(|e| format!("解析失败: {}", e))?;
@@ -108,11 +117,13 @@ pub(crate) async fn login_team(
 
     // Ping server
     let ping_url = format!("{}/api/team/ping", base);
-    client
-        .get(&ping_url)
-        .send()
-        .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
+    client.get(&ping_url).send().await.map_err(|e| {
+        failed_with(
+            "team.connectFailed",
+            serde_json::json!({ "detail": e.to_string() }),
+            format!("无法连接到服务器: {}", e),
+        )
+    })?;
 
     // Login
     let login_url = format!("{}/api/team/login", base);
@@ -126,10 +137,16 @@ pub(crate) async fn login_team(
         }))
         .send()
         .await
-        .map_err(|e| format!("登录请求失败: {}", e))?;
+        .map_err(|e| {
+            failed_with(
+                "team.loginRequestFailed",
+                serde_json::json!({ "detail": e.to_string() }),
+                format!("登录请求失败: {}", e),
+            )
+        })?;
 
     if !resp.status().is_success() {
-        return Err("用户名或密码错误".to_string());
+        return Err(failed("team.invalidCredentials", "用户名或密码错误"));
     }
 
     let data: Value = resp
@@ -139,12 +156,20 @@ pub(crate) async fn login_team(
 
     // Check business status code in AjaxResult envelope
     if data["code"].as_i64() != Some(200) {
-        let msg = data["msg"].as_str().unwrap_or("登录失败");
-        return Err(msg.to_string());
+        // The server's own message passes through untranslated; only the local
+        // fallback for a missing one carries a key.
+        let msg = match data["msg"].as_str() {
+            Some(server) => server.to_string(),
+            None => failed("team.loginFailed", "登录失败"),
+        };
+        return Err(msg);
     }
 
     let payload = &data["data"];
-    let access_token = payload["token"].as_str().ok_or("token 缺失")?.to_string();
+    let access_token = payload["token"]
+        .as_str()
+        .ok_or_else(|| failed("team.tokenMissing", "token 缺失"))?
+        .to_string();
     let refresh_token = payload["refresh_token"].as_str().unwrap_or("").to_string();
     let username_str = payload["username"]
         .as_str()
@@ -262,10 +287,13 @@ pub(crate) async fn team_api_download(
 ) -> Result<Value, String> {
     let resp = download_call_with_retry(&state, &path).await?;
     let filename = response_filename(&resp).unwrap_or_else(|| "download.zip".to_string());
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("下载响应读取失败: {}", e))?;
+    let bytes = resp.bytes().await.map_err(|e| {
+        failed_with(
+            "team.downloadReadFailed",
+            serde_json::json!({ "detail": e.to_string() }),
+            format!("下载响应读取失败: {}", e),
+        )
+    })?;
     Ok(serde_json::json!({
         "filename": filename,
         "contentBase64": base64::engine::general_purpose::STANDARD.encode(bytes.as_ref())
@@ -278,7 +306,9 @@ pub(crate) async fn check_team_connection(
 ) -> Result<Value, String> {
     let (url, token) = {
         let session = state.session.lock().map_err(|e| e.to_string())?;
-        let session = session.as_ref().ok_or("未登录")?;
+        let session = session
+            .as_ref()
+            .ok_or_else(|| failed("team.notLoggedIn", "未登录"))?;
         (session.server_url.clone(), session.access_token.clone())
     };
 
@@ -358,10 +388,13 @@ async fn api_call_with_retry(
 
 async fn parse_api_response(resp: reqwest::Response) -> Result<Value, String> {
     let status = resp.status();
-    let mut body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("服务端响应解析失败 (HTTP {}): {}", status.as_u16(), e))?;
+    let mut body: Value = resp.json().await.map_err(|e| {
+        failed_with(
+            "team.responseParseFailed",
+            serde_json::json!({ "status": status.as_u16(), "detail": e.to_string() }),
+            format!("服务端响应解析失败 (HTTP {}): {}", status.as_u16(), e),
+        )
+    })?;
 
     if !status.is_success() {
         let msg = body["msg"].as_str().unwrap_or("服务器内部错误");
@@ -392,7 +425,9 @@ async fn do_api_call(
 ) -> Result<reqwest::Response, String> {
     let (url, token) = {
         let session = state.session.lock().map_err(|e| e.to_string())?;
-        let session = session.as_ref().ok_or("未登录")?;
+        let session = session
+            .as_ref()
+            .ok_or_else(|| failed("team.notLoggedIn", "未登录"))?;
         (
             format!("{}/api{}", session.server_url, path),
             format!("Bearer {}", session.access_token),
@@ -419,7 +454,13 @@ async fn do_api_call(
         _ => return Err("不支持的 HTTP 方法".to_string()),
     };
 
-    req.send().await.map_err(|e| format!("API 请求失败: {}", e))
+    req.send().await.map_err(|e| {
+        failed_with(
+            "team.apiRequestFailed",
+            serde_json::json!({ "detail": e.to_string() }),
+            format!("API 请求失败: {}", e),
+        )
+    })
 }
 
 async fn download_call_with_retry(
@@ -432,7 +473,12 @@ async fn download_call_with_retry(
         return do_download_call(state, path).await;
     }
     if !resp.status().is_success() {
-        return Err(format!("[HTTP {}] 下载失败", resp.status().as_u16()));
+        let status = resp.status().as_u16();
+        return Err(failed_with(
+            "team.downloadFailed",
+            serde_json::json!({ "status": status }),
+            format!("[HTTP {}] 下载失败", status),
+        ));
     }
     Ok(resp)
 }
@@ -440,7 +486,9 @@ async fn download_call_with_retry(
 async fn do_download_call(state: &TeamState, path: &str) -> Result<reqwest::Response, String> {
     let (url, token) = {
         let session = state.session.lock().map_err(|e| e.to_string())?;
-        let session = session.as_ref().ok_or("未登录")?;
+        let session = session
+            .as_ref()
+            .ok_or_else(|| failed("team.notLoggedIn", "未登录"))?;
         (
             format!("{}/api{}", session.server_url, path),
             format!("Bearer {}", session.access_token),
@@ -452,7 +500,13 @@ async fn do_download_call(state: &TeamState, path: &str) -> Result<reqwest::Resp
         .header(AUTHORIZATION, token)
         .send()
         .await
-        .map_err(|e| format!("下载请求失败: {}", e))
+        .map_err(|e| {
+            failed_with(
+                "team.downloadRequestFailed",
+                serde_json::json!({ "detail": e.to_string() }),
+                format!("下载请求失败: {}", e),
+            )
+        })
 }
 
 fn response_filename(resp: &reqwest::Response) -> Option<String> {
@@ -512,23 +566,50 @@ pub(crate) async fn scan_url_stream(
 ) -> Result<Value, String> {
     let (server_url, token) = {
         let session = state.session.lock().map_err(|e| e.to_string())?;
-        let session = session.as_ref().ok_or("未登录")?;
-        (session.server_url.clone(), format!("Bearer {}", session.access_token))
+        let session = session
+            .as_ref()
+            .ok_or_else(|| failed("team.notLoggedIn", "未登录"))?;
+        (
+            session.server_url.clone(),
+            format!("Bearer {}", session.access_token),
+        )
     };
 
     let mut body_map = serde_json::Map::new();
     body_map.insert("url".to_string(), Value::String(url));
-    if let Some(v) = model_type { body_map.insert("modelType".to_string(), Value::String(v)); }
-    if let Some(v) = model_id { body_map.insert("modelId".to_string(), Value::String(v)); }
-    if let Some(v) = cookie { body_map.insert("cookie".to_string(), Value::String(v)); }
-    if let Some(v) = authorization { body_map.insert("authorization".to_string(), Value::String(v)); }
-    if let Some(v) = headers { body_map.insert("headers".to_string(), Value::String(v)); }
-    if let Some(v) = scan_profile { body_map.insert("scanProfile".to_string(), Value::String(v)); }
-    if let Some(v) = custom_paths { body_map.insert("customPaths".to_string(), Value::String(v)); }
-    if let Some(v) = max_depth { body_map.insert("maxDepth".to_string(), Value::String(v)); }
-    if let Some(v) = max_pages { body_map.insert("maxPages".to_string(), Value::String(v)); }
-    if let Some(v) = port_scan_enabled { body_map.insert("portScanEnabled".to_string(), Value::String(v)); }
-    if let Some(v) = port_spec { body_map.insert("portSpec".to_string(), Value::String(v)); }
+    if let Some(v) = model_type {
+        body_map.insert("modelType".to_string(), Value::String(v));
+    }
+    if let Some(v) = model_id {
+        body_map.insert("modelId".to_string(), Value::String(v));
+    }
+    if let Some(v) = cookie {
+        body_map.insert("cookie".to_string(), Value::String(v));
+    }
+    if let Some(v) = authorization {
+        body_map.insert("authorization".to_string(), Value::String(v));
+    }
+    if let Some(v) = headers {
+        body_map.insert("headers".to_string(), Value::String(v));
+    }
+    if let Some(v) = scan_profile {
+        body_map.insert("scanProfile".to_string(), Value::String(v));
+    }
+    if let Some(v) = custom_paths {
+        body_map.insert("customPaths".to_string(), Value::String(v));
+    }
+    if let Some(v) = max_depth {
+        body_map.insert("maxDepth".to_string(), Value::String(v));
+    }
+    if let Some(v) = max_pages {
+        body_map.insert("maxPages".to_string(), Value::String(v));
+    }
+    if let Some(v) = port_scan_enabled {
+        body_map.insert("portScanEnabled".to_string(), Value::String(v));
+    }
+    if let Some(v) = port_spec {
+        body_map.insert("portSpec".to_string(), Value::String(v));
+    }
 
     let mut resp = state
         .http_client
@@ -538,7 +619,13 @@ pub(crate) async fn scan_url_stream(
         .json(&Value::Object(body_map))
         .send()
         .await
-        .map_err(|e| format!("SSE 请求失败: {}", e))?;
+        .map_err(|e| {
+            failed_with(
+                "vuln.sseRequestFailed",
+                serde_json::json!({ "detail": e.to_string() }),
+                format!("SSE 请求失败: {}", e),
+            )
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -552,7 +639,13 @@ pub(crate) async fn scan_url_stream(
     let mut current_data = String::new();
     let mut final_result: Option<Value> = None;
 
-    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("读取流失败: {}", e))? {
+    while let Some(chunk) = resp.chunk().await.map_err(|e| {
+        failed_with(
+            "vuln.streamReadFailed",
+            serde_json::json!({ "detail": e.to_string() }),
+            format!("读取流失败: {}", e),
+        )
+    })? {
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
         while let Some(line_end) = buffer.find('\n') {
@@ -579,7 +672,7 @@ pub(crate) async fn scan_url_stream(
 
     match final_result {
         Some(result) => Ok(result),
-        None => Err("SSE 流未返回完整结果".to_string()),
+        None => Err(failed("vuln.sseIncomplete", "SSE 流未返回完整结果")),
     }
 }
 
@@ -594,14 +687,23 @@ pub(crate) async fn scan_url_agent_stream(
 ) -> Result<Value, String> {
     let (server_url, token) = {
         let session = state.session.lock().map_err(|e| e.to_string())?;
-        let session = session.as_ref().ok_or("未登录")?;
-        (session.server_url.clone(), format!("Bearer {}", session.access_token))
+        let session = session
+            .as_ref()
+            .ok_or_else(|| failed("team.notLoggedIn", "未登录"))?;
+        (
+            session.server_url.clone(),
+            format!("Bearer {}", session.access_token),
+        )
     };
 
     let mut body_map = serde_json::Map::new();
     body_map.insert("url".to_string(), Value::String(url));
-    if let Some(v) = model_type { body_map.insert("modelType".to_string(), Value::String(v)); }
-    if let Some(v) = model_id { body_map.insert("modelId".to_string(), Value::String(v)); }
+    if let Some(v) = model_type {
+        body_map.insert("modelType".to_string(), Value::String(v));
+    }
+    if let Some(v) = model_id {
+        body_map.insert("modelId".to_string(), Value::String(v));
+    }
     if let Some(v) = agent_credentials {
         body_map.insert("agentCredentials".to_string(), Value::Array(v));
     }
@@ -614,7 +716,13 @@ pub(crate) async fn scan_url_agent_stream(
         .json(&Value::Object(body_map))
         .send()
         .await
-        .map_err(|e| format!("Agent SSE 请求失败: {}", e))?;
+        .map_err(|e| {
+            failed_with(
+                "vuln.agentSseRequestFailed",
+                serde_json::json!({ "detail": e.to_string() }),
+                format!("Agent SSE 请求失败: {}", e),
+            )
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -627,7 +735,13 @@ pub(crate) async fn scan_url_agent_stream(
     let mut current_data = String::new();
     let mut final_result: Option<Value> = None;
 
-    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("读取流失败: {}", e))? {
+    while let Some(chunk) = resp.chunk().await.map_err(|e| {
+        failed_with(
+            "vuln.streamReadFailed",
+            serde_json::json!({ "detail": e.to_string() }),
+            format!("读取流失败: {}", e),
+        )
+    })? {
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
         while let Some(line_end) = buffer.find('\n') {
@@ -654,7 +768,7 @@ pub(crate) async fn scan_url_agent_stream(
 
     match final_result {
         Some(result) => Ok(result),
-        None => Err("SSE 流未返回完整结果".to_string()),
+        None => Err(failed("vuln.sseIncomplete", "SSE 流未返回完整结果")),
     }
 }
 

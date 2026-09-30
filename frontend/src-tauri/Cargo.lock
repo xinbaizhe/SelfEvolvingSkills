@@ -3560,7 +3560,7 @@ dependencies = [
 
 [[package]]
 name = "self-evolving-skills"
-version = "2.0.5"
+version = "2.0.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3569,6 +3569,7 @@ dependencies = [
  "keyring",
  "log",
  "notify",
+ "proc-macro2",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

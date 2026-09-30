@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { searchCommunitySkills } from '../../api/community'
 import { testLlmConnection } from '../../api/admin'
+import { describeError } from '../../utils/error'
 
 interface LlmConfig {
   enabled?: boolean
@@ -21,17 +23,18 @@ const emit = defineEmits<{
   (e: 'config'): void
 }>()
 
+const { t } = useI18n()
 const llmTesting = ref(false)
 const githubTesting = ref(false)
 
 async function testLlmService() {
   if (!props.llmConfig?.base_url || !props.llmConfig?.model) {
-    ElMessage.warning('请先配置 LLM Base URL 和模型')
+    ElMessage.warning(t('admin.service.configLlmFirst'))
     emit('config')
     return
   }
   if (!props.llmConfig.has_api_key && !props.llmConfig.api_key_configured) {
-    ElMessage.warning('请先配置 LLM API Key')
+    ElMessage.warning(t('admin.service.configApiKeyFirst'))
     emit('config')
     return
   }
@@ -45,9 +48,9 @@ async function testLlmService() {
       llm_api_key: '',
     })
     if (res.success) {
-      ElMessage.success(res.data?.message || 'LLM 连接正常')
+      ElMessage.success(describeError(res.data?.message, t('admin.service.llmOk')))
     } else {
-      ElMessage.error(res.error || 'LLM 连接失败')
+      ElMessage.error(res.error || t('admin.service.llmFailed'))
     }
   } finally {
     llmTesting.value = false
@@ -59,9 +62,9 @@ async function testGithubService() {
   try {
     const res = await searchCommunitySkills('skill', 1, 1)
     if (res.success) {
-      ElMessage.success('GitHub 社区检索可访问')
+      ElMessage.success(t('admin.service.githubOk'))
     } else {
-      ElMessage.error(res.error || 'GitHub 社区检索失败')
+      ElMessage.error(res.error || t('admin.service.githubFailed'))
     }
   } finally {
     githubTesting.value = false
@@ -72,28 +75,28 @@ async function testGithubService() {
 <template>
   <section class="section">
     <div class="section-head">
-      <h3>服务连通性</h3>
-      <span>检测社区检索和大模型优化能力</span>
+      <h3>{{ t('admin.service.title') }}</h3>
+      <span>{{ t('admin.service.subtitle') }}</span>
     </div>
     <el-row :gutter="16">
       <el-col :xs="24" :md="12">
         <div class="service-card">
           <div>
-            <h4>GitHub 社区检索</h4>
-            <p>用于搜索社区 Skill 参考，网络失败时本地扫描和聚类仍可运行。</p>
+            <h4>{{ t('admin.service.githubTitle') }}</h4>
+            <p>{{ t('admin.service.githubDesc') }}</p>
           </div>
-          <el-button :loading="githubTesting" @click="testGithubService">测试 GitHub</el-button>
+          <el-button :loading="githubTesting" @click="testGithubService">{{ t('admin.service.testGithub') }}</el-button>
         </div>
       </el-col>
       <el-col :xs="24" :md="12">
         <div class="service-card">
           <div>
-            <h4>LLM 模型服务</h4>
-            <p>{{ llmConfig?.enabled ? '已启用' : '未启用' }} · {{ llmConfig?.provider || '未配置' }} · {{ llmConfig?.model || '未选择模型' }}</p>
+            <h4>{{ t('admin.service.llmTitle') }}</h4>
+            <p>{{ llmConfig?.enabled ? t('admin.common.enabled') : t('admin.common.disabled') }} · {{ llmConfig?.provider || t('admin.service.notConfigured') }} · {{ llmConfig?.model || t('admin.service.noModel') }}</p>
           </div>
           <div class="service-actions">
-            <el-button :loading="llmTesting" @click="testLlmService">测试 LLM</el-button>
-            <el-button link type="primary" @click="emit('config')">配置</el-button>
+            <el-button :loading="llmTesting" @click="testLlmService">{{ t('admin.service.testLlm') }}</el-button>
+            <el-button link type="primary" @click="emit('config')">{{ t('admin.service.configure') }}</el-button>
           </div>
         </div>
       </el-col>

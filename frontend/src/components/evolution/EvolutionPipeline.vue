@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { listen } from '@tauri-apps/api/event'
 import { ElMessage } from 'element-plus'
+import { useBackendText, type BackendText } from '../../composables/useBackendText'
+import { describeError } from '../../utils/error'
 import { getEvolutionStatus, resetEvolution, startEvolution, type EvolutionJob, type EvolutionStep } from '../../api/evolution'
 import { fetchSources, type SourceConfig } from '../../api/scan'
 import EvolutionProgressRing from './EvolutionProgressRing.vue'
 import EvolutionStepsBar from './EvolutionStepsBar.vue'
+
+const { t } = useI18n()
 
 const emit = defineEmits<{
   (e: 'completed'): void
@@ -22,15 +27,36 @@ const staleDetected = ref(false)
 const anyFailed = ref(false)
 const unlisten = ref<(() => void) | null>(null)
 
-const steps: EvolutionStep[] = [
-  { phase: 'discover', label: '扫描发现', start: 0, end: 20 },
-  { phase: 'reference_retrieval', label: '参考检索', start: 20, end: 32 },
-  { phase: 'cluster', label: '聚类分析', start: 32, end: 50 },
-  { phase: 'draft_generate', label: '生成草稿', start: 50, end: 62 },
-  { phase: 'optimize', label: '智能优化', start: 62, end: 78 },
-  { phase: 'qa_review', label: '质量评审', start: 78, end: 90 },
-  { phase: 'diff_recommend', label: '差异推荐', start: 90, end: 100 },
+const PHASE_KEYS: Record<string, string> = {
+  discover: 'discover',
+  reference_retrieval: 'referenceRetrieval',
+  cluster: 'cluster',
+  draft_generate: 'draftGenerate',
+  optimize: 'optimize',
+  qa_review: 'qaReview',
+  diff_recommend: 'diffRecommend',
+}
+
+const STEP_DEFS: Array<{ phase: string; start: number; end: number }> = [
+  { phase: 'discover', start: 0, end: 20 },
+  { phase: 'reference_retrieval', start: 20, end: 32 },
+  { phase: 'cluster', start: 32, end: 50 },
+  { phase: 'draft_generate', start: 50, end: 62 },
+  { phase: 'optimize', start: 62, end: 78 },
+  { phase: 'qa_review', start: 78, end: 90 },
+  { phase: 'diff_recommend', start: 90, end: 100 },
 ]
+
+function phaseLabel(phase: string): string {
+  return t(`core.pipeline.phase.${PHASE_KEYS[phase] ?? phase}`)
+}
+
+const backendText = useBackendText()
+const eventMessage = (payload: BackendText): string => backendText(payload)
+
+const steps = computed<EvolutionStep[]>(() =>
+  STEP_DEFS.map((s) => ({ phase: s.phase, label: phaseLabel(s.phase), start: s.start, end: s.end })),
+)
 
 const availableSources = computed(() => sources.value.filter((source) => source.is_enabled || source.is_available))
 
@@ -55,7 +81,7 @@ const progressPercent = computed(() => {
   const running = job.value.phases.find((p) => p.status === 'running')
   if (running) return running.progress
   const completed = job.value.phases.filter((p) => p.status === 'completed').length
-  if (completed === steps.length) return 100
+  if (completed === steps.value.length) return 100
   const lastDone = job.value.phases
     .filter((p) => p.status === 'completed' || p.status === 'failed')
     .reduce((max, p) => (p.progress > max ? p.progress : max), 0)
@@ -64,22 +90,26 @@ const progressPercent = computed(() => {
 
 const currentMessage = computed(() => {
   if (!job.value?.phases) return ''
+  // Phases loaded from the status endpoint carry the code the backend stored
+  // with them, so this translates a run resumed after a restart too.
   const running = job.value.phases.find((p) => p.status === 'running')
-  return running?.message || ''
+  return running ? backendText(running) : ''
 })
 
 const isRunning = computed(() => job.value?.running ?? false)
 
 const statusText = computed(() => {
-  if (isRunning.value) return '进行中'
-  if (!job.value?.phases || job.value.phases.length === 0) return '待启动'
+  if (isRunning.value) return t('core.pipeline.state.running')
+  if (!job.value?.phases || job.value.phases.length === 0) return t('core.pipeline.state.pending')
   const allDone = job.value.phases.every((p) => p.status === 'completed')
-  if (allDone) return '已完成'
-  if (anyFailed.value) return '部分失败'
-  return '待启动'
+  if (allDone) return t('core.pipeline.state.completed')
+  if (anyFailed.value) return t('core.pipeline.state.partialFailed')
+  return t('core.pipeline.state.pending')
 })
 
 const phaseOrder = ['discover', 'reference_retrieval', 'cluster', 'draft_generate', 'optimize', 'qa_review', 'diff_recommend']
+
+const flow = computed(() => phaseOrder.map(phaseLabel).join(' → '))
 
 async function loadSources() {
   const res = await fetchSources()
@@ -101,7 +131,7 @@ async function loadStatus() {
       anyFailed.value = data.any_failed ?? false
       if (data.auto_failed && data.auto_failed > 0) {
         staleDetected.value = true
-        ElMessage.warning(`检测到 ${data.auto_failed} 个阶段超时（>10分钟），已自动标记为失败。`)
+        ElMessage.warning(t('core.pipeline.timeoutWarning', { count: data.auto_failed }))
       }
       if (data.running && !data.current_phase) {
         staleDetected.value = true
@@ -117,7 +147,7 @@ async function loadStatus() {
 
 async function handleStart() {
   if (selectedAgentIds.value.length === 0) {
-    ElMessage.warning('请至少选择一个 Agent 作为扫描范围')
+    ElMessage.warning(t('core.pipeline.selectAgent'))
     return
   }
 
@@ -127,28 +157,31 @@ async function handleStart() {
     if (res.success && res.data) {
       job.value = {
         run_id: res.data.run_id,
-        phases: steps.map((s) => ({
+        phases: steps.value.map((s) => ({
           id: 0,
           phase: s.phase,
           status: 'pending',
           progress: 0,
           message: null,
+          code: null,
+          params: null,
+          suffix_code: null,
           started_at: null,
           completed_at: null,
         })),
-        steps,
+        steps: steps.value,
         running: true,
         current_phase: 'discover',
         last_completed: null,
       }
       startListening()
       emit('started')
-      ElMessage.success('进化管道已启动，执行 7 步流程：扫描发现 → 参考检索 → 聚类分析 → 生成草稿 → 智能优化 → 质量评审 → 差异推荐')
+      ElMessage.success(t('core.pipeline.started', { flow: flow.value }))
     } else {
-      ElMessage.error(res.error || '启动进化管道失败')
+      ElMessage.error(describeError(res.error, t('core.pipeline.startFailed')))
     }
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '启动进化管道失败')
+    ElMessage.error(error instanceof Error ? error.message : t('core.pipeline.startFailed'))
   } finally {
     loading.value = false
   }
@@ -164,8 +197,35 @@ function selectAllEnabled() {
 
 function startListening() {
   if (unlisten.value) return
-  listen<{ run_id: number; phase: string; progress: number; message: string }>('evolution-progress', (event) => {
+  listen<{ run_id: number; phase: string; progress: number } & BackendText>('evolution-progress', (event) => {
     if (!job.value || job.value.run_id !== event.payload.run_id) return
+
+    // The backend sends its own `aborted` phase for a run it could not finish.
+    // Handling it here rather than mid-phase is what makes the failure visible:
+    // an abort carries progress 100, which would otherwise read as "this phase
+    // finished" and leave the ring spinning with no message.
+    if (event.payload.phase === 'aborted') {
+      const aborted = job.value.phases.map((p) =>
+        p.status === 'running'
+          // The abort reason replaces this phase's own message, so the phase's
+          // stored code goes with it - leaving it would make the resolver
+          // prefer the code and hide the reason.
+          ? {
+              ...p,
+              status: 'failed' as const,
+              message: eventMessage(event.payload),
+              code: null,
+              params: null,
+              completed_at: p.completed_at || new Date().toISOString(),
+            }
+          : p,
+      )
+      job.value = { ...job.value, phases: aborted, running: false, current_phase: null }
+      anyFailed.value = true
+      stopListening()
+      ElMessage.error(eventMessage(event.payload))
+      return
+    }
 
     if (event.payload.phase === 'completed') {
       const finalPhases = job.value.phases.map((p) => ({
@@ -176,19 +236,24 @@ function startListening() {
       job.value = { ...job.value, phases: finalPhases, running: false, current_phase: null }
       stopListening()
       emit('completed')
-      ElMessage.success('进化流程已完成，推荐、草稿和社区对比已刷新。')
+      ElMessage.success(t('core.pipeline.completed'))
       return
     }
 
     const phases = job.value.phases.map((p) => {
       if (p.phase === event.payload.phase) {
-        const step = steps.find((s) => s.phase === p.phase)
+        const step = steps.value.find((s) => s.phase === p.phase)
         const reachedEnd = step ? event.payload.progress >= step.end : false
         return {
           ...p,
           status: reachedEnd ? 'completed' as const : p.status === 'pending' ? 'running' as const : p.status,
           progress: event.payload.progress,
-          message: event.payload.message,
+          // Keep the raw parts, not the rendered text: this phase is rendered
+          // again on every later status load, and only the parts survive a
+          // language switch.
+          message: event.payload.message ?? null,
+          code: event.payload.code ?? null,
+          params: event.payload.params ?? null,
           started_at: p.started_at || new Date().toISOString(),
           completed_at: reachedEnd ? (p.completed_at || new Date().toISOString()) : p.completed_at,
         }
@@ -196,7 +261,7 @@ function startListening() {
       const phaseIdx = phaseOrder.indexOf(p.phase)
       const eventIdx = phaseOrder.indexOf(event.payload.phase)
       if (phaseIdx < eventIdx && p.status !== 'completed') {
-        const step = steps.find((s) => s.phase === p.phase)
+        const step = steps.value.find((s) => s.phase === p.phase)
         return { ...p, status: 'completed' as const, progress: step?.end ?? p.progress, completed_at: p.completed_at || new Date().toISOString() }
       }
       return p
@@ -214,7 +279,7 @@ function startListening() {
     if (allDone) {
       stopListening()
       emit('completed')
-      ElMessage.success('进化流程已完成，推荐、草稿和社区对比已刷新。')
+      ElMessage.success(t('core.pipeline.completed'))
     }
   }).then((fn) => {
     unlisten.value = fn
@@ -231,15 +296,17 @@ async function handleReset() {
   try {
     const res = await resetEvolution()
     if (res.success && res.data) {
-      ElMessage.success(res.data.message || '已重置')
+      // Built from the count rather than the backend's `message`, which is
+      // Chinese prose and would otherwise always win over the fallback.
+      ElMessage.success(t('core.pipeline.resetDone', { count: res.data.reset }))
       staleDetected.value = false
       job.value = null
       await loadStatus()
     } else {
-      ElMessage.error(res.error || '重置失败')
+      ElMessage.error(res.error || t('core.pipeline.resetFailed'))
     }
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '重置失败')
+    ElMessage.error(e instanceof Error ? e.message : t('core.pipeline.resetFailed'))
   } finally {
     resetting.value = false
   }
@@ -256,24 +323,24 @@ onUnmounted(stopListening)
   <div class="evolution-pipeline">
     <div class="pipeline-header">
       <div>
-        <h3>Skill 进化管道</h3>
-        <p>选择 Agent 后启动，系统会真实执行：扫描发现 → 参考检索 → 聚类分析 → 生成草稿 → 智能优化 → 质量评审 → 差异推荐。</p>
+        <h3>{{ t('core.pipeline.title') }}</h3>
+        <p>{{ t('core.pipeline.subtitle', { flow }) }}</p>
       </div>
       <el-button type="primary" :loading="loading" :disabled="isRunning" @click="handleStart">
-        {{ isRunning ? '进化中...' : '启动进化' }}
+        {{ isRunning ? t('core.pipeline.evolving') : t('core.pipeline.start') }}
       </el-button>
-      <el-button text :loading="statusLoading" @click="loadStatus">加载状态</el-button>
+      <el-button text :loading="statusLoading" @click="loadStatus">{{ t('core.pipeline.loadStatus') }}</el-button>
       <el-button v-if="staleDetected" type="warning" text :loading="resetting" @click="handleReset">
-        重置卡住的管道
+        {{ t('core.pipeline.resetStuck') }}
       </el-button>
     </div>
 
     <div class="scope-panel">
       <div class="scope-head">
-        <b>扫描范围</b>
+        <b>{{ t('core.pipeline.scope') }}</b>
         <div>
-          <el-button size="small" text @click="selectClaudeCodeOnly">只选 Claude Code</el-button>
-          <el-button size="small" text @click="selectAllEnabled">选择全部已启用</el-button>
+          <el-button size="small" text @click="selectClaudeCodeOnly">{{ t('core.pipeline.claudeCodeOnly') }}</el-button>
+          <el-button size="small" text @click="selectAllEnabled">{{ t('core.pipeline.selectAllEnabled') }}</el-button>
         </div>
       </div>
       <el-select
@@ -282,19 +349,19 @@ onUnmounted(stopListening)
         filterable
         collapse-tags
         collapse-tags-tooltip
-        placeholder="选择要扫描的 Agent"
+        :placeholder="t('core.pipeline.scopePlaceholder')"
         style="width: 100%"
         :disabled="isRunning"
       >
         <el-option
           v-for="source in availableSources"
           :key="source.agent_id"
-          :label="`${source.agent_name} · ${source.is_available ? '已检测到' : '未检测到路径'}`"
+          :label="`${source.agent_name} · ${source.is_available ? t('core.pipeline.detected') : t('core.pipeline.pathMissing')}`"
           :value="source.agent_id"
         />
       </el-select>
       <p class="scope-note">
-        长对话会先做本地结构化压缩，只保留目标、工具、错误、结果和关键上下文，用于聚类与草稿生成。
+        {{ t('core.pipeline.scopeNote') }}
       </p>
     </div>
 
@@ -313,7 +380,7 @@ onUnmounted(stopListening)
     />
 
     <div v-if="job?.last_completed && !isRunning" class="last-completed">
-      上次完成时间：{{ job.last_completed.completed_at || '未知' }}
+      {{ t('core.pipeline.lastCompleted', { time: job.last_completed.completed_at || t('common.unknown') }) }}
     </div>
   </div>
 </template>

@@ -1,3 +1,4 @@
+use crate::utils::failure::failed_with;
 use crate::utils::time::now_string;
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -84,6 +85,11 @@ pub(crate) fn start_generation(
                     "target_date": s.target_date,
                     "phase": s.phase,
                     "progress": s.progress,
+                    // Carries its catalog key alongside the prose, the way the
+                    // pipeline's progress messages do, so the frontend can both
+                    // recognise this outcome and render it in its own language.
+                    "code": "admin.report.alreadyGenerating",
+                    "params": {},
                     "message": "已有日报正在生成中，请等待完成",
                 }));
             }
@@ -180,8 +186,15 @@ async fn run_generation_task(
 
     if conversations.is_empty() && memory_highlights.is_empty() {
         return Err(anyhow!(
-            "在 {} 没有找到 AI 编程对话记录，请确认当天有使用 AI 编程工具（Claude Code、Codex、Cursor 等）",
-            target_date
+            "{}",
+            failed_with(
+                "admin.report.noConversations",
+                json!({ "date": target_date }),
+                format!(
+                    "在 {} 没有找到 AI 编程对话记录，请确认当天有使用 AI 编程工具（Claude Code、Codex、Cursor 等）",
+                    target_date
+                ),
+            )
         ));
     }
 
@@ -200,7 +213,19 @@ async fn run_generation_task(
             .error_label("日报生成请求失败"),
     )
     .await
-    .map_err(|e| anyhow!("AI模型调用失败，请检查模型配置和网络连接：{}", e))?;
+    // The `error_label` inside `e` stays Chinese: it is a diagnostic fragment,
+    // and it rides in `{detail}` the way the pipeline's `optimizeFailed` carries
+    // its raw reason. Only the sentence the interface shows gets a key.
+    .map_err(|e| {
+        anyhow!(
+            "{}",
+            failed_with(
+                "admin.report.llmCallFailed",
+                json!({ "detail": e.to_string() }),
+                format!("AI模型调用失败，请检查模型配置和网络连接：{}", e),
+            )
+        )
+    })?;
 
     update_progress("done", 95);
 

@@ -1,13 +1,16 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import AdminModelConfigPanel from './AdminModelConfigPanel.vue'
+
+const { t } = useI18n()
 </script>
 
 <template>
   <div class="team-model-page">
     <div class="page-header">
       <div>
-        <h2>团队模型管理</h2>
-        <p>查看当前团队登录后可用的模型配置。</p>
+        <h2>{{ t('admin.teamModels.title') }}</h2>
+        <p>{{ t('admin.teamModels.subtitle') }}</p>
       </div>
     </div>
 

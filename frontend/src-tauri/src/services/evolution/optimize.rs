@@ -8,6 +8,7 @@ use crate::db;
 use crate::services::workflow::{self, WorkflowCluster};
 use crate::utils::time::now_string;
 
+use super::msg::{self, ProgressMsg};
 use super::status;
 use super::utils;
 use super::SkillReviewResponse;
@@ -231,7 +232,11 @@ pub(super) async fn optimize_drafts_with_llm(
             db_path,
             run_id,
             "optimize",
-            &format!("正在优化：{}...", cluster.name),
+            ProgressMsg::with(
+                msg::HEARTBEAT_OPTIMIZING,
+                json!({ "name": cluster.name }),
+                format!("正在优化：{}...", cluster.name),
+            ),
         );
 
         let conn = db::open_conn(db_path)?;
@@ -311,7 +316,11 @@ pub(super) async fn qa_drafts_with_llm(
             db_path,
             run_id,
             "qa_review",
-            &format!("正在评审：{}...", cluster.name),
+            ProgressMsg::with(
+                msg::HEARTBEAT_REVIEWING,
+                json!({ "name": cluster.name }),
+                format!("正在评审：{}...", cluster.name),
+            ),
         );
         let conn = db::open_conn(db_path)?;
         let id = workflow::workflow_id_for_cluster(&conn, cluster)?;
@@ -404,11 +413,19 @@ pub(super) async fn qa_drafts_with_llm(
                 db_path,
                 run_id,
                 "qa_review",
-                &format!(
-                    "反馈修正第 {}/{} 轮：{}...",
-                    retries,
-                    super::MAX_REVIEW_RETRIES,
-                    cluster.name
+                ProgressMsg::with(
+                    msg::HEARTBEAT_RETRY,
+                    json!({
+                        "round": retries,
+                        "max": super::MAX_REVIEW_RETRIES,
+                        "name": cluster.name,
+                    }),
+                    format!(
+                        "反馈修正第 {}/{} 轮：{}...",
+                        retries,
+                        super::MAX_REVIEW_RETRIES,
+                        cluster.name
+                    ),
                 ),
             );
             let review_feedback_str = serde_json::to_string(&json!({

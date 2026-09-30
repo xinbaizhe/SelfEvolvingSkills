@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
 import { useTeamStore } from '../../stores/useTeamStore'
@@ -31,6 +32,7 @@ type EvaluationResult = {
   pythonFiles?: Record<string, unknown>[]
 }
 
+const { t } = useI18n()
 const store = useTeamStore()
 const visible = ref(false)
 const loading = ref(false)
@@ -128,7 +130,7 @@ async function loadModels() {
     availableModels.value = teamModels
     ensureModelSelection()
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载可用模型失败'))
+    ElMessage.error(getErrorMessage(e, t('team.common.loadModelsFailed')))
   } finally {
     modelLoading.value = false
   }
@@ -152,7 +154,7 @@ async function loadLocalResourceModel() {
     }
     localResourceModel.value = {
       id: -1,
-      name: '资源与配置的模型配置',
+      name: t('team.common.localResourceModelName'),
       provider: data.provider || data.api_format || 'custom',
       baseUrl: data.base_url,
       model: data.model,
@@ -161,9 +163,9 @@ async function loadLocalResourceModel() {
       apiKeyHash: data.api_key_configured || data.has_api_key ? 'configured' : undefined,
       isActive: 1,
       createdAt: '',
-      deptName: '资源与配置',
-      createdByName: '本机',
-      recipientName: '本机',
+      deptName: t('nav.resources'),
+      createdByName: t('team.common.localMachineName'),
+      recipientName: t('team.common.localMachineName'),
     }
   } catch {
     localResourceModel.value = null
@@ -191,7 +193,7 @@ watch(selectedSkillKey, async (key) => {
       form.originAgent = detail.source_type || ''
     }
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载 Skill 详情失败'))
+    ElMessage.error(getErrorMessage(e, t('team.shareDialog.loadSkillDetailFailed')))
   } finally {
     loading.value = false
   }
@@ -240,7 +242,7 @@ function resetForm() {
 
 function open() {
   if (!store.isAuthenticated) {
-    ElMessage.warning('请先登录团队版')
+    ElMessage.warning(t('team.common.loginRequired'))
     return
   }
   resetForm()
@@ -255,7 +257,7 @@ async function onZipSelected(event: Event) {
   input.value = ''
   if (!file) return
   if (!file.name.toLowerCase().endsWith('.zip')) {
-    ElMessage.warning('请上传 .zip 文件')
+    ElMessage.warning(t('team.shareDialog.zipOnly'))
     return
   }
 
@@ -267,9 +269,9 @@ async function onZipSelected(event: Event) {
     selectedSkillKey.value = ''
     form.bodyMd = ''
     if (!form.name) form.name = file.name.replace(/\.zip$/i, '')
-    ElMessage.success('zip 已选择')
+    ElMessage.success(t('team.shareDialog.zipSelected'))
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '读取 zip 文件失败'))
+    ElMessage.error(getErrorMessage(e, t('team.shareDialog.readZipFailed')))
   }
 }
 
@@ -287,24 +289,24 @@ function fileToBase64(file: File): Promise<string> {
 
 function buildEvaluationSection() {
   const model = selectedEvaluationModel.value
-  const targetLabel = form.evaluationTargetType === 'url' ? '工具网址' : '输入目录'
+  const targetLabel = form.evaluationTargetType === 'url' ? '工具网址' : '输入目录' // i18n-exempt: LLM evaluation payload label, not UI
   const targetValue = form.evaluationTargetType === 'url' ? form.url : form.evaluationDirectory
   return [
     '',
-    '## AI 评估配置',
+    '## AI 评估配置', // i18n-exempt: LLM evaluation payload section header
     '',
-    `- 评估维度: 安全, 性能`,
-    `- 目标类型: ${targetLabel}`,
-    `- 评估目标: ${targetValue}`,
-    `- 模型类型: ${form.evaluationModelType === 'personal' ? '资源与配置的模型配置' : '部门模型'}`,
-    `- 模型名称: ${model?.name || ''}`,
-    `- 模型标识: ${model?.model || ''}`,
-    `- 服务商: ${model?.provider || ''}`,
+    `- 评估维度: 安全, 性能`, // i18n-exempt: LLM evaluation payload
+    `- 目标类型: ${targetLabel}`, // i18n-exempt: LLM evaluation payload
+    `- 评估目标: ${targetValue}`, // i18n-exempt: LLM evaluation payload
+    `- 模型类型: ${form.evaluationModelType === 'personal' ? '资源与配置的模型配置' : '部门模型'}`, // i18n-exempt: LLM evaluation payload
+    `- 模型名称: ${model?.name || ''}`, // i18n-exempt: LLM evaluation payload
+    `- 模型标识: ${model?.model || ''}`, // i18n-exempt: LLM evaluation payload
+    `- 服务商: ${model?.provider || ''}`, // i18n-exempt: LLM evaluation payload
   ].join('\n')
 }
 
 function buildPayloadBody() {
-  const usageSection = ['## 使用说明', '', form.usageGuide].join('\n')
+  const usageSection = ['## 使用说明', '', form.usageGuide].join('\n') // i18n-exempt: persists into the shared Skill body and must stay byte-identical to the parser regex in views/TeamSkillsView.vue (extractUsageGuide)
   if (form.shareType === 'url') {
     return [
       `# ${form.name}`,
@@ -341,7 +343,7 @@ function isValidHttpUrl(value: string) {
 
 async function selectEvaluationDirectory() {
   if (!window.__TAURI_INTERNALS__) {
-    ElMessage.warning('当前环境不支持原生目录选择')
+    ElMessage.warning(t('team.shareDialog.noNativeDirPicker'))
     return
   }
   const selected = await invoke<string | null>('select_directory')
@@ -350,35 +352,35 @@ async function selectEvaluationDirectory() {
 
 function validateForm() {
   if (!form.name) {
-    ElMessage.warning('请填写名称')
+    ElMessage.warning(t('team.shareDialog.nameRequired'))
     return false
   }
   if (!form.usageGuide.trim()) {
-    ElMessage.warning('请填写使用说明')
+    ElMessage.warning(t('team.shareDialog.usageGuideRequired'))
     return false
   }
   if (form.shareType === 'skill' && !form.bodyMd && !uploadedZip.value) {
-    ElMessage.warning('请选择本地 Skill 或上传 Skill zip')
+    ElMessage.warning(t('team.shareDialog.skillSourceRequired'))
     return false
   }
   if (form.shareType === 'url' && !form.url) {
-    ElMessage.warning('请填写工具网址')
+    ElMessage.warning(t('team.shareDialog.toolUrlRequired'))
     return false
   }
   if (form.shareType === 'url' && !isValidHttpUrl(form.url)) {
-    ElMessage.warning('请输入 http 或 https 开头的有效网址')
+    ElMessage.warning(t('team.shareDialog.invalidUrl'))
     return false
   }
   if (!form.evaluationModelId) {
-    ElMessage.warning('请选择用于 AI 评估的模型')
+    ElMessage.warning(t('team.common.evalModelRequired'))
     return false
   }
   if (form.evaluationTargetType === 'directory' && !uploadedZip.value && !form.evaluationDirectory) {
-    ElMessage.warning('请选择评估目录')
+    ElMessage.warning(t('team.shareDialog.evalDirRequired'))
     return false
   }
   if (form.evaluationTargetType === 'url' && !form.url) {
-    ElMessage.warning('请填写工具网址作为评估目标')
+    ElMessage.warning(t('team.shareDialog.evalUrlRequired'))
     return false
   }
   return true
@@ -398,28 +400,28 @@ function scoreSecurity(penalties: string[]) {
   const body = `${form.bodyMd}\n${form.description}\n${form.url}`.toLowerCase()
   let deductions = 0
   if (/api[_-]?key|secret|token|password|bearer\s+[a-z0-9._-]{16,}/i.test(body)) {
-    deductions += addPenalty(penalties, '内容疑似包含密钥、令牌或密码', 18)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltySecret'), 18)
   }
   if (/(rm\s+-rf|del\s+\/[sq]|format\s+[a-z]:|shutdown\s+\/|powershell\s+-enc|curl\s+.*\|\s*(sh|bash)|wget\s+.*\|\s*(sh|bash))/i.test(body)) {
-    deductions += addPenalty(penalties, '内容包含高危系统命令或远程脚本执行模式', 20)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyDangerousCommand'), 20)
   }
   if (form.shareType === 'url' && form.url && !isValidHttpUrl(form.url)) {
-    deductions += addPenalty(penalties, '工具网址不是有效 HTTPS/HTTP 地址', 12)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyInvalidUrl'), 12)
   }
   if (form.shareType === 'url' && form.url.startsWith('http://')) {
-    deductions += addPenalty(penalties, '工具网址未使用 HTTPS', 6)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyNoHttps'), 6)
   }
   if (form.shareType === 'skill' && !form.originAgent) {
-    deductions += addPenalty(penalties, '未选择来源 Agent', 5)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyNoOriginAgent'), 5)
   }
   if (form.shareType === 'skill' && !form.compatibleAgents.trim()) {
-    deductions += addPenalty(penalties, '未填写兼容 Agent 范围', 4)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyNoCompatibleAgents'), 4)
   }
   if (!selectedEvaluationModel.value?.model) {
-    deductions += addPenalty(penalties, '未选择可用评估模型', 25)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyNoEvalModel'), 25)
   }
   if (form.evaluationTargetType === 'directory' && !uploadedZip.value && !form.evaluationDirectory) {
-    deductions += addPenalty(penalties, '未选择评估目录', 12)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyNoEvalDir'), 12)
   }
   return clampScore(100 - deductions)
 }
@@ -428,23 +430,23 @@ function scorePerformance(penalties: string[]) {
   let deductions = 0
   const contentLength = uploadedZip.value?.base64.length || form.bodyMd.length
   if (contentLength === 0) {
-    deductions += addPenalty(penalties, '缺少可评估内容', 18)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyNoContent'), 18)
   } else if (contentLength > 1_500_000) {
-    deductions += addPenalty(penalties, '内容体积过大，离线分发和解析成本高', 16)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyTooLarge'), 16)
   } else if (contentLength > 300_000) {
-    deductions += addPenalty(penalties, '内容体积偏大', 8)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyLarge'), 8)
   }
   if (form.shareType === 'skill' && !uploadedZip.value && form.bodyMd.length < 120) {
-    deductions += addPenalty(penalties, 'Skill 内容过短，缺少足够执行说明', 8)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyShortContent'), 8)
   }
   if (form.description.trim().length < 8) {
-    deductions += addPenalty(penalties, '描述过短，不利于检索和复用', 4)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyShortDescription'), 4)
   }
   if (form.evaluationTargetType === 'url' && form.url.length > 220) {
-    deductions += addPenalty(penalties, '评估 URL 过长，稳定性较差', 3)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyLongUrl'), 3)
   }
   if (form.evaluationModelType === 'personal' && !selectedEvaluationModel.value?.apiKeyHash) {
-    deductions += addPenalty(penalties, '资源与配置模型未确认 API Key 可用', 8)
+    deductions += addPenalty(penalties, t('team.shareDialog.penaltyApiKeyUnconfirmed'), 8)
   }
   return clampScore(100 - deductions)
 }
@@ -459,7 +461,7 @@ function calculateEvaluationScore(): EvaluationResult {
     securityScore,
     performanceScore,
     passed: score >= 95,
-    summary: score >= 95 ? '评估通过，可以提交分享。' : '评估未通过，需要总分达到 95 分以上才能提交分享。',
+    summary: score >= 95 ? t('team.shareDialog.heuristicSummaryPassed') : t('team.shareDialog.heuristicSummaryFailed'),
     penalties,
     suggestions: [],
     requiredChanges: [],
@@ -488,8 +490,8 @@ function scoreValue(value: unknown) {
 
 function evaluationErrorFallback() {
   return form.evaluationModelType === 'department'
-    ? '大模型评估失败，请检查所选部门模型配置、API Key、Base URL 和模型标识'
-    : '大模型评估失败，请检查资源与配置中的模型配置'
+    ? t('team.common.evalErrorDepartment')
+    : t('team.common.evalErrorPersonal')
 }
 
 function selectedDepartmentEvaluationConfig() {
@@ -569,7 +571,7 @@ async function evaluateWithLlm(heuristic: EvaluationResult): Promise<EvaluationR
     ? await evaluateSkillDirectory(buildDirectoryEvaluationPayload(heuristic) as Record<string, unknown>)
     : await evaluateShareResource(buildEvaluationPayload(heuristic) as Record<string, unknown>)
   if (!res.success) {
-    throw new Error(res.error || '大模型评估失败')
+    throw new Error(res.error || t('team.common.llmEvaluationFailed'))
   }
   const data = (res.data || {}) as Record<string, unknown>
   const llmScore = clampScore(Number(data.score ?? 0))
@@ -583,7 +585,7 @@ async function evaluateWithLlm(heuristic: EvaluationResult): Promise<EvaluationR
     securityScore,
     performanceScore,
     passed: finalScore >= 95,
-    summary: String(data.summary || (finalScore >= 95 ? '大模型评估通过，可以提交分享。' : '大模型评估未通过，需要按建议修改后重新评估。')),
+    summary: String(data.summary || (finalScore >= 95 ? t('team.shareDialog.llmSummaryPassed') : t('team.shareDialog.llmSummaryFailed'))),
     penalties: heuristic.penalties,
     suggestions: stringArray(data.suggestions),
     requiredChanges: stringArray(data.requiredChanges),
@@ -606,9 +608,9 @@ async function runEvaluation() {
     evaluationResult.value = await evaluateWithLlm(heuristic)
     evaluationSignature.value = currentEvaluationSignature()
     if (evaluationResult.value.passed) {
-      ElMessage.success(`评估通过：${evaluationResult.value.score} 分`)
+      ElMessage.success(t('team.shareDialog.evalPassed', { score: evaluationResult.value.score }))
     } else {
-      ElMessage.warning(`评估未通过：${evaluationResult.value.score} 分，需达到 95 分以上`)
+      ElMessage.warning(t('team.shareDialog.evalFailed', { score: evaluationResult.value.score }))
     }
   } catch (e: unknown) {
     evaluationResult.value = null
@@ -621,11 +623,11 @@ async function runEvaluation() {
 
 function validateEvaluationResult() {
   if (!evaluationResult.value || evaluationSignature.value !== currentEvaluationSignature()) {
-    ElMessage.warning('请先完成 AI 安全与性能评估')
+    ElMessage.warning(t('team.common.evalNotRun'))
     return false
   }
   if (!evaluationResult.value.passed) {
-    ElMessage.warning('评估分数需达到 95 分以上才能提交分享')
+    ElMessage.warning(t('team.shareDialog.evalScoreTooLow'))
     return false
   }
   return true
@@ -649,11 +651,11 @@ async function doShare() {
       zipFileName: uploadedZip.value?.filename,
       zipBase64: uploadedZip.value?.base64,
     })
-    ElMessage.success(form.shareType === 'url' ? '工具网址已分享到团队' : 'Skill zip 已分享到团队')
+    ElMessage.success(form.shareType === 'url' ? t('team.shareDialog.shareUrlSuccess') : t('team.shareDialog.shareZipSuccess'))
     visible.value = false
     emit('shared')
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '分享失败'))
+    ElMessage.error(getErrorMessage(e, t('team.shareDialog.shareFailed')))
   } finally {
     sharing.value = false
   }
@@ -663,42 +665,42 @@ defineExpose({ open })
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="分享 Skill 到团队" width="720px" top="6vh">
+  <el-dialog v-model="visible" :title="t('team.shareDialog.title')" width="720px" top="6vh">
     <el-form label-position="top" @submit.prevent="doShare">
       <el-alert
         class="share-tip"
         type="info"
         :closable="false"
         show-icon
-        title="可以上传 Skill zip 或选择本地 Skill，提交前必须完成 AI 安全与性能评估配置。"
+        :title="t('team.shareDialog.tip')"
       />
 
-      <el-form-item label="分享类型">
+      <el-form-item :label="t('team.shareDialog.shareType')">
         <el-segmented
           v-model="form.shareType"
           :options="[
-            { label: 'Skill zip', value: 'skill' },
-            { label: '工具网址', value: 'url' },
+            { label: t('team.shareDialog.skillZip'), value: 'skill' },
+            { label: t('team.shareDialog.toolUrl'), value: 'url' },
           ]"
         />
       </el-form-item>
 
       <template v-if="form.shareType === 'skill'">
-        <el-form-item label="上传 Skill zip">
+        <el-form-item :label="t('team.shareDialog.uploadSkillZip')">
           <label class="upload-box">
             <input class="hidden-input" type="file" accept=".zip,application/zip" @change="onZipSelected" />
             <span class="upload-icon">ZIP</span>
             <div>
-              <strong>{{ uploadedZip?.filename || '选择 zip 文件' }}</strong>
-              <span>上传 zip 后会作为团队 Skill zip 分享；也可以改为选择下方本地 Skill。</span>
+              <strong>{{ uploadedZip?.filename || t('team.shareDialog.selectZipFile') }}</strong>
+              <span>{{ t('team.shareDialog.zipHint') }}</span>
             </div>
           </label>
         </el-form-item>
 
-        <el-form-item label="或选择本地 Skill">
+        <el-form-item :label="t('team.shareDialog.orSelectLocalSkill')">
           <el-select
             v-model="selectedSkillKey"
-            placeholder="选择要分享的 Skill..."
+            :placeholder="t('team.shareDialog.selectSkillPlaceholder')"
             filterable
             clearable
             style="width: 100%"
@@ -718,83 +720,83 @@ defineExpose({ open })
       </template>
 
       <div class="form-grid">
-        <el-form-item label="名称">
-          <el-input v-model="form.name" placeholder="Skill 名称" />
+        <el-form-item :label="t('team.shareDialog.name')">
+          <el-input v-model="form.name" :placeholder="t('team.shareDialog.namePlaceholder')" />
         </el-form-item>
 
-        <el-form-item label="分类">
+        <el-form-item :label="t('team.shareDialog.category')">
           <el-select v-model="form.category" style="width: 100%">
-            <el-option v-for="item in TEAM_CATEGORY_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+            <el-option v-for="item in TEAM_CATEGORY_OPTIONS" :key="item.value" :label="t(item.labelKey)" :value="item.value" />
           </el-select>
         </el-form-item>
       </div>
 
-      <el-form-item v-if="form.shareType === 'url'" label="工具网址">
+      <el-form-item v-if="form.shareType === 'url'" :label="t('team.shareDialog.toolUrl')">
         <el-input v-model="form.url" placeholder="https://example.com/tool" />
       </el-form-item>
 
-      <el-form-item label="描述">
-        <el-input v-model="form.description" type="textarea" :rows="2" placeholder="简短说明这个资源解决什么问题" />
+      <el-form-item :label="t('team.shareDialog.description')">
+        <el-input v-model="form.description" type="textarea" :rows="2" :placeholder="t('team.shareDialog.descriptionPlaceholder')" />
       </el-form-item>
 
-      <el-form-item label="使用说明">
+      <el-form-item :label="t('team.shareDialog.usageGuide')">
         <el-input
           v-model="form.usageGuide"
           type="textarea"
           :rows="4"
-          placeholder="必填：说明安装方式、调用方式、输入输出、适用场景和注意事项。"
+          :placeholder="t('team.shareDialog.usageGuidePlaceholder')"
         />
       </el-form-item>
 
       <div v-if="form.shareType === 'skill'" class="form-grid">
-        <el-form-item label="来源 Agent">
-          <el-select v-model="form.originAgent" placeholder="请选择来源 Agent" clearable style="width: 100%">
+        <el-form-item :label="t('team.shareDialog.originAgent')">
+          <el-select v-model="form.originAgent" :placeholder="t('team.shareDialog.originAgentPlaceholder')" clearable style="width: 100%">
             <el-option v-for="agent in agentOptions" :key="agent" :label="agent" :value="agent" />
           </el-select>
         </el-form-item>
       </div>
 
-      <el-form-item v-if="form.shareType === 'skill'" label="兼容 Agent">
-        <el-input v-model="form.compatibleAgents" placeholder="逗号分隔，如 codex, claude-code, cursor" />
+      <el-form-item v-if="form.shareType === 'skill'" :label="t('team.shareDialog.compatibleAgents')">
+        <el-input v-model="form.compatibleAgents" :placeholder="t('team.shareDialog.compatibleAgentsPlaceholder')" />
       </el-form-item>
 
-      <el-form-item v-if="form.shareType === 'skill' && !uploadedZip" label="Skill 内容">
+      <el-form-item v-if="form.shareType === 'skill' && !uploadedZip" :label="t('team.shareDialog.skillContent')">
         <el-input
           v-model="form.bodyMd"
           type="textarea"
           :rows="7"
-          placeholder="SKILL.md 内容"
+          :placeholder="t('team.shareDialog.skillContentPlaceholder')"
         />
       </el-form-item>
 
       <section class="evaluation-panel">
         <div class="evaluation-head">
           <div>
-            <div class="evaluation-title">AI 安全与性能评估</div>
-            <p>总分 95 分以上才能提交分享。</p>
+            <div class="evaluation-title">{{ t('team.common.evalTitle') }}</div>
+            <p>{{ t('team.shareDialog.scoreHint') }}</p>
           </div>
-          <el-button type="primary" plain :loading="evaluating" @click="runEvaluation">开始评估</el-button>
+          <el-button type="primary" plain :loading="evaluating" @click="runEvaluation">{{ t('team.common.startEvaluation') }}</el-button>
         </div>
 
         <div class="form-grid evaluation-grid">
-          <el-form-item label="模型类型">
+          <el-form-item :label="t('team.common.modelType')">
             <el-segmented
               v-model="form.evaluationModelType"
               :options="[
-                { label: '部门模型', value: 'department' },
-                { label: '资源与配置的模型配置', value: 'personal' },
+                { label: t('team.common.deptModel'), value: 'department' },
+                { label: t('team.common.localResourceModelName'), value: 'personal' },
               ]"
             />
           </el-form-item>
 
-          <el-form-item label="评估模型">
+          <el-form-item :label="t('team.common.evaluationModel')">
             <el-select
               v-model="form.evaluationModelId"
-              placeholder="请选择评估模型"
+              :placeholder="t('team.common.selectEvaluationModel')"
               filterable
               style="width: 100%"
               :loading="modelLoading"
-              no-data-text="暂无可用模型，请先到资源与配置中启用模型配置"
+              :no-data-text="t('team.common.noAvailableModels')"
             >
               <el-option
                 v-for="model in filteredModels"
@@ -809,24 +811,24 @@ defineExpose({ open })
           </el-form-item>
         </div>
 
-        <el-form-item label="评估目标">
+        <el-form-item :label="t('team.shareDialog.evalTarget')">
           <div class="target-row">
             <template v-if="uploadedZip">
-              <el-tag type="info" effect="plain">上传 zip</el-tag>
+              <el-tag type="info" effect="plain">{{ t('team.shareDialog.uploadedZip') }}</el-tag>
               <el-input :model-value="uploadedZip.filename" readonly />
             </template>
             <template v-else>
               <el-segmented
                 v-model="form.evaluationTargetType"
                 :options="[
-                  { label: '目录', value: 'directory' },
-                  { label: '工具网址', value: 'url' },
+                  { label: t('team.shareDialog.directory'), value: 'directory' },
+                  { label: t('team.shareDialog.toolUrl'), value: 'url' },
                 ]"
               />
             </template>
             <template v-if="!uploadedZip && form.evaluationTargetType === 'directory'">
-              <el-input v-model="form.evaluationDirectory" readonly placeholder="请选择本地目录" />
-              <el-button @click="selectEvaluationDirectory">选择目录</el-button>
+              <el-input v-model="form.evaluationDirectory" readonly :placeholder="t('team.shareDialog.selectLocalDir')" />
+              <el-button @click="selectEvaluationDirectory">{{ t('team.shareDialog.selectDirectory') }}</el-button>
             </template>
             <el-input v-else-if="!uploadedZip" v-model="form.url" placeholder="https://example.com/tool" clearable />
           </div>
@@ -835,37 +837,36 @@ defineExpose({ open })
         <div v-if="evaluationResult" class="evaluation-result" :class="{ passed: evaluationResult.passed }">
           <div class="score-block">
             <strong>{{ evaluationResult.score }}</strong>
-            <span>综合分</span>
+            <span>{{ t('team.common.overallScore') }}</span>
           </div>
           <div class="score-detail">
             <div>{{ evaluationResult.summary }}</div>
             <small>
-              安全 {{ evaluationResult.securityScore }} / 性能 {{ evaluationResult.performanceScore }}
-              / 规则 {{ evaluationResult.heuristicScore }}
-              <template v-if="evaluationResult.llmScore !== undefined"> / 大模型 {{ evaluationResult.llmScore }}</template>
+              {{ t('team.common.scoreBreakdown', { security: evaluationResult.securityScore, performance: evaluationResult.performanceScore, heuristic: evaluationResult.heuristicScore }) }}
+              <template v-if="evaluationResult.llmScore !== undefined">{{ t('team.common.scoreBreakdownLlm', { llm: evaluationResult.llmScore }) }}</template>
             </small>
             <ul v-if="evaluationResult.requiredChanges.length">
-              <li v-for="item in evaluationResult.requiredChanges" :key="`required-${item}`">必须修改：{{ item }}</li>
+              <li v-for="item in evaluationResult.requiredChanges" :key="`required-${item}`">{{ t('team.common.requiredChange', { item }) }}</li>
             </ul>
             <ul v-if="evaluationResult.suggestions.length">
-              <li v-for="item in evaluationResult.suggestions" :key="`suggestion-${item}`">建议：{{ item }}</li>
+              <li v-for="item in evaluationResult.suggestions" :key="`suggestion-${item}`">{{ t('team.common.suggestion', { item }) }}</li>
             </ul>
             <ul v-if="evaluationResult.risks.length">
-              <li v-for="item in evaluationResult.risks" :key="`risk-${item}`">风险：{{ item }}</li>
+              <li v-for="item in evaluationResult.risks" :key="`risk-${item}`">{{ t('team.common.risk', { item }) }}</li>
             </ul>
             <ul v-if="evaluationResult.penalties.length">
-              <li v-for="item in evaluationResult.penalties" :key="`penalty-${item}`">规则扣分：{{ item }}</li>
+              <li v-for="item in evaluationResult.penalties" :key="`penalty-${item}`">{{ t('team.common.penalty', { item }) }}</li>
             </ul>
           </div>
         </div>
 
         <div v-if="evaluationResult?.scan" class="scan-summary">
-          <span>目录扫描</span>
+          <span>{{ t('team.shareDialog.directoryScan') }}</span>
           <strong>{{ evaluationResult.scan.skillCount || 0 }}</strong>
-          <span>个 Skills</span>
+          <span>{{ t('team.shareDialog.skillCountUnit') }}</span>
           <strong>{{ evaluationResult.scan.pythonFileCount || 0 }}</strong>
-          <span>个 Python 文件</span>
-          <small>扫描文件 {{ evaluationResult.scan.scannedFiles || 0 }} 个</small>
+          <span>{{ t('team.shareDialog.pythonFileCountUnit') }}</span>
+          <small>{{ t('team.shareDialog.scannedFiles', { n: evaluationResult.scan.scannedFiles || 0 }) }}</small>
         </div>
 
         <div v-if="evaluationResult?.agents?.length" class="agent-review-grid">
@@ -879,7 +880,7 @@ defineExpose({ open })
               <li v-for="item in agent.findings" :key="textValue(item)">{{ textValue(item) }}</li>
             </ul>
             <ul v-if="Array.isArray(agent.suggestions) && agent.suggestions.length">
-              <li v-for="item in agent.suggestions" :key="`agent-suggestion-${textValue(item)}`">建议：{{ textValue(item) }}</li>
+              <li v-for="item in agent.suggestions" :key="`agent-suggestion-${textValue(item)}`">{{ t('team.common.suggestion', { item: textValue(item) }) }}</li>
             </ul>
           </div>
         </div>
@@ -888,8 +889,8 @@ defineExpose({ open })
           <div v-for="skill in evaluationResult.skills" :key="textValue(skill.name)" class="skill-review-item">
             <strong>{{ textValue(skill.name) }}</strong>
             <span>{{ scoreValue(skill.score) }}</span>
-            <small v-if="Array.isArray(skill.risks) && skill.risks.length">风险：{{ skill.risks.map(textValue).join('；') }}</small>
-            <small v-if="Array.isArray(skill.suggestions) && skill.suggestions.length">建议：{{ skill.suggestions.map(textValue).join('；') }}</small>
+            <small v-if="Array.isArray(skill.risks) && skill.risks.length">{{ t('team.common.risk', { item: skill.risks.map(textValue).join(t('team.common.listSeparator')) }) }}</small>
+            <small v-if="Array.isArray(skill.suggestions) && skill.suggestions.length">{{ t('team.common.suggestion', { item: skill.suggestions.map(textValue).join(t('team.common.listSeparator')) }) }}</small>
           </div>
         </div>
 
@@ -897,16 +898,16 @@ defineExpose({ open })
           <div v-for="file in evaluationResult.pythonFiles" :key="textValue(file.path)" class="skill-review-item">
             <strong>{{ textValue(file.path) }}</strong>
             <span>{{ scoreValue(file.score) }}</span>
-            <small v-if="Array.isArray(file.risks) && file.risks.length">风险：{{ file.risks.map(textValue).join('；') }}</small>
-            <small v-if="Array.isArray(file.suggestions) && file.suggestions.length">建议：{{ file.suggestions.map(textValue).join('；') }}</small>
+            <small v-if="Array.isArray(file.risks) && file.risks.length">{{ t('team.common.risk', { item: file.risks.map(textValue).join(t('team.common.listSeparator')) }) }}</small>
+            <small v-if="Array.isArray(file.suggestions) && file.suggestions.length">{{ t('team.common.suggestion', { item: file.suggestions.map(textValue).join(t('team.common.listSeparator')) }) }}</small>
           </div>
         </div>
       </section>
     </el-form>
 
     <template #footer>
-      <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" :loading="sharing" :disabled="!evaluationResult?.passed" @click="doShare">提交分享</el-button>
+      <el-button @click="visible = false">{{ t('common.cancel') }}</el-button>
+      <el-button type="primary" :loading="sharing" :disabled="!evaluationResult?.passed" @click="doShare">{{ t('team.shareDialog.submit') }}</el-button>
     </template>
   </el-dialog>
 </template>

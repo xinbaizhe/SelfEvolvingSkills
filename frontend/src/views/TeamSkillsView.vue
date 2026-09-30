@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '@tauri-apps/api/core'
 import { useTeamStore } from '../stores/useTeamStore'
@@ -25,6 +26,7 @@ import LoginDialog from '../components/team/LoginDialog.vue'
 import ShareSkillDialog from '../components/team/ShareSkillDialog.vue'
 import EvolutionProposalDialog from '../components/team/EvolutionProposalDialog.vue'
 
+const { t } = useI18n()
 const store = useTeamStore()
 const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
 const shareDialog = ref<InstanceType<typeof ShareSkillDialog> | null>(null)
@@ -148,7 +150,7 @@ function openShare() {
     return
   }
   if (!shareDialog.value) {
-    ElMessage.error('分享窗口未加载，请刷新后重试')
+    ElMessage.error(t('team.skills.shareDialogUnavailable'))
     return
   }
   shareDialog.value.open()
@@ -164,7 +166,7 @@ async function loadEvolutions() {
     const res = await fetchEvolutions({ pageSize: '80' })
     evolutions.value = res.items
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载进化记录失败'))
+    ElMessage.error(getErrorMessage(e, t('team.skills.loadEvolutionsFailed')))
   } finally {
     evolutionsLoading.value = false
   }
@@ -180,19 +182,24 @@ function toggleEvolutions() {
 }
 
 async function reviewEvolution(evolution: TeamEvolution, status: 'approved' | 'rejected') {
-  const label = status === 'approved' ? '通过' : '拒绝'
+  const isApprove = status === 'approved'
+  const label = t(isApprove ? 'team.skills.approveLabel' : 'team.skills.rejectLabel')
   try {
-    await ElMessageBox.confirm(`确定${label}这条进化提案吗？`, '审核确认', {
-      confirmButtonText: label,
-      cancelButtonText: '取消',
-      type: status === 'approved' ? 'success' : 'warning',
-    })
+    await ElMessageBox.confirm(
+      t(isApprove ? 'team.skills.confirmApproved' : 'team.skills.confirmRejected'),
+      t('team.skills.reviewTitle'),
+      {
+        confirmButtonText: label,
+        cancelButtonText: t('common.cancel'),
+        type: isApprove ? 'success' : 'warning',
+      },
+    )
     await approveEvolution(evolution.id, { status })
-    ElMessage.success(`已${label}进化提案`)
+    ElMessage.success(t(isApprove ? 'team.skills.approvedDone' : 'team.skills.rejectedDone'))
     loadEvolutions()
-    if (status === 'approved') loadSkills()
+    if (isApprove) loadSkills()
   } catch (e: unknown) {
-    if (String(e) !== 'cancel') ElMessage.error(getErrorMessage(e, '操作失败'))
+    if (String(e) !== 'cancel') ElMessage.error(getErrorMessage(e, t('team.skills.operationFailed')))
   }
 }
 
@@ -202,7 +209,11 @@ function evolutionStatusTag(status: string) {
 }
 
 function evolutionStatusText(status: string) {
-  const map: Record<string, string> = { pending: '待审核', approved: '已通过', rejected: '已拒绝' }
+  const map: Record<string, string> = {
+    pending: t('team.skills.statusPending'),
+    approved: t('team.skills.statusApproved'),
+    rejected: t('team.skills.statusRejected'),
+  }
   return map[status] || status
 }
 
@@ -212,12 +223,12 @@ function onShared() {
 
 function categoryLabel(value: string): string {
   const found = TEAM_CATEGORY_OPTIONS.find(c => c.value === value)
-  return found ? found.label : (value || '其他')
+  return found ? t(found.labelKey) : (value || t('team.category.other'))
 }
 
 function typeLabel(sourceType: string): string {
   const found = TEAM_RESOURCE_TYPE_OPTIONS.find(item => item.value === sourceType)
-  return found?.label || sourceType || 'Skill'
+  return found ? t(found.labelKey) : (sourceType || 'Skill')
 }
 
 function isUrlResource(skill: TeamSkill) {
@@ -231,7 +242,7 @@ function extractUrl(skill: TeamSkill) {
 }
 
 function extractUsageGuide(body: string) {
-  const match = body.match(/(?:^|\n)##\s*使用说明\s*\n([\s\S]*?)(?=\n##\s+|$)/)
+  const match = body.match(/(?:^|\n)##\s*使用说明\s*\n([\s\S]*?)(?=\n##\s+|$)/) // i18n-exempt: parses the persisted Skill body heading written in components/team/ShareSkillDialog.vue (buildPayloadBody); the two must stay byte-identical
   return match?.[1]?.trim() || ''
 }
 
@@ -272,12 +283,12 @@ async function saveZipToLocal(blob: Blob, filename: string) {
       contentBase64: await blobToBase64(blob),
     })
     if (savedPath) {
-      ElMessage.success(`zip 已保存：${savedPath}`)
+      ElMessage.success(t('team.skills.zipSaved', { path: savedPath }))
     }
     return
   }
   downloadBlob(blob, filename)
-  ElMessage.success('zip 已生成')
+  ElMessage.success(t('team.skills.zipGenerated'))
 }
 
 function parseJsonArray(val: string): string[] {
@@ -297,7 +308,7 @@ function agentMatches(skill: TeamSkill): boolean {
 
 async function downloadSkillZip(skill: TeamSkill) {
   if (isUrlResource(skill)) {
-    ElMessage.warning('工具网址不支持下载 zip')
+    ElMessage.warning(t('team.skills.urlNoDownload'))
     return
   }
   downloading.value = skill.id
@@ -305,7 +316,7 @@ async function downloadSkillZip(skill: TeamSkill) {
     const detail = skill.bodyMd ? skill : await fetchTeamSkillDetail(skill.id)
     const body = detail.bodyMd || ''
     if (!body.trim()) {
-      ElMessage.warning('该 Skill 没有可下载的内容')
+      ElMessage.warning(t('team.skills.noDownloadableContent'))
       return
     }
     const uploadedZip = extractUploadedZip(detail)
@@ -318,7 +329,7 @@ async function downloadSkillZip(skill: TeamSkill) {
     const blob = createStoredZip([{ path: `${dir}/SKILL.md`, content: body }])
     await saveZipToLocal(blob, `${dir}.zip`)
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '下载 zip 失败'))
+    ElMessage.error(getErrorMessage(e, t('team.skills.downloadZipFailed')))
   } finally {
     downloading.value = null
   }
@@ -329,7 +340,7 @@ async function openToolUrl(skill: TeamSkill) {
     const detail = skill.bodyMd ? skill : await fetchTeamSkillDetail(skill.id)
     const url = extractUrl(detail)
     if (!url) {
-      ElMessage.warning('该资源没有可打开的网址')
+      ElMessage.warning(t('team.skills.noUrl'))
       return
     }
     if (window.__TAURI_INTERNALS__) {
@@ -338,7 +349,7 @@ async function openToolUrl(skill: TeamSkill) {
       window.open(url, '_blank', 'noopener,noreferrer')
     }
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '打开网址失败'))
+    ElMessage.error(getErrorMessage(e, t('team.skills.openUrlFailed')))
   }
 }
 
@@ -347,15 +358,15 @@ async function showUsageGuide(skill: TeamSkill) {
     const detail = skill.bodyMd ? skill : await fetchTeamSkillDetail(skill.id)
     const usageGuide = extractUsageGuide(detail.bodyMd || '')
     if (!usageGuide) {
-      ElMessage.warning('该 Skill 暂无使用说明')
+      ElMessage.warning(t('team.skills.noUsageGuide'))
       return
     }
-    await ElMessageBox.alert(usageGuide, `${detail.name} 使用说明`, {
-      confirmButtonText: '关闭',
+    await ElMessageBox.alert(usageGuide, t('team.skills.usageGuideTitle', { name: detail.name }), {
+      confirmButtonText: t('common.close'),
       customClass: 'usage-guide-message',
     })
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载使用说明失败'))
+    ElMessage.error(getErrorMessage(e, t('team.skills.loadUsageGuideFailed')))
   }
 }
 
@@ -371,16 +382,16 @@ onMounted(() => {
   <div class="page-view">
     <div class="page-header">
       <div>
-        <h2>团队 Skills</h2>
-        <p class="subtitle">浏览团队共享的 Skills，提交进化提案，或下载 zip 发给团队成员离线安装。</p>
+        <h2>{{ t('team.skills.title') }}</h2>
+        <p class="subtitle">{{ t('team.skills.subtitle') }}</p>
       </div>
       <div class="header-actions">
         <el-button @click="toggleEvolutions">
-          {{ showEvolutions ? '返回 Skills' : '进化记录' }}
+          {{ showEvolutions ? t('team.skills.backToSkills') : t('team.skills.evolutions') }}
           <el-tag v-if="pendingEvolutionCount" class="button-tag" size="small" type="warning">{{ pendingEvolutionCount }}</el-tag>
         </el-button>
-        <el-button type="primary" plain @click="openEvolution()">提案进化</el-button>
-        <el-button type="primary" @click="openShare">分享 Skill</el-button>
+        <el-button type="primary" plain @click="openEvolution()">{{ t('team.skills.proposeEvolution') }}</el-button>
+        <el-button type="primary" @click="openShare">{{ t('team.skills.shareSkill') }}</el-button>
       </div>
     </div>
 
@@ -388,17 +399,17 @@ onMounted(() => {
       <span class="offline-icon">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9s3.36 7.5 7.5 7.5 7.5-3.36 7.5-7.5S13.14 1.5 9 1.5zM9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </span>
-      离线模式 — 无法连接到服务器，请确认服务已启动。接口恢复后页面将自动重试。
-      <span v-if="cachedAt" class="offline-cache">当前展示缓存：{{ cachedAt }}</span>
-      <el-button size="small" @click="loadSkills">重试</el-button>
+      {{ t('team.skills.offline') }}
+      <span v-if="cachedAt" class="offline-cache">{{ t('team.skills.showingCache', { time: cachedAt }) }}</span>
+      <el-button size="small" @click="loadSkills">{{ t('common.retry') }}</el-button>
     </div>
 
     <template v-if="!store.isAuthenticated">
       <div class="login-prompt">
         <div class="login-card">
-          <h3>登录团队版</h3>
-          <p>登录后可以浏览、搜索、分享和下载团队共享的 Skills。</p>
-          <el-button type="primary" size="large" @click="loginDialog?.open()">登录团队版</el-button>
+          <h3>{{ t('app.actions.login') }}</h3>
+          <p>{{ t('team.skills.loginHint') }}</p>
+          <el-button type="primary" size="large" @click="loginDialog?.open()">{{ t('app.actions.login') }}</el-button>
         </div>
       </div>
     </template>
@@ -409,21 +420,21 @@ onMounted(() => {
           <el-input
             v-model="query"
             class="search-input"
-            placeholder="搜索 Skill 名称..."
+            :placeholder="t('team.skills.searchPlaceholder')"
             clearable
             @keyup.enter="onSearch"
           />
-          <el-select v-model="category" placeholder="分类" clearable @change="onSearch" style="width: 140px">
-            <el-option v-for="c in TEAM_CATEGORY_OPTIONS" :key="c.value" :label="c.label" :value="c.value" />
+          <el-select v-model="category" :placeholder="t('team.skills.categoryFilter')" clearable @change="onSearch" style="width: 140px">
+            <el-option v-for="c in TEAM_CATEGORY_OPTIONS" :key="c.value" :label="t(c.labelKey)" :value="c.value" />
           </el-select>
-          <el-select v-model="resourceType" placeholder="资源类型" clearable @change="onSearch" style="width: 140px">
-            <el-option v-for="item in TEAM_RESOURCE_TYPE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+          <el-select v-model="resourceType" :placeholder="t('team.skills.resourceTypeFilter')" clearable @change="onSearch" style="width: 140px">
+            <el-option v-for="item in TEAM_RESOURCE_TYPE_OPTIONS" :key="item.value" :label="t(item.labelKey)" :value="item.value" />
           </el-select>
           <el-tree-select
             v-model="deptId"
             :data="deptTree"
             :props="{ value: 'id', label: 'label', children: 'children' }"
-            placeholder="所属部门"
+            :placeholder="t('team.skills.deptFilter')"
             clearable
             filterable
             check-strictly
@@ -431,17 +442,17 @@ onMounted(() => {
             popper-class="dept-tree-popper"
             @change="onSearch"
           />
-          <el-button type="primary" :loading="loading" @click="onSearch">搜索</el-button>
-          <el-button @click="resetFilters">重置</el-button>
+          <el-button type="primary" :loading="loading" @click="onSearch">{{ t('common.search') }}</el-button>
+          <el-button @click="resetFilters">{{ t('team.skills.reset') }}</el-button>
           <el-button :type="hasAdvancedFilter ? 'warning' : 'default'" text @click="showAdvanced = !showAdvanced">
-            {{ showAdvanced ? '收起筛选' : '更多筛选' }}
+            {{ showAdvanced ? t('team.skills.collapseFilters') : t('team.skills.moreFilters') }}
             <span v-if="hasAdvancedFilter" class="filter-dot"></span>
           </el-button>
         </div>
 
         <div v-show="showAdvanced" class="toolbar-advanced">
-          <span class="filter-label">岗位</span>
-          <el-select v-model="postId" placeholder="选择岗位" clearable @change="onSearch" style="width: 160px">
+          <span class="filter-label">{{ t('team.skills.post') }}</span>
+          <el-select v-model="postId" :placeholder="t('team.skills.selectPost')" clearable @change="onSearch" style="width: 160px">
             <el-option v-for="p in postList" :key="p.postId" :label="p.postName" :value="p.postId" />
           </el-select>
           <span class="filter-label">Agent</span>
@@ -462,15 +473,15 @@ onMounted(() => {
             </div>
           </div>
 
-          <p class="skill-desc">{{ skill.description || '暂无描述' }}</p>
+          <p class="skill-desc">{{ skill.description || t('team.skills.noDescription') }}</p>
 
           <div class="card-meta">
             <span>v{{ skill.version }}</span>
-            <span>使用 {{ skill.usageCount ?? 0 }} 次</span>
-            <span v-if="skill.avgScore">评分 {{ (skill.avgScore * 100).toFixed(0) }}</span>
+            <span>{{ t('team.skills.usageCount', { n: skill.usageCount ?? 0 }) }}</span>
+            <span v-if="skill.avgScore">{{ t('team.skills.rating', { score: (skill.avgScore * 100).toFixed(0) }) }}</span>
             <span v-if="skill.originAgent">{{ skill.originAgent }}</span>
-            <span v-if="skill.authorName || skill.createdBy">创建人 {{ skill.authorName || skill.createdBy }}</span>
-            <span v-if="skill.createdAt">创建 {{ skill.createdAt.slice(0, 10) }}</span>
+            <span v-if="skill.authorName || skill.createdBy">{{ t('team.skills.creator', { name: skill.authorName || skill.createdBy }) }}</span>
+            <span v-if="skill.createdAt">{{ t('team.skills.createdAt', { date: skill.createdAt.slice(0, 10) }) }}</span>
           </div>
 
           <div v-if="!isUrlResource(skill) && parseJsonArray(skill.compatibleAgents).length" class="compat-row">
@@ -481,7 +492,7 @@ onMounted(() => {
           </div>
 
           <div v-if="!isUrlResource(skill) && parseJsonArray(skill.compatibleModels).length" class="compat-row">
-            <span class="compat-label">模型</span>
+            <span class="compat-label">{{ t('team.skills.model') }}</span>
             <el-tag v-for="model in parseJsonArray(skill.compatibleModels)" :key="model" size="small" effect="plain">
               {{ model }}
             </el-tag>
@@ -490,30 +501,30 @@ onMounted(() => {
           <div class="card-actions">
             <div class="action-buttons">
               <el-button v-if="isUrlResource(skill)" size="small" text type="primary" @click="openToolUrl(skill)">
-                打开网址
+                {{ t('team.skills.openUrl') }}
               </el-button>
               <el-button v-else size="small" text type="primary" :loading="downloading === skill.id" @click="downloadSkillZip(skill)">
-                {{ hasUploadedZip(skill) ? '下载原始 zip' : '下载为 zip' }}
+                {{ hasUploadedZip(skill) ? t('team.skills.downloadOriginalZip') : t('team.skills.downloadAsZip') }}
               </el-button>
-              <el-button size="small" text type="primary" @click="showUsageGuide(skill)">使用说明</el-button>
-              <el-button v-if="!isUrlResource(skill)" size="small" text type="primary" @click="openEvolution(skill.id)">提案进化</el-button>
+              <el-button size="small" text type="primary" @click="showUsageGuide(skill)">{{ t('team.skills.usageGuide') }}</el-button>
+              <el-button v-if="!isUrlResource(skill)" size="small" text type="primary" @click="openEvolution(skill.id)">{{ t('team.skills.proposeEvolution') }}</el-button>
             </div>
           </div>
         </article>
 
         <div v-if="!loading && displayedSkills.length === 0" class="empty-state">
-          <p>暂无团队 Skills</p>
-          <p class="hint">点击“分享 Skill”将本地 Skill 提交到团队，也可以用进化提案改进已有 Skill。</p>
+          <p>{{ t('team.skills.empty') }}</p>
+          <p class="hint">{{ t('team.skills.emptyHint') }}</p>
         </div>
       </div>
 
       <section v-if="showEvolutions" v-loading="evolutionsLoading" class="evolutions-section">
         <div class="section-title">
           <div>
-            <h3>协同进化记录</h3>
-            <p>跟踪每一次提案、审核状态和对应 Skill，方便团队沉淀版本演进。</p>
+            <h3>{{ t('team.skills.evolutionsTitle') }}</h3>
+            <p>{{ t('team.skills.evolutionsSubtitle') }}</p>
           </div>
-          <el-button size="small" @click="loadEvolutions">刷新</el-button>
+          <el-button size="small" @click="loadEvolutions">{{ t('common.refresh') }}</el-button>
         </div>
 
         <div class="evolution-list">
@@ -523,24 +534,24 @@ onMounted(() => {
                 <span>#{{ item.id }} · Skill {{ item.skillId }}</span>
                 <el-tag :type="evolutionStatusTag(item.status)" size="small">{{ evolutionStatusText(item.status) }}</el-tag>
               </div>
-              <p class="evolution-reason">{{ item.reason || '未填写改进理由' }}</p>
+              <p class="evolution-reason">{{ item.reason || t('team.skills.noReason') }}</p>
               <div class="evolution-meta">
-                <span>{{ item.previousVersion || '未知版本' }}</span>
+                <span>{{ item.previousVersion || t('team.skills.unknownVersion') }}</span>
                 <span>{{ item.createdAt?.slice(0, 16) || '' }}</span>
-                <span v-if="item.reviewedAt">审核于 {{ item.reviewedAt.slice(0, 16) }}</span>
+                <span v-if="item.reviewedAt">{{ t('team.skills.reviewedAt', { time: item.reviewedAt.slice(0, 16) }) }}</span>
               </div>
             </div>
             <div class="evolution-actions">
               <template v-if="item.status === 'pending'">
-                <el-button size="small" type="success" plain @click="reviewEvolution(item, 'approved')">通过</el-button>
-                <el-button size="small" type="danger" plain @click="reviewEvolution(item, 'rejected')">拒绝</el-button>
+                <el-button size="small" type="success" plain @click="reviewEvolution(item, 'approved')">{{ t('team.skills.approveLabel') }}</el-button>
+                <el-button size="small" type="danger" plain @click="reviewEvolution(item, 'rejected')">{{ t('team.skills.rejectLabel') }}</el-button>
               </template>
-              <span v-else class="muted-text">已处理</span>
+              <span v-else class="muted-text">{{ t('team.skills.processed') }}</span>
             </div>
           </article>
         </div>
 
-        <div v-if="!evolutionsLoading && evolutions.length === 0" class="empty-hint">暂无进化记录</div>
+        <div v-if="!evolutionsLoading && evolutions.length === 0" class="empty-hint">{{ t('team.skills.evolutionsEmpty') }}</div>
       </section>
 
       <div v-if="!showEvolutions && total > perPage" class="pagination-row">

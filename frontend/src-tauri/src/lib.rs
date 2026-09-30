@@ -216,6 +216,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             health,
+            get_system_locale,
             open_external_url,
             configure_claude_code_model,
             api_request,
@@ -256,6 +257,36 @@ pub(crate) fn process_start_time() -> i64 {
 #[tauri::command]
 fn health() -> ApiResponse<Value> {
     ApiResponse::ok(json!({ "status": "ok", "runtime": "tauri-rust", "start_time": process_start_time() }))
+}
+
+/// The user's preferred UI locale as a BCP-47-ish tag, e.g. `zh-CN` or `de-DE`.
+///
+/// Read from the environment rather than from the webview: on Linux
+/// `navigator.language` frequently ignores `LANG`/`LC_*`, which is exactly the
+/// case this exists to cover. Returns an empty string when nothing is set, so
+/// the frontend can fall through to `navigator.language`.
+///
+/// Windows does not populate these variables under normal use, so the frontend
+/// fallback does the real work there.
+#[tauri::command]
+fn get_system_locale() -> String {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(|value| normalize_locale(&value))
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+/// Strips the encoding (`.UTF-8`) and modifier (`@euro`) suffixes, and maps the
+/// POSIX `C`/`POSIX` placeholders to an empty string so they are skipped rather
+/// than being reported as a locale literally named "C".
+fn normalize_locale(raw: &str) -> String {
+    let stripped = raw.split(['.', '@']).next().unwrap_or("").trim();
+    if stripped.is_empty() || stripped == "C" || stripped == "POSIX" {
+        return String::new();
+    }
+    stripped.replace('_', "-")
 }
 
 #[tauri::command]
@@ -795,4 +826,43 @@ pub(crate) fn count_where(conn: &Connection, table: &str, clause: &str) -> Resul
         |row| row.get(0),
     )
     .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use super::normalize_locale;
+
+    #[test]
+    fn strips_encoding_suffix() {
+        assert_eq!(normalize_locale("zh_CN.UTF-8"), "zh-CN");
+        assert_eq!(normalize_locale("en_US.utf8"), "en-US");
+    }
+
+    #[test]
+    fn strips_modifier_suffix() {
+        assert_eq!(normalize_locale("de_DE.UTF-8@euro"), "de-DE");
+        assert_eq!(normalize_locale("sr_RS@latin"), "sr-RS");
+    }
+
+    #[test]
+    fn passes_through_bare_language() {
+        assert_eq!(normalize_locale("zh"), "zh");
+        assert_eq!(normalize_locale("en_GB"), "en-GB");
+    }
+
+    /// `C` and `POSIX` are real POSIX locale names, but reporting them would
+    /// make the frontend treat "C" as a language tag instead of falling through
+    /// to `navigator.language`.
+    #[test]
+    fn treats_c_and_posix_as_unset() {
+        assert_eq!(normalize_locale("C"), "");
+        assert_eq!(normalize_locale("C.UTF-8"), "");
+        assert_eq!(normalize_locale("POSIX"), "");
+    }
+
+    #[test]
+    fn treats_blank_as_unset() {
+        assert_eq!(normalize_locale(""), "");
+        assert_eq!(normalize_locale("   "), "");
+    }
 }

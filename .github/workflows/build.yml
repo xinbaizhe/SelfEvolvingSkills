@@ -9,6 +9,21 @@ permissions:
   contents: write
 
 jobs:
+  # Guards the English-default UI against regression: a hardcoded Chinese string
+  # is invisible to the type checker, and a one-sided catalog only shows up as
+  # untranslated text at runtime. Deliberately not a `needs:` of `release`, so a
+  # cosmetic miss here cannot block shipping an urgent fix.
+  i18n:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for hardcoded Chinese
+        run: bash scripts/check-i18n.sh
+      - name: Check en/zh-CN key parity
+        run: node scripts/check-i18n-keys.mjs
+      - name: Check every t() key resolves
+        run: node scripts/check-i18n-usage.mjs
+
   # Windows + macOS. Linux is not here: it needs `container:`, which is a
   # job-level field with no `if:`, so it cannot be conditioned per matrix entry.
   build:
@@ -214,6 +229,17 @@ jobs:
     needs: [build, build-linux]
     runs-on: ubuntu-latest
     steps:
+      # Checkout must come first. It runs with `clean: true`, which deletes
+      # untracked files - placed after the merge step below it wiped
+      # `dist/latest.json` before the commit-back could see it, so that step was
+      # skipped on every release and master's latest.json stayed stale.
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          # Full history: committing on top of a shallow clone can be rejected.
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/download-artifact@v4
 
       - name: Collect release assets
@@ -274,15 +300,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/checkout@v4
-        with:
-          ref: master
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Commit latest.json to repo (for jsDelivr mirror)
-        if: hashFiles('dist/latest.json') != ''
         shell: bash
         run: |
+          # Checked here rather than in an `if:` so the skip is visible in the
+          # log with a reason, instead of the step silently not running.
+          if [ ! -f dist/latest.json ]; then
+            echo "::warning::dist/latest.json was not produced - skipping the repo commit"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cp dist/latest.json latest.json

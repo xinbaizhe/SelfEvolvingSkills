@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { updateLlmConfig } from '../../api/admin'
 import {
@@ -14,11 +15,11 @@ import {
 } from '../../api/team'
 import LoginDialog from '../../components/team/LoginDialog.vue'
 import { useTeamStore } from '../../stores/useTeamStore'
-import { getErrorMessage } from '../../utils/error'
+import { failureCode, getErrorMessage } from '../../utils/error'
 
 interface ProviderPreset {
   key: string
-  label: string
+  labelKey: string
   baseUrl: string
   anthropicBaseUrl?: string
   models: string[]
@@ -27,15 +28,16 @@ interface ProviderPreset {
 }
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
-  { key: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.1', 'o3', 'gpt-4.1'], defaultModel: 'gpt-5.5' },
-  { key: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', anthropicBaseUrl: 'https://api.deepseek.com/anthropic', models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-v4-pro' },
-  { key: 'bailian', label: '阿里百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen3.7-max', 'qwen3.6-max-preview', 'qwen3.6-plus', 'qwen-plus', 'qwen-max'], defaultModel: 'qwen3.7-max' },
-  { key: 'zhipu', label: '智谱 AI (GLM)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic', models: ['glm-5.1', 'glm-5', 'glm-4.7-flash', 'glm-4.6'], defaultModel: 'glm-5.1' },
-  { key: 'moonshot', label: '月之暗面 (Moonshot)', baseUrl: 'https://api.moonshot.cn/v1', models: ['kimi-k2.6', 'kimi-k2.5', 'moonshot-v1-128k', 'moonshot-v1-32k'], defaultModel: 'kimi-k2.6' },
-  { key: 'minimax', label: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1', anthropicBaseUrl: 'https://api.minimaxi.com/anthropic', models: ['MiniMax-M2.7'], defaultModel: 'MiniMax-M2.7', apiFormat: 'anthropic' },
-  { key: 'custom', label: '自定义兼容接口', baseUrl: '', models: [], defaultModel: '' },
+  { key: 'openai', labelKey: 'admin.common.providerPreset.openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.1', 'o3', 'gpt-4.1'], defaultModel: 'gpt-5.5' },
+  { key: 'deepseek', labelKey: 'admin.common.providerPreset.deepseek', baseUrl: 'https://api.deepseek.com', anthropicBaseUrl: 'https://api.deepseek.com/anthropic', models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-v4-pro' },
+  { key: 'bailian', labelKey: 'admin.common.providerPreset.bailian', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen3.7-max', 'qwen3.6-max-preview', 'qwen3.6-plus', 'qwen-plus', 'qwen-max'], defaultModel: 'qwen3.7-max' },
+  { key: 'zhipu', labelKey: 'admin.common.providerPreset.zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic', models: ['glm-5.1', 'glm-5', 'glm-4.7-flash', 'glm-4.6'], defaultModel: 'glm-5.1' },
+  { key: 'moonshot', labelKey: 'admin.common.providerPreset.moonshot', baseUrl: 'https://api.moonshot.cn/v1', models: ['kimi-k2.6', 'kimi-k2.5', 'moonshot-v1-128k', 'moonshot-v1-32k'], defaultModel: 'kimi-k2.6' },
+  { key: 'minimax', labelKey: 'admin.common.providerPreset.minimax', baseUrl: 'https://api.minimaxi.com/v1', anthropicBaseUrl: 'https://api.minimaxi.com/anthropic', models: ['MiniMax-M2.7'], defaultModel: 'MiniMax-M2.7', apiFormat: 'anthropic' },
+  { key: 'custom', labelKey: 'admin.common.providerPreset.custom', baseUrl: '', models: [], defaultModel: '' },
 ]
 
+const { t } = useI18n()
 const store = useTeamStore()
 const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
 const loading = ref(false)
@@ -93,7 +95,7 @@ async function loadConfigs() {
     if (isConnectionError(e)) {
       offline.value = true
     } else {
-      ElMessage.error(getErrorMessage(e, '加载团队模型列表失败'))
+      ElMessage.error(getErrorMessage(e, t('admin.modelConfig.loadTeamModelsFailed')))
     }
   } finally {
     loading.value = false
@@ -110,7 +112,7 @@ async function loadPersonalRecords() {
     if (isConnectionError(e)) {
       offline.value = true
     } else {
-      ElMessage.error(getErrorMessage(e, '加载转赠记录失败'))
+      ElMessage.error(getErrorMessage(e, t('admin.modelConfig.loadGiftRecordsFailed')))
     }
   } finally {
     recordsLoading.value = false
@@ -121,14 +123,27 @@ async function loadAll() {
   await Promise.all([loadConfigs(), loadPersonalRecords()])
 }
 
+/**
+ * Transport failures the team API raises, as catalog codes. Keying on the code
+ * means a translated envelope still reads as a connection problem; the English
+ * substrings below cover reqwest's own text, which no catalog reaches.
+ */
+const CONNECTION_ERROR_CODES = new Set([
+  'team.connectFailed',
+  'team.loginRequestFailed',
+  'team.apiRequestFailed',
+  'team.refreshFailed',
+  'team.downloadRequestFailed',
+])
+
 function isConnectionError(e: unknown): boolean {
+  if (CONNECTION_ERROR_CODES.has(failureCode(e) ?? '')) return true
   const msg = e instanceof Error ? e.message : String(e)
   return msg.includes('error sending request for url')
     || msg.includes('ConnectError')
     || msg.includes('connection refused')
     || msg.includes('NetworkError')
     || msg.includes('fetch failed')
-    || msg.includes('请求失败')
     || msg.includes('Failed to fetch')
 }
 
@@ -166,11 +181,11 @@ function resetShareForm() {
 
 async function submitPersonalModel() {
   if (!selectedRecipient.value) {
-    ElMessage.warning('请先查询并选择接收用户')
+    ElMessage.warning(t('admin.modelConfig.selectRecipientFirst'))
     return
   }
   if (!shareForm.name.trim() || !shareForm.baseUrl.trim() || !shareForm.model.trim() || !shareForm.apiKey.trim()) {
-    ElMessage.warning('请填写名称、Base URL、模型和 API Key')
+    ElMessage.warning(t('admin.modelConfig.fillFields'))
     return
   }
   sharing.value = true
@@ -183,11 +198,11 @@ async function submitPersonalModel() {
       apiKeyHash: shareForm.apiKey.trim(),
       recipientId: selectedRecipient.value.userId,
     })
-    ElMessage.success('已转赠个人 API 模型')
+    ElMessage.success(t('admin.modelConfig.giftSuccess'))
     resetShareForm()
     await loadAll()
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '转赠失败'))
+    ElMessage.error(getErrorMessage(e, t('admin.modelConfig.giftFailed')))
   } finally {
     sharing.value = false
   }
@@ -195,7 +210,7 @@ async function submitPersonalModel() {
 
 async function queryUsers() {
   if (!userKeyword.value.trim()) {
-    ElMessage.warning('请输入用户名称')
+    ElMessage.warning(t('admin.modelConfig.enterUserName'))
     return
   }
   userSearching.value = true
@@ -203,12 +218,12 @@ async function queryUsers() {
   try {
     userResults.value = await searchTeamUsers(userKeyword.value)
     if (userResults.value.length === 0) {
-      ElMessage.warning('未查询到用户')
+      ElMessage.warning(t('admin.modelConfig.noUserFound'))
     } else if (userResults.value.length === 1) {
       selectedRecipient.value = userResults.value[0]
     }
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '查询用户失败'))
+    ElMessage.error(getErrorMessage(e, t('admin.modelConfig.searchUserFailed')))
   } finally {
     userSearching.value = false
   }
@@ -220,10 +235,10 @@ function selectRecipient(user: TeamUserItem) {
 
 async function destroyRecord(row: TeamModelConfig) {
   try {
-    await ElMessageBox.confirm(`确定销毁转赠记录「${row.name}」？销毁后接收人将无法再通过团队模型一键配置该 API。`, '销毁转赠记录', {
+    await ElMessageBox.confirm(t('admin.modelConfig.destroyConfirm', { name: row.name }), t('admin.modelConfig.destroyTitle'), {
       type: 'warning',
-      confirmButtonText: '销毁',
-      cancelButtonText: '取消',
+      confirmButtonText: t('admin.modelConfig.destroy'),
+      cancelButtonText: t('common.cancel'),
     })
   } catch {
     return
@@ -231,10 +246,10 @@ async function destroyRecord(row: TeamModelConfig) {
   destroyingId.value = row.id
   try {
     await destroyPersonalModel(row.id)
-    ElMessage.success('转赠记录已销毁')
+    ElMessage.success(t('admin.modelConfig.destroySuccess'))
     await loadAll()
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '销毁失败'))
+    ElMessage.error(getErrorMessage(e, t('admin.modelConfig.destroyFailed')))
   } finally {
     destroyingId.value = null
   }
@@ -242,11 +257,11 @@ async function destroyRecord(row: TeamModelConfig) {
 
 function openApplyDialog(row: TeamModelConfig) {
   if (!row.baseUrl || !row.model) {
-    ElMessage.warning('该模型缺少 Base URL 或模型名')
+    ElMessage.warning(t('admin.modelConfig.missingBaseUrlOrModel'))
     return
   }
   if (!row.apiKeyHash) {
-    ElMessage.warning('该模型未包含可用 API Key，无法一键配置')
+    ElMessage.warning(t('admin.modelConfig.missingApiKey'))
     return
   }
   selectedModel.value = row
@@ -264,7 +279,7 @@ async function applyToSystemConfig(row: TeamModelConfig) {
     llm_api_format: row.provider === 'anthropic' ? 'anthropic' : 'openai',
   })
   if (!res.success) {
-    throw new Error(res.error || '配置失败')
+    throw new Error(res.error || t('admin.modelConfig.configFailed'))
   }
 }
 
@@ -284,14 +299,14 @@ async function confirmApplyModel() {
   try {
     if (configTarget.value === 'system') {
       await applyToSystemConfig(row)
-      ElMessage.success(`已写入系统管理资源配置 LLM：${row.name}`)
+      ElMessage.success(t('admin.modelConfig.appliedToSystem', { name: row.name }))
     } else {
       await applyToClaudeCode(row)
-      ElMessage.success(`已写入 Claude Code：${row.name}`)
+      ElMessage.success(t('admin.modelConfig.appliedToClaude', { name: row.name }))
     }
     configDialogVisible.value = false
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '配置失败'))
+    ElMessage.error(getErrorMessage(e, t('admin.modelConfig.configFailed')))
   } finally {
     applyingId.value = null
   }
@@ -304,26 +319,26 @@ onMounted(loadAll)
   <div class="model-config-panel">
     <div class="panel-header">
       <div>
-        <h3>团队模型</h3>
-        <p>登录团队版后查看部门模型和个人转赠模型，并可一键写入本地大模型配置。</p>
+        <h3>{{ t('admin.modelConfig.title') }}</h3>
+        <p>{{ t('admin.modelConfig.subtitle') }}</p>
       </div>
-      <el-button size="small" :loading="loading || recordsLoading" @click="loadAll">刷新</el-button>
+      <el-button size="small" :loading="loading || recordsLoading" @click="loadAll">{{ t('common.refresh') }}</el-button>
     </div>
 
     <div v-if="offline" class="offline-banner">
       <span class="offline-icon">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9s3.36 7.5 7.5 7.5 7.5-3.36 7.5-7.5S13.14 1.5 9 1.5zM9 6v4M9 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </span>
-      离线模式 — 无法连接到服务器，请确认服务已启动。接口恢复后页面将自动重试。
-      <el-button size="small" @click="loadAll">重试</el-button>
+      {{ t('admin.modelConfig.offline') }}
+      <el-button size="small" @click="loadAll">{{ t('common.retry') }}</el-button>
     </div>
 
     <template v-if="!store.isAuthenticated">
       <div class="login-prompt">
         <div class="login-card">
-          <h3>团队模型</h3>
-          <p>登录团队版后可查看部门模型和个人转赠 API 模型。</p>
-          <el-button type="primary" @click="loginDialog?.open()">登录团队版</el-button>
+          <h3>{{ t('admin.modelConfig.title') }}</h3>
+          <p>{{ t('admin.modelConfig.loginPrompt') }}</p>
+          <el-button type="primary" @click="loginDialog?.open()">{{ t('app.actions.login') }}</el-button>
         </div>
       </div>
     </template>
@@ -333,75 +348,75 @@ onMounted(loadAll)
         <el-input
           v-model="searchName"
           clearable
-          placeholder="按名称查询部门或个人转赠模型"
+          :placeholder="t('admin.modelConfig.searchPlaceholder')"
           @keyup.enter="loadConfigs"
           @clear="loadConfigs"
         />
-        <el-button type="primary" :loading="loading" @click="loadConfigs">查询</el-button>
+        <el-button type="primary" :loading="loading" @click="loadConfigs">{{ t('common.search') }}</el-button>
       </div>
 
       <el-table :data="configs" v-loading="loading" size="small" style="width: 100%">
-        <el-table-column prop="name" label="名称" width="150" />
-        <el-table-column label="来源" width="110">
+        <el-table-column prop="name" :label="t('admin.common.name')" width="150" />
+        <el-table-column :label="t('admin.common.source')" width="110">
           <template #default="{ row }">
             <el-tag :type="row.sourceType === 'personal' ? 'warning' : 'success'" size="small">
-              {{ row.sourceType === 'personal' ? '个人转赠' : '部门' }}
+              {{ row.sourceType === 'personal' ? t('admin.modelConfig.personal') : t('admin.modelConfig.department') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="provider" label="提供商" width="120" />
-        <el-table-column prop="model" label="模型" min-width="180" />
+        <el-table-column prop="provider" :label="t('admin.common.provider')" width="120" />
+        <el-table-column prop="model" :label="t('admin.common.model')" min-width="180" />
         <el-table-column prop="baseUrl" label="Base URL" min-width="220">
           <template #default="{ row }">
             <span class="mono">{{ row.baseUrl || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="部门名称" width="140">
+        <el-table-column :label="t('admin.modelConfig.colDeptName')" width="140">
           <template #default="{ row }">
-            {{ row.deptName || (row.sourceType === 'personal' ? '个人转赠' : '-') }}
+            {{ row.deptName || (row.sourceType === 'personal' ? t('admin.modelConfig.personal') : '-') }}
           </template>
         </el-table-column>
-        <el-table-column label="转赠人" width="120">
+        <el-table-column :label="t('admin.modelConfig.colGifter')" width="120">
           <template #default="{ row }">{{ row.createdByName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="接收人" width="120">
+        <el-table-column :label="t('admin.modelConfig.colRecipient')" width="120">
           <template #default="{ row }">{{ row.recipientName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column :label="t('admin.common.action')" width="120" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" :loading="applyingId === row.id" @click="openApplyDialog(row)">
-              一键配置
+              {{ t('admin.modelConfig.oneClick') }}
             </el-button>
           </template>
         </el-table-column>
       </el-table>
 
       <div v-if="!loading && configs.length === 0" class="empty-hint">
-        暂无可用模型。可联系管理员新增部门模型，或在下方转赠个人 API 模型。
+        {{ t('admin.modelConfig.emptyHint') }}
       </div>
 
       <div class="share-card">
         <div class="share-head">
-          <h3>个人转赠 API 模型</h3>
-          <p>把自己的 Base URL 和 API Key 转赠给别人；其他人可按名称查询并一键配置。</p>
+          <h3>{{ t('admin.modelConfig.giftTitle') }}</h3>
+          <p>{{ t('admin.modelConfig.giftSubtitle') }}</p>
         </div>
         <el-form label-width="90px" class="share-form">
           <el-row :gutter="12">
             <el-col :xs="24">
-              <el-form-item label="接收用户">
+              <el-form-item :label="t('admin.modelConfig.recipientUser')">
                 <div class="user-search">
                   <el-input
                     v-model="userKeyword"
-                    placeholder="输入手机号或昵称模糊查询"
+                    :placeholder="t('admin.modelConfig.userSearchPlaceholder')"
                     clearable
                     @keyup.enter="queryUsers"
                     @clear="selectedRecipient = null"
                   />
-                  <el-button :loading="userSearching" @click="queryUsers">查询用户</el-button>
+                  <el-button :loading="userSearching" @click="queryUsers">{{ t('admin.modelConfig.searchUsers') }}</el-button>
                 </div>
                 <div v-if="userResults.length > 0" class="user-results">
                   <div class="user-search-hint">
-                    仅显示前 10 条，结果过多时请输入更精确的手机号或昵称。
+                    {{ t('admin.modelConfig.userSearchHint') }}
                   </div>
                   <button
                     v-for="user in userResults"
@@ -412,24 +427,24 @@ onMounted(loadAll)
                     @click="selectRecipient(user)"
                   >
                     <div class="user-main">
-                      <strong>手机号：{{ user.userName }}</strong>
-                      <span>昵称：{{ user.nickName || '未设置昵称' }}</span>
+                      <strong>{{ t('admin.modelConfig.phone', { phone: user.userName }) }}</strong>
+                      <span>{{ t('admin.modelConfig.nickname', { name: user.nickName || t('admin.modelConfig.noNickname') }) }}</span>
                     </div>
-                    <small>{{ user.deptName || '无部门' }}</small>
+                    <small>{{ user.deptName || t('admin.modelConfig.noDept') }}</small>
                   </button>
                 </div>
                 <div v-if="selectedRecipient" class="selected-user">
-                  已选择：{{ selectedRecipient.userName }}（{{ selectedRecipient.deptName || '无部门' }}）
+                  {{ t('admin.modelConfig.selected', { name: selectedRecipient.userName, dept: selectedRecipient.deptName || t('admin.modelConfig.noDept') }) }}
                 </div>
               </el-form-item>
             </el-col>
             <el-col :xs="24" :md="12">
-              <el-form-item label="名称">
-                <el-input v-model="shareForm.name" placeholder="例如 张三的 DeepSeek" maxlength="100" />
+              <el-form-item :label="t('admin.common.name')">
+                <el-input v-model="shareForm.name" :placeholder="t('admin.modelConfig.namePlaceholder')" maxlength="100" />
               </el-form-item>
             </el-col>
             <el-col :xs="24" :md="12">
-              <el-form-item label="提供商">
+              <el-form-item :label="t('admin.common.provider')">
                 <el-select
                   v-model="shareForm.provider"
                   filterable
@@ -441,16 +456,16 @@ onMounted(loadAll)
                   <el-option
                     v-for="provider in PROVIDER_PRESETS"
                     :key="provider.key"
-                    :label="provider.label"
+                    :label="t(provider.labelKey)"
                     :value="provider.key"
                   />
                 </el-select>
               </el-form-item>
             </el-col>
             <el-col :xs="24" :md="12">
-              <el-form-item label="API 格式">
+              <el-form-item :label="t('admin.common.apiFormat')">
                 <el-select v-model="shareApiFormat" style="width: 100%" @change="onShareApiFormatChange">
-                  <el-option label="OpenAI 兼容" value="openai" />
+                  <el-option :label="t('admin.modelConfig.apiFormatOpenai')" value="openai" />
                   <el-option label="Anthropic" value="anthropic" />
                 </el-select>
               </el-form-item>
@@ -459,7 +474,7 @@ onMounted(loadAll)
               <el-form-item label="Base URL">
                 <el-select
                   v-model="shareForm.baseUrl"
-                  placeholder="选择或输入 Base URL"
+                  :placeholder="t('admin.modelConfig.baseUrlPlaceholder')"
                   style="width: 100%"
                   filterable
                   allow-create
@@ -475,10 +490,10 @@ onMounted(loadAll)
               </el-form-item>
             </el-col>
             <el-col :xs="24" :md="12">
-              <el-form-item label="模型">
+              <el-form-item :label="t('admin.common.model')">
                 <el-select
                   v-model="shareForm.model"
-                  placeholder="选择或输入模型"
+                  :placeholder="t('admin.common.modelPlaceholder')"
                   style="width: 100%"
                   filterable
                   allow-create
@@ -495,56 +510,56 @@ onMounted(loadAll)
             </el-col>
             <el-col :xs="24">
               <el-form-item label="API Key">
-                <el-input v-model="shareForm.apiKey" type="password" show-password placeholder="转赠后其他人可用于一键配置" />
+                <el-input v-model="shareForm.apiKey" type="password" show-password :placeholder="t('admin.modelConfig.apiKeyPlaceholder')" />
               </el-form-item>
             </el-col>
           </el-row>
           <div class="share-actions">
-            <el-button @click="resetShareForm">清空</el-button>
-            <el-button type="primary" :loading="sharing" :disabled="!selectedRecipient" @click="submitPersonalModel">确认转赠</el-button>
+            <el-button @click="resetShareForm">{{ t('admin.modelConfig.clear') }}</el-button>
+            <el-button type="primary" :loading="sharing" :disabled="!selectedRecipient" @click="submitPersonalModel">{{ t('admin.modelConfig.confirmGift') }}</el-button>
           </div>
         </el-form>
 
         <div class="record-section">
           <div class="record-head">
-            <h4>转赠记录</h4>
-            <el-button size="small" text :loading="recordsLoading" @click="loadPersonalRecords">刷新记录</el-button>
+            <h4>{{ t('admin.modelConfig.recordsTitle') }}</h4>
+            <el-button size="small" text :loading="recordsLoading" @click="loadPersonalRecords">{{ t('admin.modelConfig.refreshRecords') }}</el-button>
           </div>
           <el-table :data="personalRecords" v-loading="recordsLoading" size="small" class="record-table">
-            <el-table-column prop="name" label="名称" min-width="140" />
-            <el-table-column prop="provider" label="提供商" width="110" />
-            <el-table-column prop="model" label="模型" min-width="150" />
+            <el-table-column prop="name" :label="t('admin.common.name')" min-width="140" />
+            <el-table-column prop="provider" :label="t('admin.common.provider')" width="110" />
+            <el-table-column prop="model" :label="t('admin.common.model')" min-width="150" />
             <el-table-column prop="baseUrl" label="Base URL" min-width="220">
               <template #default="{ row }">
                 <span class="mono">{{ row.baseUrl || '-' }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="接收人" width="140">
+            <el-table-column :label="t('admin.modelConfig.colRecipient')" width="140">
               <template #default="{ row }">{{ row.recipientName || '-' }}</template>
             </el-table-column>
-            <el-table-column label="状态" width="80">
+            <el-table-column :label="t('admin.common.statusLabel')" width="80">
               <template #default="{ row }">
                 <el-tag :type="row.isActive ? 'success' : 'info'" size="small">
-                  {{ row.isActive ? '有效' : '停用' }}
+                  {{ row.isActive ? t('admin.modelConfig.active') : t('admin.modelConfig.inactive') }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="100" fixed="right">
+            <el-table-column :label="t('admin.common.action')" width="100" fixed="right">
               <template #default="{ row }">
                 <el-button size="small" type="danger" text :loading="destroyingId === row.id" @click="destroyRecord(row)">
-                  销毁
+                  {{ t('admin.modelConfig.destroy') }}
                 </el-button>
               </template>
             </el-table-column>
           </el-table>
           <div v-if="!recordsLoading && personalRecords.length === 0" class="record-empty">
-            暂无转赠记录。
+            {{ t('admin.modelConfig.noRecords') }}
           </div>
         </div>
       </div>
     </template>
 
-    <el-dialog v-model="configDialogVisible" title="选择配置目标" width="520px" top="16vh">
+    <el-dialog v-model="configDialogVisible" :title="t('admin.modelConfig.selectTarget')" width="520px" top="16vh">
       <div v-if="selectedModel" class="config-target-dialog">
         <div class="config-model-summary">
           <strong>{{ selectedModel.name }}</strong>
@@ -555,21 +570,21 @@ onMounted(loadAll)
         <el-radio-group v-model="configTarget" class="config-targets">
           <el-radio value="system" border>
             <div class="target-option">
-              <strong>系统管理资源配置 LLM</strong>
-              <span>写入本应用的资源配置，后续资源扫描、模型调用使用该配置。</span>
+              <strong>{{ t('admin.modelConfig.targetSystem') }}</strong>
+              <span>{{ t('admin.modelConfig.targetSystemDesc') }}</span>
             </div>
           </el-radio>
           <el-radio value="claude" border>
             <div class="target-option">
               <strong>Claude Code</strong>
-              <span>写入用户目录下的 .claude/settings.json，供 Claude Code 使用。</span>
+              <span>{{ t('admin.modelConfig.targetClaudeDesc') }}</span>
             </div>
           </el-radio>
         </el-radio-group>
       </div>
       <template #footer>
-        <el-button @click="configDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="applyingId !== null" @click="confirmApplyModel">确认配置</el-button>
+        <el-button @click="configDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="applyingId !== null" @click="confirmApplyModel">{{ t('admin.modelConfig.confirmConfig') }}</el-button>
       </template>
     </el-dialog>
 

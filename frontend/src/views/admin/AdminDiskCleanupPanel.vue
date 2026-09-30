@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -10,16 +11,25 @@ import {
   type DiskUsageEntry,
   type DiskUsageScanResult,
 } from '../../api/system'
-import { getErrorMessage } from '../../utils/error'
+import { describeError, failureCode, getErrorMessage } from '../../utils/error'
 import { formatBytes } from '../../utils/format'
 
 const props = defineProps<{ scanRequest?: number; detailsRequest?: number }>()
 const visible = defineModel<boolean>({ default: false })
+const { t } = useI18n()
 const scanning = ref(false)
 const detailLoading = ref(false)
 const deleting = ref(false)
 const revealing = ref(false)
 const panelNotice = ref('')
+const panelNoticeWarning = ref(false)
+
+// The notice used to infer its alert type from Chinese substrings; now the
+// severity is tracked explicitly so the text can be localised.
+function setNotice(message: string, warning = false) {
+  panelNotice.value = message
+  panelNoticeWarning.value = warning
+}
 const usage = ref<DiskUsageScanResult | null>(null)
 const selectedEntry = ref<DiskUsageEntry | null>(null)
 const activeFilter = ref<'all' | 'logs'>('all')
@@ -85,7 +95,7 @@ watch(
   (value, oldValue) => {
     if (!value || value === oldValue) return
     if (!usage.value) {
-      ElMessage.info('暂无空间明细，请先点击“分析磁盘”完成一次扫描')
+      ElMessage.info(t('admin.diskCleanup.scanNoDetails'))
     } else {
       visible.value = true
     }
@@ -94,11 +104,11 @@ watch(
 
 async function runScan(path?: string | null) {
   if (scanning.value) {
-    panelNotice.value = '磁盘扫描正在进行，请等待本次扫描结束。'
+    setNotice(t('admin.diskCleanup.scanInProgress'))
     return
   }
   scanning.value = true
-  panelNotice.value = '磁盘扫描正在进行，请等待本次扫描结束。'
+  setNotice(t('admin.diskCleanup.scanInProgress'))
   scanProgress.value = { status: 'running', visited: 0, size_bytes: 0, current_path: '' }
   selectedEntry.value = null
   try {
@@ -107,22 +117,21 @@ async function runScan(path?: string | null) {
       usage.value = res.data
       activeFilter.value = 'all'
       if (res.data.error) {
-        panelNotice.value = `扫描完成，但部分内容不可读：${res.data.error}`
+        setNotice(t('admin.diskCleanup.scanPartialUnreadable', { error: res.data.error }), true)
       } else if (res.data.scan_limited) {
-        panelNotice.value = '扫描完成，但部分目录文件数过多，结果可能不完整。'
+        setNotice(t('admin.diskCleanup.scanLimited'))
       } else {
-        panelNotice.value = '空间占用扫描完成。'
+        setNotice(t('admin.diskCleanup.scanDone'))
       }
     } else {
-      const message = res.error || '空间占用扫描失败'
-      if (message.includes('磁盘扫描正在进行')) {
-        panelNotice.value = message
-      } else {
-        panelNotice.value = message
-      }
+      const message = describeError(res.error, t('admin.diskCleanup.scanFailed'))
+      // A scan that is already running is informational rather than a failure.
+      // The catalog code identifies it now that the prose is localised, so it
+      // is read as a code rather than searched for in the serialized envelope.
+      setNotice(message, failureCode(res.error) !== 'admin.disk.scanBusy')
     }
   } catch (e) {
-    panelNotice.value = getErrorMessage(e, '空间占用扫描失败')
+    setNotice(getErrorMessage(e, t('admin.diskCleanup.scanFailed')), true)
   } finally {
     scanning.value = false
   }
@@ -143,13 +152,13 @@ async function loadFromCache(path?: string | null, filter: 'all' | 'logs' = acti
       visible.value = true
       activeFilter.value = filter
       resultPage.value = res.data.page || page
-      panelNotice.value = filter === 'logs' ? '已筛选日志目录。' : '已加载扫描缓存。'
+      setNotice(filter === 'logs' ? t('admin.diskCleanup.filteredLogs') : t('admin.diskCleanup.loadedCache'))
     } else {
-      panelNotice.value = res.error || '暂无空间明细，请先分析磁盘'
+      setNotice(describeError(res.error, t('admin.diskCleanup.noDetailsScan')))
       if (!usage.value) ElMessage.info(panelNotice.value)
     }
   } catch (e) {
-    panelNotice.value = getErrorMessage(e, '读取空间明细失败')
+    setNotice(getErrorMessage(e, t('admin.diskCleanup.loadDetailsFailed')), true)
   } finally {
     detailLoading.value = false
   }
@@ -172,7 +181,7 @@ function selectEntry(row: DiskUsageEntry) {
 async function revealEntry(row?: DiskUsageEntry | null) {
   const target = row ?? selectedEntry.value
   if (!target) {
-    ElMessage.warning('请选择要打开的文件或目录')
+    ElMessage.warning(t('admin.diskCleanup.selectToOpen'))
     return
   }
   selectedEntry.value = target
@@ -180,12 +189,12 @@ async function revealEntry(row?: DiskUsageEntry | null) {
   try {
     const res = await revealDiskUsagePath(target.path)
     if (res.success && res.data?.opened) {
-      ElMessage.success(res.data.message || '已打开所在目录')
+      ElMessage.success(describeError(res.data.message, t('admin.diskCleanup.openDone')))
     } else {
-      ElMessage.error(res.data?.message || res.error || '打开所在目录失败')
+      ElMessage.error(describeError(res.data?.message || res.error, t('admin.diskCleanup.openFailed')))
     }
   } catch (e) {
-    ElMessage.error(getErrorMessage(e, '打开所在目录失败'))
+    ElMessage.error(getErrorMessage(e, t('admin.diskCleanup.openFailed')))
   } finally {
     revealing.value = false
   }
@@ -211,15 +220,15 @@ async function goParent() {
 async function handleDeleteSelected() {
   const target = selectedEntry.value
   if (!target) {
-    ElMessage.warning('请选择要清理的文件或目录')
+    ElMessage.warning(t('admin.diskCleanup.selectToClean'))
     return
   }
 
   try {
     await ElMessageBox.confirm(
-      `将删除「${target.name}」，预计释放 ${formatBytes(target.size_bytes)}。请确认该路径可以清理。`,
-      '确认清理选中路径',
-      { confirmButtonText: '确认清理', cancelButtonText: '取消', type: 'warning' },
+      t('admin.diskCleanup.deleteConfirm', { name: target.name, size: formatBytes(target.size_bytes) }),
+      t('admin.diskCleanup.deleteTitle'),
+      { confirmButtonText: t('admin.diskCleanup.deleteConfirmBtn'), cancelButtonText: t('common.cancel'), type: 'warning' },
     )
   } catch {
     return
@@ -229,20 +238,20 @@ async function handleDeleteSelected() {
   try {
     const res = await deleteDiskUsagePath(target.path)
     if (res.success && res.data?.deleted) {
-      const message = `${res.data.message}，约释放 ${formatBytes(res.data.size_bytes)}`
+      const message = t('admin.diskCleanup.deletedWithSize', { message: describeError(res.data.message), size: formatBytes(res.data.size_bytes) })
       if (res.data.partial) {
         ElMessage.warning(message)
-        panelNotice.value = `${message}。跳过 ${Number(res.data.failed_count || 0).toLocaleString()} 项，通常是权限不足或文件正在使用。当前扫描结果可能已过期，建议重新分析磁盘。`
+        setNotice(t('admin.diskCleanup.partialDelete', { message, count: Number(res.data.failed_count || 0).toLocaleString() }), true)
       } else {
         ElMessage.success(message)
-        panelNotice.value = '清理完成。当前扫描结果可能已过期，建议重新分析磁盘。'
+        setNotice(t('admin.diskCleanup.cleanDone'))
       }
       emit('cleaned')
     } else {
-      ElMessage.error(res.data?.message || res.error || '清理失败')
+      ElMessage.error(describeError(res.data?.message || res.error, t('admin.diskCleanup.cleanFailed')))
     }
   } catch (e) {
-    ElMessage.error(getErrorMessage(e, '清理失败'))
+    ElMessage.error(getErrorMessage(e, t('admin.diskCleanup.cleanFailed')))
   } finally {
     deleting.value = false
   }
@@ -254,7 +263,7 @@ defineExpose({ startScan })
 <template>
   <el-drawer
     v-model="visible"
-    title="系统盘空间分析"
+    :title="t('admin.diskCleanup.title')"
     size="78%"
     append-to-body
     :lock-scroll="false"
@@ -264,53 +273,53 @@ defineExpose({ startScan })
       v-if="panelNotice"
       class="panel-notice"
       :title="panelNotice"
-      :type="panelNotice.includes('失败') || panelNotice.includes('不可读') ? 'warning' : 'info'"
+      :type="panelNoticeWarning ? 'warning' : 'info'"
       show-icon
       :closable="true"
-      @close="panelNotice = ''"
+      @close="panelNotice = ''; panelNoticeWarning = false"
     />
 
     <div class="usage-toolbar">
       <div class="usage-path">
         <div class="metric-strip">
           <div>
-            <span>已统计占用</span>
+            <span>{{ t('admin.diskCleanup.totalUsage') }}</span>
             <b>{{ formatBytes(usage?.total_size_bytes) }}</b>
           </div>
           <div>
-            <span>文件数量</span>
+            <span>{{ t('admin.diskCleanup.fileCount') }}</span>
             <b>{{ Number(usage?.file_count || 0).toLocaleString() }}</b>
           </div>
           <div v-if="usage?.disk_total_bytes">
-            <span>文件系统已用</span>
+            <span>{{ t('admin.diskCleanup.fsUsed') }}</span>
             <b>{{ formatBytes(usage.disk_used_bytes) }} / {{ formatBytes(usage.disk_total_bytes) }}</b>
           </div>
         </div>
-        <div class="usage-current" :title="usage?.path">{{ activeFilter === 'logs' ? '日志目录筛选结果' : usage?.path || '系统盘' }}</div>
+        <div class="usage-current" :title="usage?.path">{{ activeFilter === 'logs' ? t('admin.diskCleanup.logFilterResult') : usage?.path || t('admin.diskCleanup.systemDisk') }}</div>
         <div v-if="usage?.disk_total_bytes" class="disk-capacity-bar">
           <span :style="{ width: `${diskUsedPercent}%` }"></span>
         </div>
-        <div v-if="usage?.scan_limited" class="usage-warning">部分目录已截断，统计值小于真实占用。</div>
-        <div class="usage-scan-time">扫描结果保存在当前页面内存中；筛选不会重新扫描磁盘。</div>
+        <div v-if="usage?.scan_limited" class="usage-warning">{{ t('admin.diskCleanup.truncated') }}</div>
+        <div class="usage-scan-time">{{ t('admin.diskCleanup.cacheHint') }}</div>
       </div>
       <div class="usage-actions">
         <el-segmented
           v-model="activeFilter"
           :disabled="detailLoading || scanning"
           :options="[
-            { label: '全部', value: 'all' },
-            { label: '日志目录', value: 'logs' },
+            { label: t('common.all'), value: 'all' },
+            { label: t('admin.diskCleanup.logDir'), value: 'logs' },
           ]"
           @change="changeFilter"
         />
-        <el-button :disabled="!usage?.parent" @click="goParent">上一级</el-button>
-        <el-button :loading="scanning" @click="runScan()">重新扫描</el-button>
+        <el-button :disabled="!usage?.parent" @click="goParent">{{ t('admin.diskCleanup.parent') }}</el-button>
+        <el-button :loading="scanning" @click="runScan()">{{ t('admin.diskCleanup.rescan') }}</el-button>
         <el-button
           :disabled="!selectedEntry"
           :loading="revealing"
           @click="revealEntry()"
         >
-          打开所在目录
+          {{ t('admin.diskCleanup.openDir') }}
         </el-button>
         <el-button
           type="warning"
@@ -318,23 +327,23 @@ defineExpose({ startScan })
           :loading="deleting"
           @click="handleDeleteSelected"
         >
-          清理选中
+          {{ t('admin.diskCleanup.cleanSelected') }}
         </el-button>
       </div>
     </div>
 
     <div v-if="scanning || scanProgress.status === 'running'" class="scan-progress">
       <div class="scan-progress__head">
-        <b>正在扫描目录</b>
-        <span>{{ Number(scanProgress.visited || 0).toLocaleString() }} 个节点 · 已统计 {{ formatBytes(scanProgress.size_bytes) }}</span>
+        <b>{{ t('admin.diskCleanup.scanningTitle') }}</b>
+        <span>{{ t('admin.diskCleanup.scanProgress', { nodes: Number(scanProgress.visited || 0).toLocaleString(), size: formatBytes(scanProgress.size_bytes) }) }}</span>
       </div>
       <el-progress :percentage="100" :indeterminate="true" :duration="1.2" />
-      <div class="scan-progress__path" :title="scanProgress.current_path">{{ scanProgress.current_path || '准备扫描...' }}</div>
+      <div class="scan-progress__path" :title="scanProgress.current_path">{{ scanProgress.current_path || t('admin.diskCleanup.preparing') }}</div>
     </div>
 
     <div class="selection-bar" v-if="selectedEntry">
       <b>{{ selectedEntry.name }}</b>
-      <span>{{ formatBytes(selectedEntry.size_bytes) }} · 占当前层级 {{ selectedPercent }}%</span>
+      <span>{{ formatBytes(selectedEntry.size_bytes) }} · {{ t('admin.diskCleanup.ofCurrentLevel', { percent: selectedPercent }) }}</span>
       <code>{{ selectedEntry.path }}</code>
     </div>
 
@@ -354,7 +363,7 @@ defineExpose({ startScan })
         <span class="tile-size">{{ formatBytes(item.size_bytes) }}</span>
       </button>
       <div v-if="!scanning && treemapItems.length === 0" class="empty-map">
-        暂无扫描结果，请点击“重新扫描”或外部“分析磁盘”按钮。
+        {{ t('admin.diskCleanup.emptyMap') }}
       </div>
     </div>
 
@@ -363,39 +372,39 @@ defineExpose({ startScan })
       v-loading="scanning || detailLoading"
       stripe
       height="calc(100vh - 470px)"
-      empty-text="暂无扫描结果，请先分析磁盘"
+      :empty-text="t('admin.diskCleanup.emptyTable')"
       highlight-current-row
       @row-click="selectEntry"
       @row-contextmenu="revealEntryFromContextMenu"
       @row-dblclick="enterEntry"
     >
-      <el-table-column label="名称" min-width="260">
+      <el-table-column :label="t('admin.common.name')" min-width="260">
         <template #default="{ row }">
           <button class="entry-link" :class="{ folder: row.is_dir }" @click.stop="enterEntry(row)">
-            {{ row.is_dir ? '目录' : '文件' }} · {{ row.name }}
+            {{ row.is_dir ? t('admin.diskCleanup.dir') : t('admin.diskCleanup.file') }} · {{ row.name }}
           </button>
         </template>
       </el-table-column>
-      <el-table-column label="大小" width="140" sortable>
+      <el-table-column :label="t('admin.diskCleanup.size')" width="140" sortable>
         <template #default="{ row }">{{ formatBytes(row.size_bytes) }}</template>
       </el-table-column>
-      <el-table-column label="文件数" width="110" align="right">
+      <el-table-column :label="t('admin.diskCleanup.files')" width="110" align="right">
         <template #default="{ row }">{{ Number(row.file_count || 0).toLocaleString() }}</template>
       </el-table-column>
-      <el-table-column label="路径" min-width="320" show-overflow-tooltip>
+      <el-table-column :label="t('admin.common.path')" min-width="320" show-overflow-tooltip>
         <template #default="{ row }">{{ row.path }}</template>
       </el-table-column>
-      <el-table-column label="状态" width="130">
+      <el-table-column :label="t('admin.common.statusLabel')" width="130">
         <template #default="{ row }">
-          <span v-if="row.scan_limited" class="warning-text">结果已截断</span>
-          <span v-else-if="row.error" class="warning-text">部分不可读</span>
-          <span v-else class="ok-text">已统计</span>
+          <span v-if="row.scan_limited" class="warning-text">{{ t('admin.diskCleanup.statusTruncated') }}</span>
+          <span v-else-if="row.error" class="warning-text">{{ t('admin.diskCleanup.statusPartial') }}</span>
+          <span v-else class="ok-text">{{ t('admin.diskCleanup.statusCounted') }}</span>
         </template>
       </el-table-column>
     </el-table>
 
     <div v-if="activeFilter === 'logs' && (usage?.entry_total || 0) > resultPageSize" class="result-pagination">
-      <span>日志目录共 {{ Number(usage?.entry_total || 0).toLocaleString() }} 条，每页 {{ resultPageSize }} 条</span>
+      <span>{{ t('admin.diskCleanup.logPagination', { total: Number(usage?.entry_total || 0).toLocaleString(), size: resultPageSize }) }}</span>
       <el-pagination
         v-model:current-page="resultPage"
         :page-size="resultPageSize"

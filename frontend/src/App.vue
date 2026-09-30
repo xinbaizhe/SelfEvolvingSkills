@@ -1,20 +1,32 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { check } from '@tauri-apps/plugin-updater'
+import { getVersion } from '@tauri-apps/api/app'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import en from 'element-plus/es/locale/lang/en'
 import AppSidebar from './components/layout/AppSidebar.vue'
+import LocaleSwitcher from './components/layout/LocaleSwitcher.vue'
 import SystemPet from './components/pet/SystemPet.vue'
 import TeamSidebar from './components/team/TeamSidebar.vue'
 import LoginDialog from './components/team/LoginDialog.vue'
 import { fetchSystemInfo } from './api/admin'
 import { useTeamStore } from './stores/useTeamStore'
 
+const { t, locale } = useI18n()
+
 const route = useRoute()
 const sidebarCollapsed = ref(false)
 const appStartedAt = ref(0) // Unix ms from backend, persists across page refreshes
 const runtime = ref('0s')
+const appVersion = ref('')
 let runtimeTimer: ReturnType<typeof setInterval> | null = null
+
+// Element Plus translates its own component text (date pickers, pagination,
+// message boxes). ElConfigProvider is the only reactive way to swap it.
+const elementLocale = computed(() => (locale.value === 'zh-CN' ? zhCn : en))
 
 const teamStore = useTeamStore()
 const loginDialog = ref<InstanceType<typeof LoginDialog> | null>(null)
@@ -31,19 +43,19 @@ async function checkUpdate() {
     const update = await check({ timeout: 8000 })
     if (update) {
       const action = await ElMessageBox.confirm(
-        `发现新版本 ${update.version}，是否立即下载并安装？`,
-        '更新提示',
-        { confirmButtonText: '立即更新', cancelButtonText: '稍后再说', type: 'info' }
+        t('app.update.message', { version: update.version }),
+        t('app.update.title'),
+        { confirmButtonText: t('app.update.confirm'), cancelButtonText: t('app.update.cancel'), type: 'info' }
       ).catch(() => 'cancel')
       if (action === 'confirm') {
         const loading = ElMessage({
-          message: '正在下载并安装更新...',
+          message: t('app.update.downloading'),
           type: 'info',
           duration: 0,
         })
         try {
           await update.downloadAndInstall()
-          ElMessage.success('更新已安装，重启应用后生效')
+          ElMessage.success(t('app.update.installed'))
         } finally {
           loading.close()
         }
@@ -58,6 +70,10 @@ onMounted(async () => {
   checkUpdate()
   const teamStore = useTeamStore()
   teamStore.tryRestoreSession()
+  // Was hardcoded to a version string that drifted several releases behind.
+  try {
+    appVersion.value = await getVersion()
+  } catch { /* not running under Tauri (plain vite dev) */ }
   // Get process start time from backend (persists across page refreshes)
   try {
     const res = await fetchSystemInfo()
@@ -84,6 +100,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <el-config-provider :locale="elementLocale">
   <div class="app" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <aside class="sidebar">
       <div class="brand">
@@ -96,9 +113,9 @@ onUnmounted(() => {
         </div>
         <div v-show="!sidebarCollapsed">
           <strong>Self Evolving Skills</strong>
-          <span>从重复工作流中沉淀本地 Skills</span>
+          <span>{{ t('app.tagline') }}</span>
         </div>
-        <button class="sidebar-toggle" @click="toggleSidebar" :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'">
+        <button class="sidebar-toggle" @click="toggleSidebar" :title="sidebarCollapsed ? t('app.sidebarToggle.expand') : t('app.sidebarToggle.collapse')">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M6 3L10 8L6 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -107,28 +124,29 @@ onUnmounted(() => {
       <AppSidebar :collapsed="sidebarCollapsed" />
       <TeamSidebar :collapsed="sidebarCollapsed" />
       <section v-show="!sidebarCollapsed" class="privacy-notice">
-        <h3>本地隐私模式</h3>
-        <p>扫描、索引和分析均在本机完成。导出敏感内容前会显式确认，默认减少路径和正文暴露。</p>
+        <h3>{{ t('app.privacy.title') }}</h3>
+        <p>{{ t('app.privacy.body') }}</p>
       </section>
       <section v-show="!sidebarCollapsed" class="about-section">
         <a href="https://github.com/xinbaizhe/SelfEvolvingSkills" target="_blank" title="GitHub">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
           GitHub
         </a>
-        <span v-show="!sidebarCollapsed" class="version">v2.0.1</span>
+        <span v-if="appVersion" class="version">v{{ appVersion }}</span>
       </section>
     </aside>
     <main>
       <header class="topbar">
         <div class="title">
           <h1>Self Evolving Skills</h1>
-          <p>运行时长 {{ runtime }} · 从重复工作流中沉淀可复用 Skills</p>
+          <p>{{ t('app.runtime', { duration: runtime }) }} · {{ t('app.topbarSubtitle') }}</p>
         </div>
         <div class="actions">
-          <button v-if="!teamStore.isAuthenticated" class="btn team-btn" @click="loginDialog?.open()">登录团队版</button>
+          <LocaleSwitcher />
+          <button v-if="!teamStore.isAuthenticated" class="btn team-btn" @click="loginDialog?.open()">{{ t('app.actions.login') }}</button>
           <router-link v-if="teamStore.isAuthenticated" to="/team" class="btn ghost">{{ teamStore.username }}</router-link>
-          <router-link to="/admin" class="btn ghost">扫描本机</router-link>
-          <router-link to="/workbench" class="btn primary">生成 Skill</router-link>
+          <router-link to="/admin" class="btn ghost">{{ t('app.actions.scanLocal') }}</router-link>
+          <router-link to="/workbench" class="btn primary">{{ t('app.actions.generateSkill') }}</router-link>
         </div>
       </header>
       <router-view v-slot="{ Component }">
@@ -141,6 +159,7 @@ onUnmounted(() => {
     <LoginDialog ref="loginDialog" />
     <SystemPet />
   </div>
+  </el-config-provider>
 </template>
 
 <style>

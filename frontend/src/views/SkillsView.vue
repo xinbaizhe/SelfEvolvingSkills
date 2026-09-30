@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { evolveSkill, fetchSkills, fetchSkillDetail, importSkills, deleteSkill, type SkillItem, type SkillDetail } from '../api/skills'
 import { getErrorMessage } from '../utils/error'
@@ -9,6 +10,7 @@ import { onSkillsChanged } from '../composables/useSkillEvents'
 import SkillDetailDialog from '../components/skill/SkillDetailDialog.vue'
 import SkillEditDialog from '../components/skill/SkillEditDialog.vue'
 
+const { t } = useI18n()
 const router = useRouter()
 const skills = ref<SkillItem[]>([])
 const total = ref(0)
@@ -67,7 +69,7 @@ async function loadSkills(agentSource?: string) {
     skills.value = res.data?.items || []
     total.value = res.data?.total || 0
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载 Skills 失败'))
+    ElMessage.error(getErrorMessage(e, t('workbench.skills.loadFailed')))
   } finally {
     loading.value = false
   }
@@ -108,7 +110,7 @@ async function showDetail(name: string, sourceType?: string) {
     const res = await fetchSkillDetail(name, sourceType)
     if (res.success) currentDetail.value = res.data
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '加载 Skill 详情失败'))
+    ElMessage.error(getErrorMessage(e, t('workbench.skills.detailFailed')))
   } finally {
     detailLoading.value = false
   }
@@ -130,13 +132,13 @@ async function confirmDelete(skill: SkillItem, event: MouseEvent) {
   event.stopPropagation()
   try {
     await ElMessageBox.confirm(
-      `确定要删除 "${skill.name}" 吗？此操作将从数据库和文件系统中移除该 Skill。`,
-      '删除确认',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+      t('workbench.skills.deleteConfirm', { name: skill.name }),
+      t('workbench.common.deleteConfirmTitle'),
+      { confirmButtonText: t('common.delete'), cancelButtonText: t('common.cancel'), type: 'warning' }
     )
     const res = await deleteSkill(skill.name)
-    if (!res.success) throw new Error(res.error || '删除失败')
-    ElMessage.success(`已删除 ${res.data?.name || skill.name}`)
+    if (!res.success) throw new Error(res.error || t('workbench.common.deleteFailed'))
+    ElMessage.success(t('workbench.common.deletedName', { name: res.data?.name || skill.name }))
     if (selectedSource.value) {
       const currentPage = page.value
       const shouldGoBack = skills.value.length === 1 && currentPage > 1
@@ -146,7 +148,7 @@ async function confirmDelete(skill: SkillItem, event: MouseEvent) {
     await loadSourceCounts()
   } catch (e: unknown) {
     if (e !== 'cancel' && e !== 'close') {
-      ElMessage.error(getErrorMessage(e, '删除失败'))
+      ElMessage.error(getErrorMessage(e, t('workbench.common.deleteFailed')))
     }
   }
 }
@@ -156,11 +158,11 @@ async function evolveExistingSkill(skill: SkillItem, event: MouseEvent) {
   evolving.value.add(skill.id)
   try {
     const res = await evolveSkill(skill.name)
-    if (!res.success) throw new Error(res.error || '创建进化草稿失败')
-    ElMessage.success('已创建手动进化草稿')
+    if (!res.success) throw new Error(res.error || t('workbench.common.createDraftFailed'))
+    ElMessage.success(t('workbench.skills.evolveCreated'))
     router.push('/workbench?tab=drafts')
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '创建进化草稿失败'))
+    ElMessage.error(getErrorMessage(e, t('workbench.common.createDraftFailed')))
   } finally {
     evolving.value.delete(skill.id)
   }
@@ -182,9 +184,9 @@ async function exportCurrentSkills(format: 'json' | 'csv') {
   try {
     const data = await exportSkills(format, selectedSource.value)
     downloadBlob(data.content, data.filename, data.content_type)
-    ElMessage.success(`${selectedSourceName.value} Skills 导出成功`)
+    ElMessage.success(t('workbench.skills.exportSuccess', { source: selectedSourceName.value }))
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '导出失败，请检查本地数据'))
+    ElMessage.error(getErrorMessage(e, t('workbench.skills.exportFailed')))
   } finally {
     exporting.value = false
   }
@@ -208,13 +210,13 @@ async function onImportFile(event: Event) {
     const content = isZip ? '' : await file.text()
     const contentBase64 = isZip ? await fileToBase64(file) : undefined
     const res = await importSkills(selectedSource.value, file.name, content, contentBase64)
-    if (!res.success || !res.data) throw new Error(res.error || '导入失败')
+    if (!res.success || !res.data) throw new Error(res.error || t('workbench.skills.importFailed'))
     const skipped = res.data.skipped?.length || 0
-    ElMessage.success(`已导入 ${res.data.count} 个 Skill 到 ${res.data.agent_name}${skipped ? `，跳过 ${skipped} 个文件` : ''}`)
+    ElMessage.success(t('workbench.skills.importSuccess', { count: res.data.count, agent: res.data.agent_name }) + (skipped ? t('workbench.skills.importSkipped', { n: skipped }) : ''))
     await loadSkills(selectedSource.value)
     await loadSourceCounts()
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '导入失败，请确认文件为 SKILL.md、skills.json 或 .zip'))
+    ElMessage.error(getErrorMessage(e, t('workbench.skills.importFailedHint')))
   } finally {
     importing.value = false
   }
@@ -256,10 +258,10 @@ onUnmounted(() => {
   <section class="page-view">
     <div class="page-headline">
       <div>
-        <h2>已存在的 Skills</h2>
-        <p>先选择 Agent，再查看、导入或导出该 Agent 的 Skills。</p>
+        <h2>{{ t('workbench.skills.title') }}</h2>
+        <p>{{ t('workbench.skills.subtitle') }}</p>
       </div>
-      <span v-if="selectedSource" class="count-badge">{{ total }} 个 Skills</span>
+      <span v-if="selectedSource" class="count-badge">{{ t('workbench.skills.count', { n: total }) }}</span>
     </div>
 
     <div v-if="!selectedSource" class="cards">
@@ -267,14 +269,14 @@ onUnmounted(() => {
         <span class="source-count">{{ sourceCounts[src.id] ?? 0 }}</span>
         <div class="source-icon" :style="{ background: src.color }">{{ src.icon }}</div>
         <h3>{{ src.name }}</h3>
-        <p>查看或导入导出 {{ src.name }} 的 Skills</p>
+        <p>{{ t('workbench.skills.viewSource', { source: src.name }) }}</p>
       </article>
     </div>
 
     <template v-else>
       <div class="toolbar">
-        <el-button size="small" @click="clearSource">返回 Agent 列表</el-button>
-        <span class="toolbar-title">{{ selectedSourceName }} 的 Skills</span>
+        <el-button size="small" @click="clearSource">{{ t('workbench.skills.backToAgents') }}</el-button>
+        <span class="toolbar-title">{{ t('workbench.skills.sourceSkills', { source: selectedSourceName }) }}</span>
 
         <input
           ref="fileInput"
@@ -283,32 +285,32 @@ onUnmounted(() => {
           accept=".md,.json,.zip,application/json,text/markdown,text/plain,application/zip"
           @change="onImportFile"
         />
-        <el-button size="small" :loading="importing" @click="openImportPicker">导入</el-button>
+        <el-button size="small" :loading="importing" @click="openImportPicker">{{ t('workbench.skills.import') }}</el-button>
         <el-dropdown trigger="click" @command="exportCurrentSkills">
-          <el-button size="small" :loading="exporting">导出</el-button>
+          <el-button size="small" :loading="exporting">{{ t('workbench.skills.export') }}</el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="json">导出 JSON</el-dropdown-item>
-              <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
+              <el-dropdown-item command="json">{{ t('workbench.skills.exportJson') }}</el-dropdown-item>
+              <el-dropdown-item command="csv">{{ t('workbench.skills.exportCsv') }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
 
         <el-input
           v-model="search"
-          placeholder="搜索 Skill 名称或描述"
+          :placeholder="t('workbench.skills.searchPlaceholder')"
           clearable
           class="search-input"
           @clear="onSearch"
           @keyup.enter="onSearch"
         />
-        <el-button type="primary" size="small" @click="onSearch">搜索</el-button>
+        <el-button type="primary" size="small" @click="onSearch">{{ t('common.search') }}</el-button>
       </div>
 
-      <div v-if="loading" class="empty-state">加载中...</div>
+      <div v-if="loading" class="empty-state">{{ t('common.loading') }}</div>
 
       <div v-else-if="skills.length === 0" class="empty-state">
-        暂无该 Agent 的 Skills。可以导入 SKILL.md、导出的 skills.json 或完整 Skill zip。
+        {{ t('workbench.skills.empty') }}
       </div>
 
       <template v-else>
@@ -316,18 +318,18 @@ onUnmounted(() => {
           <div v-for="skill in skills" :key="skill.id" class="skill-card" @click="showDetail(skill.name, skill.source_type)">
             <div class="skill-actions">
               <el-button size="small" type="primary" text :loading="evolving.has(skill.id)" @click="evolveExistingSkill(skill, $event)">
-                进化
+                {{ t('workbench.common.evolve') }}
               </el-button>
-              <el-button size="small" text @click="openEdit(skill, $event)">编辑</el-button>
-              <el-button size="small" text type="danger" @click="confirmDelete(skill, $event)">删除</el-button>
+              <el-button size="small" text @click="openEdit(skill, $event)">{{ t('common.edit') }}</el-button>
+              <el-button size="small" text type="danger" @click="confirmDelete(skill, $event)">{{ t('common.delete') }}</el-button>
             </div>
             <div class="item-title">{{ skill.name }}</div>
-            <div class="item-desc">{{ skill.description || '暂无描述' }}</div>
+            <div class="item-desc">{{ skill.description || t('workbench.common.noDescription') }}</div>
             <div class="tag-row">
               <el-tag size="small">{{ skill.category || 'other' }}</el-tag>
               <el-tag size="small" type="info">{{ skill.source_type }}</el-tag>
               <el-tag v-if="skill.usage_count > 0" size="small" type="success">
-                使用 {{ skill.usage_count }} 次
+                {{ t('workbench.skills.usageCount', { n: skill.usage_count }) }}
               </el-tag>
             </div>
           </div>

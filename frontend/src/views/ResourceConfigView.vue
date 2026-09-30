@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import SourcesView from './SourcesView.vue'
 import AdminConfig from './admin/AdminConfig.vue'
 
+const { t } = useI18n()
 const route = useRoute()
 const activeTab = ref('sources')
 
@@ -16,16 +18,16 @@ watchEffect(() => {
   <section class="page-view resource-view">
     <div class="page-head">
       <div>
-        <h2>资源与配置</h2>
-        <p>管理本机 Agent 来源、扫描路径和大模型推荐配置。</p>
+        <h2>{{ t('workbench.resourceConfig.title') }}</h2>
+        <p>{{ t('workbench.resourceConfig.subtitle') }}</p>
       </div>
     </div>
 
     <el-tabs v-model="activeTab" class="resource-tabs">
-      <el-tab-pane label="Agent 来源" name="sources">
+      <el-tab-pane :label="t('workbench.resourceConfig.tabSources')" name="sources">
         <SourcesView />
       </el-tab-pane>
-      <el-tab-pane label="模型配置" name="model">
+      <el-tab-pane :label="t('workbench.resourceConfig.tabModel')" name="model">
         <AdminConfig />
       </el-tab-pane>
     </el-tabs>

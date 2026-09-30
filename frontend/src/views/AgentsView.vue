@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAgents, fetchAgentDetail, updateAgent, deleteAgent, evolveAgent, type Agent, type AgentDetail } from '../api/agents'
 import { getErrorMessage } from '../utils/error'
 
+const { t } = useI18n()
 const router = useRouter()
 const agents = ref<Agent[]>([])
 const total = ref(0)
@@ -129,13 +131,13 @@ async function saveEdit() {
       description: editForm.description || null,
       model: editForm.model || null,
     })
-    if (!res.success) throw new Error(res.error || '更新失败')
-    ElMessage.success('Agent 已更新')
+    if (!res.success) throw new Error(res.error || t('workbench.common.updateFailed'))
+    ElMessage.success(t('workbench.agents.updated'))
     editVisible.value = false
     if (selectedSource.value) await loadAgents(selectedSource.value)
     await loadSourceCounts()
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '更新失败'))
+    ElMessage.error(getErrorMessage(e, t('workbench.common.updateFailed')))
   } finally {
     editSaving.value = false
   }
@@ -146,18 +148,18 @@ async function confirmDelete(agent: Agent, event: MouseEvent) {
   event.stopPropagation()
   try {
     await ElMessageBox.confirm(
-      `确定要删除 "${agent.name}" 吗？此操作将从数据库中移除该 Agent 记录。`,
-      '删除确认',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+      t('workbench.agents.deleteConfirm', { name: agent.name }),
+      t('workbench.common.deleteConfirmTitle'),
+      { confirmButtonText: t('common.delete'), cancelButtonText: t('common.cancel'), type: 'warning' }
     )
     const res = await deleteAgent(agent.name)
-    if (!res.success) throw new Error(res.error || '删除失败')
-    ElMessage.success(`已删除 ${res.data?.name || agent.name}`)
+    if (!res.success) throw new Error(res.error || t('workbench.common.deleteFailed'))
+    ElMessage.success(t('workbench.common.deletedName', { name: res.data?.name || agent.name }))
     if (selectedSource.value) await loadAgents(selectedSource.value)
     await loadSourceCounts()
   } catch (e: unknown) {
     if (e !== 'cancel' && e !== 'close') {
-      ElMessage.error(getErrorMessage(e, '删除失败'))
+      ElMessage.error(getErrorMessage(e, t('workbench.common.deleteFailed')))
     }
   }
 }
@@ -168,11 +170,11 @@ async function evolveExistingAgent(agent: Agent, event: MouseEvent) {
   evolving.value.add(agent.id)
   try {
     const res = await evolveAgent(agent.name)
-    if (!res.success) throw new Error(res.error || '创建进化草稿失败')
-    ElMessage.success('已创建 Agent 进化草稿')
+    if (!res.success) throw new Error(res.error || t('workbench.common.createDraftFailed'))
+    ElMessage.success(t('workbench.agents.evolveCreated'))
     router.push('/workbench?tab=drafts')
   } catch (e: unknown) {
-    ElMessage.error(getErrorMessage(e, '创建进化草稿失败'))
+    ElMessage.error(getErrorMessage(e, t('workbench.common.createDraftFailed')))
   } finally {
     evolving.value.delete(agent.id)
   }
@@ -185,10 +187,10 @@ onMounted(loadSourceCounts)
   <section class="page-view">
     <div class="page-headline">
       <div>
-        <h2>Agent 列表</h2>
-        <p>选择一个 Agent 来源查看 Agent 定义。</p>
+        <h2>{{ t('workbench.agents.title') }}</h2>
+        <p>{{ t('workbench.agents.subtitle') }}</p>
       </div>
-      <span v-if="selectedSource" class="count-badge">{{ total }} 个 Agent</span>
+      <span v-if="selectedSource" class="count-badge">{{ t('workbench.agents.count', { n: total }) }}</span>
     </div>
 
     <div v-if="!selectedSource" class="cards">
@@ -201,44 +203,44 @@ onMounted(loadSourceCounts)
         <span class="source-count">{{ sourceCounts[src.id] ?? 0 }}</span>
         <div class="source-icon" :style="{ background: src.color }">{{ src.icon }}</div>
         <h3>{{ src.name }}</h3>
-        <p>查看来自 {{ src.name }} 的所有 Agent</p>
+        <p>{{ t('workbench.agents.viewAll', { source: src.name }) }}</p>
       </article>
     </div>
 
     <template v-else>
       <div class="toolbar">
-        <el-button size="small" @click="clearSource">返回来源列表</el-button>
-        <span class="toolbar-title">{{ selectedSourceName }} 的 Agent</span>
+        <el-button size="small" @click="clearSource">{{ t('workbench.agents.backToSources') }}</el-button>
+        <span class="toolbar-title">{{ t('workbench.agents.sourceAgents', { source: selectedSourceName }) }}</span>
 
         <el-input
           v-model="search"
-          placeholder="搜索 Agent 名称"
+          :placeholder="t('workbench.agents.searchPlaceholder')"
           clearable
           class="search-input"
           @clear="onSearch"
           @keyup.enter="onSearch"
         />
-        <el-button type="primary" size="small" @click="onSearch">搜索</el-button>
+        <el-button type="primary" size="small" @click="onSearch">{{ t('common.search') }}</el-button>
       </div>
 
-      <div v-if="loading" class="empty-state">加载中...</div>
+      <div v-if="loading" class="empty-state">{{ t('common.loading') }}</div>
 
-      <div v-else-if="agents.length === 0" class="empty-state">暂无该来源的 Agent</div>
+      <div v-else-if="agents.length === 0" class="empty-state">{{ t('workbench.agents.empty') }}</div>
 
       <div v-else class="result-grid">
         <div v-for="agent in agents" :key="agent.id" class="agent-card" @click="showDetail(agent.name)">
           <div class="agent-actions">
             <el-button size="small" type="primary" text :loading="evolving.has(agent.id)" @click="evolveExistingAgent(agent, $event)">
-              进化
+              {{ t('workbench.common.evolve') }}
             </el-button>
-            <el-button size="small" text @click="openEdit(agent, $event)">编辑</el-button>
-            <el-button size="small" text type="danger" @click="confirmDelete(agent, $event)">删除</el-button>
+            <el-button size="small" text @click="openEdit(agent, $event)">{{ t('common.edit') }}</el-button>
+            <el-button size="small" text type="danger" @click="confirmDelete(agent, $event)">{{ t('common.delete') }}</el-button>
           </div>
           <div class="agent-title">
             <span>{{ agent.name }}</span>
             <el-tag v-if="agent.model" size="small">{{ agent.model }}</el-tag>
           </div>
-          <div class="item-desc">{{ agent.description || '暂无描述' }}</div>
+          <div class="item-desc">{{ agent.description || t('workbench.common.noDescription') }}</div>
           <div v-if="agent.tools" class="tag-row">
             <el-tag
               v-for="tool in (Array.isArray(agent.tools) ? agent.tools : [])"
@@ -268,37 +270,37 @@ onMounted(loadSourceCounts)
 
     <!-- Detail Dialog -->
     <el-dialog v-model="detailVisible" :title="currentDetail?.name" width="700px" top="5vh">
-      <div v-if="detailLoading" class="empty-state">加载中...</div>
+      <div v-if="detailLoading" class="empty-state">{{ t('common.loading') }}</div>
       <div v-else-if="currentDetail">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="名称">{{ currentDetail.name }}</el-descriptions-item>
-          <el-descriptions-item label="模型">{{ currentDetail.model || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="文件路径" :span="2">{{ currentDetail.file_path }}</el-descriptions-item>
-          <el-descriptions-item label="描述" :span="2">{{ currentDetail.description || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.common.field.name')">{{ currentDetail.name }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.agents.model')">{{ currentDetail.model || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.common.field.filePath')" :span="2">{{ currentDetail.file_path }}</el-descriptions-item>
+          <el-descriptions-item :label="t('workbench.common.field.description')" :span="2">{{ currentDetail.description || '-' }}</el-descriptions-item>
         </el-descriptions>
         <div class="detail-section">
-          <h4>定义内容</h4>
-          <div class="code-preview">{{ currentDetail.body_text || '无内容' }}</div>
+          <h4>{{ t('workbench.agents.definition') }}</h4>
+          <div class="code-preview">{{ currentDetail.body_text || t('workbench.common.noContent') }}</div>
         </div>
       </div>
     </el-dialog>
 
     <!-- Edit Dialog -->
-    <el-dialog v-model="editVisible" title="编辑 Agent" width="520px" top="10vh" @closed="editOriginalName = ''">
+    <el-dialog v-model="editVisible" :title="t('workbench.agents.editTitle')" width="520px" top="10vh" @closed="editOriginalName = ''">
       <el-form label-position="top">
-        <el-form-item label="名称">
-          <el-input v-model="editForm.name" placeholder="Agent 名称" />
+        <el-form-item :label="t('workbench.common.field.name')">
+          <el-input v-model="editForm.name" :placeholder="t('workbench.agents.namePlaceholder')" />
         </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="editForm.description" type="textarea" :rows="3" placeholder="简要描述" />
+        <el-form-item :label="t('workbench.common.field.description')">
+          <el-input v-model="editForm.description" type="textarea" :rows="3" :placeholder="t('workbench.common.descriptionPlaceholder')" />
         </el-form-item>
-        <el-form-item label="模型">
-          <el-input v-model="editForm.model" placeholder="如 claude-sonnet-4-6" />
+        <el-form-item :label="t('workbench.agents.model')">
+          <el-input v-model="editForm.model" :placeholder="t('workbench.agents.modelPlaceholder')" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+        <el-button @click="editVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="editSaving" @click="saveEdit">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
   </section>

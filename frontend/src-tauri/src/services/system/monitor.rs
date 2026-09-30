@@ -2,6 +2,8 @@ use rusqlite::{params_from_iter, Connection};
 use serde_json::{json, Value};
 use std::path::Path;
 
+use crate::utils::failure::{failed, failed_with};
+
 pub(crate) fn get_system_monitor() -> Value {
     use sysinfo::{CpuRefreshKind, Disks, RefreshKind, System};
 
@@ -233,9 +235,15 @@ fn validate_table(table: &str) -> bool {
 /// Insert a new row into a table. `data` is a JSON object of column → value.
 pub(crate) fn insert_row(conn: &Connection, table: &str, data: &Value) -> anyhow::Result<Value> {
     if !validate_table(table) {
-        return Err(anyhow::anyhow!("不允许操作此表: {}", table));
+        return Err(anyhow::anyhow!(failed_with(
+            "admin.maintenance.tableNotAllowed",
+            json!({ "table": table }),
+            format!("不允许操作此表: {}", table),
+        )));
     }
-    let obj = data.as_object().ok_or_else(|| anyhow::anyhow!("数据格式错误"))?;
+    let obj = data
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!(failed("admin.maintenance.badDataFormat", "数据格式错误")))?;
     let cols: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
 
     let placeholders: Vec<String> = cols.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
@@ -260,9 +268,15 @@ pub(crate) fn insert_row(conn: &Connection, table: &str, data: &Value) -> anyhow
 /// Update a row identified by rowid. `data` is a JSON object of column → new_value.
 pub(crate) fn update_row(conn: &Connection, table: &str, rowid: i64, data: &Value) -> anyhow::Result<Value> {
     if !validate_table(table) {
-        return Err(anyhow::anyhow!("不允许操作此表: {}", table));
+        return Err(anyhow::anyhow!(failed_with(
+            "admin.maintenance.tableNotAllowed",
+            json!({ "table": table }),
+            format!("不允许操作此表: {}", table),
+        )));
     }
-    let obj = data.as_object().ok_or_else(|| anyhow::anyhow!("数据格式错误"))?;
+    let obj = data
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!(failed("admin.maintenance.badDataFormat", "数据格式错误")))?;
     let sets: Vec<String> = obj
         .keys()
         .enumerate()
@@ -292,7 +306,11 @@ fn value_to_string(v: &Value) -> String {
 /// Delete a row identified by rowid.
 pub(crate) fn delete_row(conn: &Connection, table: &str, rowid: i64) -> anyhow::Result<Value> {
     if !validate_table(table) {
-        return Err(anyhow::anyhow!("不允许操作此表: {}", table));
+        return Err(anyhow::anyhow!(failed_with(
+            "admin.maintenance.tableNotAllowed",
+            json!({ "table": table }),
+            format!("不允许操作此表: {}", table),
+        )));
     }
     let sql = format!("DELETE FROM \"{}\" WHERE rowid = ?1", table);
     let affected = conn.execute(&sql, [rowid])?;

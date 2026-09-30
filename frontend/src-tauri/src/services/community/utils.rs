@@ -1,8 +1,27 @@
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection};
+use serde_json::{json, Value};
 
 use super::CommunityRecommendation;
 use crate::utils::time::now_string;
+
+/// A prose field the interface renders in its own language.
+///
+/// The backend holds no locale, so it sends the prose together with the
+/// frontend catalog key for it and the values that entry interpolates; the
+/// interface picks the language. It is the envelope `crate::utils::failure`
+/// defines, because the interface renders a prose field and a failure the same
+/// way and the two must not be built from separate copies of the shape. A
+/// value may itself be one of these, so a sentence built from variable clauses
+/// stays translatable in every clause.
+pub(super) fn field(code: &str, params: Value, text: impl Into<String>) -> Value {
+    crate::utils::failure::envelope(code, params, text)
+}
+
+/// [`field`] as the JSON string a `TEXT` column stores.
+pub(super) fn field_text(code: &str, params: Value, text: impl Into<String>) -> String {
+    field(code, params, text).to_string()
+}
 
 pub(super) fn save_recommendations(
     conn: &Connection,
@@ -157,32 +176,88 @@ pub(super) fn github_metadata_reason(
     stars: i64,
 ) -> String {
     let description = description.trim();
-    let project_summary = if description.is_empty() {
-        format!(
-            "这个仓库名为 {repo_full_name}，GitHub 搜索只返回了名称、star 和仓库路径，没有足够描述。"
+
+    let (what_code, what_params, what_text) = if description.is_empty() {
+        (
+            "workbench.community.repoSummaryNoDescription",
+            json!({ "repo": repo_full_name }),
+            format!(
+                "这个仓库名为 {repo_full_name}，GitHub 搜索只返回了名称、star 和仓库路径，没有足够描述。"
+            ),
         )
     } else {
-        format!("这个仓库名为 {repo_full_name}，仓库描述是：{description}")
+        (
+            "workbench.community.repoSummary",
+            json!({ "repo": repo_full_name, "description": description }),
+            format!("这个仓库名为 {repo_full_name}，仓库描述是：{description}"),
+        )
     };
-    let signal = matched_signal(query, name, description, repo_full_name);
-    let stars_text = if stars > 0 {
-        format!("它有 {stars} 个 star，说明至少有一定社区关注度。")
+    let what = field(what_code, what_params, what_text.clone());
+
+    let matched = matched_signal(query, name, description, repo_full_name);
+    let (signal, signal_text) = if matched.is_empty() {
+        let text = "没有明显关键词，仅来自 GitHub 搜索排序";
+        (
+            field("workbench.community.signalNoKeywords", json!({}), text),
+            text.to_string(),
+        )
     } else {
-        "当前搜索结果没有可用 star 信号，不能只凭热度判断价值。".to_string()
-    };
-    let lower = format!("{description} {repo_full_name}").to_lowercase();
-    let usage = if lower.contains("agent") {
-        "它可能对 Skills 工作台的 Agent 能力扩展、工具选择、工作流拆分有参考价值。"
-    } else if lower.contains("prompt") || lower.contains("instruction") {
-        "它可能对 Skill 的提示词结构、规则写法和触发说明有参考价值。"
-    } else if lower.contains("workflow") {
-        "它可能对工作流编排、步骤拆分和质量检查有参考价值。"
-    } else {
-        "它只通过轻量元数据命中，是否值得采用需要打开 README 后再判断。"
+        (json!(matched.clone()), matched)
     };
 
-    format!(
-        "它是什么：{project_summary}\n\n为什么推荐：它命中了「{query}」中的这些信号：{signal}。{stars_text}\n\n对 Skills 工作台有什么用：{usage}\n\n建议优先看什么：先看 README 的项目定位、examples 或 docs 中是否有可复用的 agent instructions、prompt、workflow、rules；如果 README 只是在罗列链接或没有具体示例，可以直接跳过。"
+    let (stars_code, stars_params, stars_text) = if stars > 0 {
+        (
+            "workbench.community.starsSignal",
+            json!({ "stars": stars }),
+            format!("它有 {stars} 个 star，说明至少有一定社区关注度。"),
+        )
+    } else {
+        (
+            "workbench.community.starsNoSignal",
+            json!({}),
+            "当前搜索结果没有可用 star 信号，不能只凭热度判断价值。".to_string(),
+        )
+    };
+    let stars_signal = field(stars_code, stars_params, stars_text.clone());
+
+    let lower = format!("{description} {repo_full_name}").to_lowercase();
+    let (usage_code, usage_text) = if lower.contains("agent") {
+        (
+            "workbench.community.usageAgent",
+            "它可能对 Skills 工作台的 Agent 能力扩展、工具选择、工作流拆分有参考价值。",
+        )
+    } else if lower.contains("prompt") || lower.contains("instruction") {
+        (
+            "workbench.community.usagePrompt",
+            "它可能对 Skill 的提示词结构、规则写法和触发说明有参考价值。",
+        )
+    } else if lower.contains("workflow") {
+        (
+            "workbench.community.usageWorkflow",
+            "它可能对工作流编排、步骤拆分和质量检查有参考价值。",
+        )
+    } else {
+        (
+            "workbench.community.usageMetadataOnly",
+            "它只通过轻量元数据命中，是否值得采用需要打开 README 后再判断。",
+        )
+    };
+    let usage = field(usage_code, json!({}), usage_text);
+
+    let reason = format!(
+        "它是什么：{what_text}\n\n为什么推荐：它命中了「{query}」中的这些信号：{signal_text}。{stars_text}\n\n对 Skills 工作台有什么用：{usage_text}\n\n建议优先看什么：先看 README 的项目定位、examples 或 docs 中是否有可复用的 agent instructions、prompt、workflow、rules；如果 README 只是在罗列链接或没有具体示例，可以直接跳过。"
+    );
+
+    field_text(
+        "workbench.community.githubReason",
+        json!({
+            "what": what,
+            "query": query,
+            "signal": signal,
+            "stars": stars_signal,
+            "usage": usage,
+        }),
+        reason,
     )
 }
 
@@ -197,11 +272,7 @@ pub(super) fn matched_signal(
         .into_iter()
         .filter(|token| haystack.contains(token))
         .collect::<Vec<_>>();
-    if matches.is_empty() {
-        "没有明显关键词，仅来自 GitHub 搜索排序".to_string()
-    } else {
-        matches.join(", ")
-    }
+    matches.join(", ")
 }
 
 pub(super) fn weighted_score(

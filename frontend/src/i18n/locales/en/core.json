@@ -1,0 +1,173 @@
+{
+  "core": {
+    "export": {
+      "failed": "Export failed"
+    },
+    "pet": {
+      "breed": {
+        "orange": "Orange Tabby",
+        "black": "Black Cat",
+        "white": "White Cat",
+        "golden": "Golden Retriever",
+        "husky": "Husky",
+        "lop": "Lop-eared Rabbit",
+        "red": "Red Fox",
+        "budgie": "Budgerigar",
+        "panda": "Giant Panda"
+      },
+      "desc": {
+        "orange": "Chinese domestic orange tabby",
+        "black": "Mysterious, elegant moonlight cat",
+        "white": "Snow-white and fluffy",
+        "golden": "Sunny golden retriever",
+        "husky": "The husky of huskies",
+        "lop": "A well-behaved little rabbit",
+        "red": "Clever red fox",
+        "budgie": "Little green-feathered parrot",
+        "panda": "National treasure panda"
+      },
+      "nameSuffix": {
+        "none": "",
+        "chan": " Chan",
+        "kun": " Kun",
+        "sweetie": " Sweetie",
+        "cutie": " Cutie"
+      },
+      "lunar": {
+        "newYearEve": "Happy New Year's Eve! 🧧",
+        "springFestival": "Happy Spring Festival! 🧨",
+        "dragonBoat": "Happy Dragon Boat Festival! 🎋",
+        "midAutumn": "Happy Mid-Autumn Festival! 🥮"
+      },
+      "smart": {
+        "weekend1": "Still writing code on the weekend? Go rest ☀️",
+        "weekend2": "Working on the weekend again? Go take a walk 🌿",
+        "commute1": "Clocking in! Full of energy 💼",
+        "commute2": "Time to grind~ what are we building today?",
+        "water": "Remember to drink water! 2L a day 💧",
+        "stretch": "Get up and move around 🏃",
+        "lunch1": "Lunch time! 🍜",
+        "lunch2": "Time to eat 🍱",
+        "afternoon1": "Good afternoon! Grab a coffee ☕",
+        "afternoon2": "Perk up, let's push through the afternoon",
+        "break1": "Slacking-off time! 📱",
+        "break2": "Eye exercise time 👁️",
+        "offwork1": "Off work! Well done 🎉",
+        "offwork2": "Leaving on time is a good habit ✨",
+        "overtime1": "Still working overtime? Take care 💸",
+        "overtime2": "Time for dinner 🍲",
+        "late1": "It's past nine! Write it tomorrow 😰",
+        "late2": "Get some early rest! 🛏️",
+        "default1": "How many bugs did you fix today? 💪",
+        "default2": "Tired? Pat me to recharge~",
+        "default3": "Want a daily report? Just say \"report\""
+      },
+      "wokeUp": "Phew... I'm awake ☀️",
+      "greet": "Hi! I'm {name} ({breed})~ What would you like to ask? I can generate a daily report too 📊",
+      "bye": "I'll go play then~ bye 👋",
+      "thinking": "Let me take a look...🤔",
+      "reportStarted": "Daily report started! Check the Daily Report page~📊",
+      "reportFailed": "Generation failed... check the AI model config?",
+      "aiAsleep": "The AI seems to have fallen asleep...💤",
+      "chatPlaceholder": "Chat with {name}...",
+      "send": "Send",
+      "query": {
+        "custom": "Custom",
+        "system": "CPU: {cpu}% ({brand}), Memory: {used}MB/{total}MB ({percent}%), Uptime: {hours}h {minutes}m",
+        "database": "Database {size}MB, {tables} tables, {records} records total",
+        "skillsAgents": "Skills {skills}, Agents {agents}, Sessions {sessions}",
+        "stats": "Skills {skills}, Agents {agents}, Sessions {sessions}, Usage records {usage}",
+        "skillCount": "{skills} Skills and {agents} Agents in total~",
+        "modelEnabled": "Current model: {provider} / {model}, API: {url}",
+        "modelDisabled": "Model not enabled. Configure it on the \"Resources & Config\" page~"
+      }
+    },
+    "pipeline": {
+      "title": "Skill Evolution Pipeline",
+      "subtitle": "Start after selecting Agents; the system really runs: {flow}.",
+      "phase": {
+        "discover": "Scan & Discover",
+        "referenceRetrieval": "Reference Retrieval",
+        "cluster": "Clustering",
+        "draftGenerate": "Draft Generation",
+        "optimize": "Smart Optimization",
+        "qaReview": "QA Review",
+        "diffRecommend": "Diff Recommendation"
+      },
+      "state": {
+        "running": "In progress",
+        "pending": "Not started",
+        "completed": "Completed",
+        "partialFailed": "Partially failed"
+      },
+      "evolving": "Evolving...",
+      "start": "Start Evolution",
+      "loadStatus": "Load Status",
+      "resetStuck": "Reset Stuck Pipeline",
+      "scope": "Scan Scope",
+      "claudeCodeOnly": "Claude Code Only",
+      "selectAllEnabled": "Select All Enabled",
+      "scopePlaceholder": "Select Agents to scan",
+      "detected": "Detected",
+      "pathMissing": "Path not found",
+      "scopeNote": "Long conversations are compressed locally first, keeping only goals, tools, errors, results and key context for clustering and draft generation.",
+      "started": "Evolution pipeline started. Running the 7-phase flow: {flow}",
+      "startFailed": "Failed to start the evolution pipeline",
+      "completed": "Evolution finished; recommendations, drafts and community comparison have been refreshed.",
+      "aborted": "Evolution pipeline aborted: database error — {detail}",
+      "resetDone": "Reset {count} stuck job(s)",
+      "resetFailed": "Reset failed",
+      "selectAgent": "Select at least one Agent as the scan scope",
+      "timeoutWarning": "Detected {count} timed-out phase(s) (>10 minutes); marked as failed automatically.",
+      "lastCompleted": "Last completed: {time}",
+      "progress": {
+        "discovering": "Detecting installed AI coding assistants...",
+        "dbOpenFailed": "Could not open the database: {detail}",
+        "detectFailed": "Detection failed: {detail}",
+        "detectDone": "Detection finished - {count} AI assistants will be scanned",
+        "skillsFound": "Found {count} Skills",
+        "agentsFound": "Found {count} Agents",
+        "historySummarized": "Found {count} past conversations; local compressed summaries generated",
+        "communitySearching": "Searching community reference Skills (GitHub / Web / local)...",
+        "communityDone": "Community search finished - {count} new references",
+        "communityFailed": "Community search failed: {detail}. The pipeline will continue.",
+        "clustering": "Clustering repeated workflows with the local algorithm...",
+        "clusterDone": "Local clustering finished - {count} candidate workflows, now reviewing with the model...",
+        "clusterReviewed": "The model finished reviewing and re-ranking the workflows",
+        "clusterLocalOnly": "No model enabled - using the local clustering result",
+        "clusterReviewFailed": "Model review failed: {detail}. Falling back to the local clustering result.",
+        "clusterSaved": "Clustering result saved",
+        "drafting": "Generating Skill drafts from templates (fully local)...",
+        "draftsGenerated": "Generated {count} local Skill drafts",
+        "optimizing": "Optimizing drafts one by one with the model...",
+        "draftsOptimized": "The model optimized {count} Skill drafts",
+        "optimizeLocalOnly": "No model enabled - using the local drafts",
+        "optimizeFailed": "Draft optimization failed: {detail}. The local drafts were kept.",
+        "variantsGenerated": "Generated {count} A/B variants",
+        "reviewing": "Skill Review Agent is reviewing the drafts...",
+        "reviewDone": "Skill Review Agent reviewed {count} drafts",
+        "reviewSkipped": "No model enabled - skipping QA review",
+        "reviewFailed": "Skill Review Agent failed: {detail}. Drafts were kept for manual review.",
+        "comparing": "Comparing local drafts against community Skills...",
+        "compareDone": "Diff finished - {count} workflows have community references",
+        "recommendDone": "Recommendations generated",
+        "runCompleted": "Evolution run completed",
+        "heartbeatOptimizing": "Optimizing: {name}...",
+        "heartbeatReviewing": "Reviewing: {name}...",
+        "heartbeatRetry": "Feedback fix round {round}/{max}: {name}...",
+        "suffixTimeout": " [timed out, marked as failed]",
+        "suffixReset": " [manually reset]"
+      }
+    },
+    "history": {
+      "empty": "No evolution pipeline runs yet",
+      "total": "{count} evolution runs",
+      "status": {
+        "completed": "Completed",
+        "running": "Running",
+        "failed": "Failed",
+        "pending": "Pending"
+      }
+    }
+  }
+}
